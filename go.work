@@ -1,0 +1,11 @@
+go 1.26.0
+
+use (
+	./internal/cart-svc
+	./internal/common
+	./internal/notification-svc
+	./internal/order-svc
+	./internal/payment-svc
+	./internal/product-svc
+	./internal/user-svc
+)
