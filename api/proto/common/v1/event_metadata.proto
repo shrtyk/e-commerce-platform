@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package ecommerce.common.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1;commonv1";
+
+message EventMetadata {
+  string event_id = 1;
+  string event_name = 2;
+  string producer = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+  string correlation_id = 5;
+  string causation_id = 6;
+  string schema_version = 7;
+}

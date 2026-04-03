@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package ecommerce.notification.v1;
+
+import "notification/v1/types.proto";
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/notification/v1;notificationv1";
+
+service NotificationService {
+  rpc GetDeliveryRequest(GetDeliveryRequestRequest) returns (GetDeliveryRequestResponse);
+}
+
+message GetDeliveryRequestRequest {
+  string delivery_request_id = 1;
+}
+
+message GetDeliveryRequestResponse {
+  DeliveryRequest delivery_request = 1;
+}

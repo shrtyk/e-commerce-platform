@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package ecommerce.payment.v1;
+
+import "common/v1/money.proto";
+import "payment/v1/types.proto";
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1;paymentv1";
+
+service PaymentService {
+  rpc InitiatePayment(InitiatePaymentRequest) returns (InitiatePaymentResponse);
+}
+
+message InitiatePaymentRequest {
+  string order_id = 1;
+  ecommerce.common.v1.Money amount = 2;
+  string provider_name = 3;
+  string idempotency_key = 4;
+}
+
+message InitiatePaymentResponse {
+  PaymentAttempt payment_attempt = 1;
+}

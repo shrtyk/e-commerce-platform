@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package ecommerce.common.v1;
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1;commonv1";
+
+message PageRequest {
+  uint32 page_size = 1;
+  string page_token = 2;
+}
+
+message PageResponse {
+  string next_page_token = 1;
+}

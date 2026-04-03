@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package ecommerce.identity.v1;
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/identity/v1;identityv1";
+
+enum UserStatus {
+  USER_STATUS_UNSPECIFIED = 0;
+  USER_STATUS_ACTIVE = 1;
+  USER_STATUS_DISABLED = 2;
+}
+
+message UserProfile {
+  string user_id = 1;
+  string email = 2;
+  UserStatus status = 3;
+  string display_name = 4;
+}

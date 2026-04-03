@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package ecommerce.notification.v1;
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/notification/v1;notificationv1";
+
+enum DeliveryStatus {
+  DELIVERY_STATUS_UNSPECIFIED = 0;
+  DELIVERY_STATUS_REQUESTED = 1;
+  DELIVERY_STATUS_SENT = 2;
+  DELIVERY_STATUS_FAILED = 3;
+}
+
+message DeliveryRequest {
+  string delivery_request_id = 1;
+  string source_event_name = 2;
+  string channel = 3;
+  string recipient = 4;
+  string template_key = 5;
+  DeliveryStatus status = 6;
+}

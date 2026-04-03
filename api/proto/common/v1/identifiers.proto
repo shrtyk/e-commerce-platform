@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package ecommerce.common.v1;
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1;commonv1";
+
+message UserID {
+  string value = 1;
+}
+
+message ProductID {
+  string value = 1;
+}
+
+message OrderID {
+  string value = 1;
+}
+
+message ReservationID {
+  string value = 1;
+}
+
+message PaymentAttemptID {
+  string value = 1;
+}
+
+message DeliveryRequestID {
+  string value = 1;
+}

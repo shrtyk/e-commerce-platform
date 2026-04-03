@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package ecommerce.catalog.v1;
+
+import "common/v1/event_metadata.proto";
+import "common/v1/money.proto";
+import "catalog/v1/types.proto";
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1;catalogv1";
+
+message ProductCreated {
+  ecommerce.common.v1.EventMetadata metadata = 1;
+  string product_id = 2;
+  string sku = 3;
+  string name = 4;
+  ProductStatus status = 5;
+  ecommerce.common.v1.Money price = 6;
+  string category_id = 7;
+}
+
+message ProductUpdated {
+  ecommerce.common.v1.EventMetadata metadata = 1;
+  string product_id = 2;
+  string sku = 3;
+  string name = 4;
+  ProductStatus status = 5;
+  ecommerce.common.v1.Money price = 6;
+  string category_id = 7;
+  repeated string changed_fields = 8;
+}
+
+message StockReserved {
+  ecommerce.common.v1.EventMetadata metadata = 1;
+  string order_id = 2;
+  string reservation_id = 3;
+  string product_id = 4;
+  int64 quantity = 5;
+  int64 remaining_available = 6;
+}
+
+message StockReserveFailed {
+  ecommerce.common.v1.EventMetadata metadata = 1;
+  string order_id = 2;
+  string product_id = 3;
+  int64 quantity = 4;
+  string reason_code = 5;
+  string reason_message = 6;
+}
+
+message StockReleased {
+  ecommerce.common.v1.EventMetadata metadata = 1;
+  string order_id = 2;
+  string reservation_id = 3;
+  string product_id = 4;
+  int64 quantity = 5;
+}

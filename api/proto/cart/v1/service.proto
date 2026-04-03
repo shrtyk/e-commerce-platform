@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package ecommerce.cart.v1;
+
+import "cart/v1/types.proto";
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/cart/v1;cartv1";
+
+service CartService {
+  rpc GetActiveCart(GetActiveCartRequest) returns (GetActiveCartResponse);
+  rpc AddCartItem(AddCartItemRequest) returns (AddCartItemResponse);
+  rpc UpdateCartItem(UpdateCartItemRequest) returns (UpdateCartItemResponse);
+  rpc RemoveCartItem(RemoveCartItemRequest) returns (RemoveCartItemResponse);
+  rpc GetCheckoutSnapshot(GetCheckoutSnapshotRequest) returns (GetCheckoutSnapshotResponse);
+}
+
+message GetActiveCartRequest {
+  string user_id = 1;
+}
+
+message GetActiveCartResponse {
+  Cart cart = 1;
+}
+
+message AddCartItemRequest {
+  string user_id = 1;
+  string product_id = 2;
+  int64 quantity = 3;
+}
+
+message AddCartItemResponse {
+  Cart cart = 1;
+}
+
+message UpdateCartItemRequest {
+  string user_id = 1;
+  string cart_item_id = 2;
+  int64 quantity = 3;
+}
+
+message UpdateCartItemResponse {
+  Cart cart = 1;
+}
+
+message RemoveCartItemRequest {
+  string user_id = 1;
+  string cart_item_id = 2;
+}
+
+message RemoveCartItemResponse {
+  Cart cart = 1;
+}
+
+message GetCheckoutSnapshotRequest {
+  string user_id = 1;
+}
+
+message GetCheckoutSnapshotResponse {
+  CheckoutSnapshot snapshot = 1;
+}

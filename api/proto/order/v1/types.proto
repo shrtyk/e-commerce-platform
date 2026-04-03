@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package ecommerce.order.v1;
+
+import "common/v1/money.proto";
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/order/v1;orderv1";
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_PENDING = 1;
+  ORDER_STATUS_AWAITING_STOCK = 2;
+  ORDER_STATUS_AWAITING_PAYMENT = 3;
+  ORDER_STATUS_CONFIRMED = 4;
+  ORDER_STATUS_CANCELLED = 5;
+}
+
+message OrderItem {
+  string order_item_id = 1;
+  string product_id = 2;
+  string sku = 3;
+  string name = 4;
+  int64 quantity = 5;
+  ecommerce.common.v1.Money unit_price = 6;
+  ecommerce.common.v1.Money line_total = 7;
+}
+
+message Order {
+  string order_id = 1;
+  string user_id = 2;
+  OrderStatus status = 3;
+  string currency = 4;
+  ecommerce.common.v1.Money total_amount = 5;
+  repeated OrderItem items = 6;
+}

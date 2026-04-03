@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package ecommerce.cart.v1;
+
+import "common/v1/money.proto";
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/cart/v1;cartv1";
+
+enum CartStatus {
+  CART_STATUS_UNSPECIFIED = 0;
+  CART_STATUS_ACTIVE = 1;
+  CART_STATUS_CHECKED_OUT = 2;
+  CART_STATUS_EXPIRED = 3;
+}
+
+message CartItem {
+  string cart_item_id = 1;
+  string product_id = 2;
+  string sku = 3;
+  string name = 4;
+  int64 quantity = 5;
+  ecommerce.common.v1.Money unit_price = 6;
+  ecommerce.common.v1.Money line_total = 7;
+}
+
+message Cart {
+  string cart_id = 1;
+  string user_id = 2;
+  CartStatus status = 3;
+  string currency = 4;
+  repeated CartItem items = 5;
+  ecommerce.common.v1.Money total_amount = 6;
+}
+
+message CheckoutSnapshot {
+  string user_id = 1;
+  string currency = 2;
+  repeated CartItem items = 3;
+  ecommerce.common.v1.Money total_amount = 4;
+}

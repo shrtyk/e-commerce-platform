@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package ecommerce.order.v1;
+
+import "common/v1/event_metadata.proto";
+import "common/v1/money.proto";
+import "order/v1/types.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/order/v1;orderv1";
+
+message OrderItemSnapshot {
+  string product_id = 1;
+  string sku = 2;
+  string name = 3;
+  int64 quantity = 4;
+  ecommerce.common.v1.Money unit_price = 5;
+  ecommerce.common.v1.Money line_total = 6;
+}
+
+message OrderCreated {
+  ecommerce.common.v1.EventMetadata metadata = 1;
+  string order_id = 2;
+  string user_id = 3;
+  OrderStatus status = 4;
+  string currency = 5;
+  ecommerce.common.v1.Money total_amount = 6;
+  repeated OrderItemSnapshot items = 7;
+}
+
+message OrderConfirmed {
+  ecommerce.common.v1.EventMetadata metadata = 1;
+  string order_id = 2;
+  string user_id = 3;
+  OrderStatus status = 4;
+  string currency = 5;
+  ecommerce.common.v1.Money total_amount = 6;
+  google.protobuf.Timestamp confirmed_at = 7;
+}
+
+message OrderCancelled {
+  ecommerce.common.v1.EventMetadata metadata = 1;
+  string order_id = 2;
+  string user_id = 3;
+  OrderStatus status = 4;
+  string cancel_reason_code = 5;
+  string cancel_reason_message = 6;
+  google.protobuf.Timestamp cancelled_at = 7;
+}
