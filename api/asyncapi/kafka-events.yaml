@@ -1,0 +1,499 @@
+asyncapi: 3.0.0
+info:
+  title: E-Commerce Platform Event Topology
+  version: 0.1.0
+  description: Initial AsyncAPI skeleton for Kafka's events.
+servers:
+  localKafka:
+    host: localhost:9092
+    protocol: kafka
+    protocolVersion: '3.7.0'
+    description: Local Kafka broker for Docker Compose development.
+channels:
+  catalogProductEvents:
+    address: catalog.product.events
+    messages:
+      productCreated:
+        $ref: '#/components/messages/ProductCreated'
+      productUpdated:
+        $ref: '#/components/messages/ProductUpdated'
+  catalogStockEvents:
+    address: catalog.stock.events
+    messages:
+      stockReserved:
+        $ref: '#/components/messages/StockReserved'
+      stockReserveFailed:
+        $ref: '#/components/messages/StockReserveFailed'
+      stockReleased:
+        $ref: '#/components/messages/StockReleased'
+  orderEvents:
+    address: order.events
+    messages:
+      orderCreated:
+        $ref: '#/components/messages/OrderCreated'
+      orderConfirmed:
+        $ref: '#/components/messages/OrderConfirmed'
+      orderCancelled:
+        $ref: '#/components/messages/OrderCancelled'
+  paymentEvents:
+    address: payment.events
+    messages:
+      paymentInitiated:
+        $ref: '#/components/messages/PaymentInitiated'
+      paymentSucceeded:
+        $ref: '#/components/messages/PaymentSucceeded'
+      paymentFailed:
+        $ref: '#/components/messages/PaymentFailed'
+  notificationEvents:
+    address: notification.events
+    messages:
+      deliveryRequested:
+        $ref: '#/components/messages/DeliveryRequested'
+      notificationSent:
+        $ref: '#/components/messages/NotificationSent'
+      notificationFailed:
+        $ref: '#/components/messages/NotificationFailed'
+operations:
+  catalogPublishesProductEvents:
+    action: send
+    channel:
+      $ref: '#/channels/catalogProductEvents'
+    messages:
+      - $ref: '#/channels/catalogProductEvents/messages/productCreated'
+      - $ref: '#/channels/catalogProductEvents/messages/productUpdated'
+  catalogPublishesStockEvents:
+    action: send
+    channel:
+      $ref: '#/channels/catalogStockEvents'
+    messages:
+      - $ref: '#/channels/catalogStockEvents/messages/stockReserved'
+      - $ref: '#/channels/catalogStockEvents/messages/stockReserveFailed'
+      - $ref: '#/channels/catalogStockEvents/messages/stockReleased'
+  orderConsumesStockEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/catalogStockEvents'
+    messages:
+      - $ref: '#/channels/catalogStockEvents/messages/stockReserved'
+      - $ref: '#/channels/catalogStockEvents/messages/stockReserveFailed'
+      - $ref: '#/channels/catalogStockEvents/messages/stockReleased'
+  orderPublishesOrderEvents:
+    action: send
+    channel:
+      $ref: '#/channels/orderEvents'
+    messages:
+      - $ref: '#/channels/orderEvents/messages/orderCreated'
+      - $ref: '#/channels/orderEvents/messages/orderConfirmed'
+      - $ref: '#/channels/orderEvents/messages/orderCancelled'
+  paymentPublishesPaymentEvents:
+    action: send
+    channel:
+      $ref: '#/channels/paymentEvents'
+    messages:
+      - $ref: '#/channels/paymentEvents/messages/paymentInitiated'
+      - $ref: '#/channels/paymentEvents/messages/paymentSucceeded'
+      - $ref: '#/channels/paymentEvents/messages/paymentFailed'
+  orderConsumesPaymentEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/paymentEvents'
+    messages:
+      - $ref: '#/channels/paymentEvents/messages/paymentSucceeded'
+      - $ref: '#/channels/paymentEvents/messages/paymentFailed'
+  notificationConsumesOrderEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/orderEvents'
+    messages:
+      - $ref: '#/channels/orderEvents/messages/orderConfirmed'
+      - $ref: '#/channels/orderEvents/messages/orderCancelled'
+  notificationPublishesNotificationEvents:
+    action: send
+    channel:
+      $ref: '#/channels/notificationEvents'
+    messages:
+      - $ref: '#/channels/notificationEvents/messages/deliveryRequested'
+      - $ref: '#/channels/notificationEvents/messages/notificationSent'
+      - $ref: '#/channels/notificationEvents/messages/notificationFailed'
+components:
+  messageTraits:
+    commonHeaders:
+      headers:
+        type: object
+        required:
+          - eventId
+          - eventName
+          - occurredAt
+          - producer
+          - correlationId
+          - schemaVersion
+        properties:
+          eventId:
+            type: string
+          eventName:
+            type: string
+          occurredAt:
+            type: string
+            format: date-time
+          producer:
+            type: string
+          correlationId:
+            type: string
+          causationId:
+            type: string
+          schemaVersion:
+            type: string
+  messages:
+    ProductCreated:
+      name: catalog.product.created
+      title: Product created
+      summary: Published when a product is created.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/ProductPayload'
+    ProductUpdated:
+      name: catalog.product.updated
+      title: Product updated
+      summary: Published when a product is updated.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/ProductPayload'
+    StockReserved:
+      name: catalog.stock.reserved
+      title: Stock reserved
+      summary: Published when stock reservation succeeds.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/StockReservedPayload'
+    StockReserveFailed:
+      name: catalog.stock.reserve_failed
+      title: Stock reservation failed
+      summary: Published when stock reservation fails.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/StockReserveFailedPayload'
+    StockReleased:
+      name: catalog.stock.released
+      title: Stock released
+      summary: Published when reserved stock is released.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/StockReleasedPayload'
+    OrderCreated:
+      name: order.created
+      title: Order created
+      summary: Published when an order is created.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/OrderPayload'
+    OrderConfirmed:
+      name: order.confirmed
+      title: Order confirmed
+      summary: Published when an order is confirmed.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/OrderResultPayload'
+    OrderCancelled:
+      name: order.cancelled
+      title: Order cancelled
+      summary: Published when an order is cancelled.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/OrderCancelledPayload'
+    PaymentInitiated:
+      name: payment.initiated
+      title: Payment initiated
+      summary: Published when payment processing starts.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/PaymentPayload'
+    PaymentSucceeded:
+      name: payment.succeeded
+      title: Payment succeeded
+      summary: Published when payment succeeds.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/PaymentResultPayload'
+    PaymentFailed:
+      name: payment.failed
+      title: Payment failed
+      summary: Published when payment fails.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/PaymentFailedPayload'
+    DeliveryRequested:
+      name: notification.delivery_requested
+      title: Delivery requested
+      summary: Published when notification delivery handling starts.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/DeliveryPayload'
+    NotificationSent:
+      name: notification.sent
+      title: Notification sent
+      summary: Published when notification delivery succeeds.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/DeliveryResultPayload'
+    NotificationFailed:
+      name: notification.failed
+      title: Notification failed
+      summary: Published when notification delivery fails.
+      contentType: application/protobuf
+      traits:
+        - $ref: '#/components/messageTraits/commonHeaders'
+      payload:
+        $ref: '#/components/schemas/DeliveryFailedPayload'
+  schemas:
+    ProductPayload:
+      type: object
+      properties:
+        productId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        price:
+          type: integer
+        currency:
+          type: string
+        categoryId:
+          type: string
+    StockReservedPayload:
+      type: object
+      properties:
+        orderId:
+          type: string
+        reservationId:
+          type: string
+        productId:
+          type: string
+        quantity:
+          type: integer
+        remainingAvailable:
+          type: integer
+    StockReserveFailedPayload:
+      type: object
+      properties:
+        orderId:
+          type: string
+        productId:
+          type: string
+        quantity:
+          type: integer
+        reasonCode:
+          type: string
+        reasonMessage:
+          type: string
+    StockReleasedPayload:
+      type: object
+      properties:
+        orderId:
+          type: string
+        reservationId:
+          type: string
+        productId:
+          type: string
+        quantity:
+          type: integer
+    OrderItemPayload:
+      type: object
+      properties:
+        productId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        quantity:
+          type: integer
+        unitPrice:
+          type: integer
+        lineTotal:
+          type: integer
+    OrderPayload:
+      type: object
+      properties:
+        orderId:
+          type: string
+        userId:
+          type: string
+        status:
+          type: string
+        currency:
+          type: string
+        totalAmount:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItemPayload'
+    OrderResultPayload:
+      type: object
+      properties:
+        orderId:
+          type: string
+        userId:
+          type: string
+        status:
+          type: string
+        currency:
+          type: string
+        totalAmount:
+          type: integer
+        confirmedAt:
+          type: string
+          format: date-time
+    OrderCancelledPayload:
+      type: object
+      properties:
+        orderId:
+          type: string
+        userId:
+          type: string
+        status:
+          type: string
+        cancelReasonCode:
+          type: string
+        cancelReasonMessage:
+          type: string
+        cancelledAt:
+          type: string
+          format: date-time
+    PaymentPayload:
+      type: object
+      properties:
+        paymentAttemptId:
+          type: string
+        orderId:
+          type: string
+        status:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+        providerName:
+          type: string
+    PaymentResultPayload:
+      type: object
+      properties:
+        paymentAttemptId:
+          type: string
+        orderId:
+          type: string
+        status:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+        providerName:
+          type: string
+        providerReference:
+          type: string
+        processedAt:
+          type: string
+          format: date-time
+    PaymentFailedPayload:
+      type: object
+      properties:
+        paymentAttemptId:
+          type: string
+        orderId:
+          type: string
+        status:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+        providerName:
+          type: string
+        failureCode:
+          type: string
+        failureMessage:
+          type: string
+        processedAt:
+          type: string
+          format: date-time
+    DeliveryPayload:
+      type: object
+      properties:
+        deliveryRequestId:
+          type: string
+        sourceEventName:
+          type: string
+        channel:
+          type: string
+        recipient:
+          type: string
+        templateKey:
+          type: string
+        status:
+          type: string
+    DeliveryResultPayload:
+      type: object
+      properties:
+        deliveryRequestId:
+          type: string
+        sourceEventName:
+          type: string
+        channel:
+          type: string
+        recipient:
+          type: string
+        status:
+          type: string
+        sentAt:
+          type: string
+          format: date-time
+    DeliveryFailedPayload:
+      type: object
+      properties:
+        deliveryRequestId:
+          type: string
+        sourceEventName:
+          type: string
+        channel:
+          type: string
+        recipient:
+          type: string
+        status:
+          type: string
+        failureCode:
+          type: string
+        failureMessage:
+          type: string
+        failedAt:
+          type: string
+          format: date-time

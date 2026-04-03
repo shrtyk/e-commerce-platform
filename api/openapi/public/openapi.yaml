@@ -2,7 +2,7 @@ openapi: 3.0.0
 info:
   title: E-Commerce Platform Public API
   version: 0.1.0
-  description: Public REST API surface exposed through the gateway for the first production-ready version.
+  description: Initial version of REST API surface.
 servers:
   - url: http://127.0.0.1:8080
     description: Local gateway
