@@ -1,0 +1,21 @@
+services:
+  notification-postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${NOTIFICATION_POSTGRES_DB:-notification}
+      POSTGRES_USER: ${NOTIFICATION_POSTGRES_USER:-notification}
+      POSTGRES_PASSWORD: ${NOTIFICATION_POSTGRES_PASSWORD:-notification}
+    ports:
+      - "${NOTIFICATION_POSTGRES_PORT:-5438}:5432"
+    volumes:
+      - notification-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  notification-postgres-data:
