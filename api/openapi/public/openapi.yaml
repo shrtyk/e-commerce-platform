@@ -1,0 +1,553 @@
+openapi: 3.0.0
+info:
+  title: E-Commerce Platform Public API
+  version: 0.1.0
+  description: Public REST API surface exposed through the gateway for the first production-ready version.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local gateway
+tags:
+  - name: Auth
+    description: Authentication and token operations.
+  - name: Profile
+    description: Current user profile operations.
+  - name: Catalog
+    description: Public product catalog operations.
+  - name: Cart
+    description: Shopping cart operations.
+  - name: Orders
+    description: Checkout and order retrieval operations.
+security:
+  - bearerAuth: []
+paths:
+  /v1/auth/register:
+    post:
+      tags: [Auth]
+      operationId: registerUser
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokensResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: loginUser
+      summary: Authenticate user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokensResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Refresh access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Tokens refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokensResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/profile/me:
+    get:
+      tags: [Profile]
+      operationId: getMyProfile
+      summary: Get current user profile
+      responses:
+        '200':
+          description: Profile details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [Profile]
+      operationId: updateMyProfile
+      summary: Update current user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/products:
+    get:
+      tags: [Catalog]
+      operationId: listPublishedProducts
+      summary: List published products
+      responses:
+        '200':
+          description: Product list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductListResponse'
+  /v1/products/{productId}:
+    get:
+      tags: [Catalog]
+      operationId: getProductById
+      summary: Get product by id
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Product details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/cart:
+    get:
+      tags: [Cart]
+      operationId: getActiveCart
+      summary: Get active cart
+      responses:
+        '200':
+          description: Active cart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/cart/items:
+    post:
+      tags: [Cart]
+      operationId: addCartItem
+      summary: Add item to cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddCartItemRequest'
+      responses:
+        '200':
+          description: Updated cart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/cart/items/{cartItemId}:
+    patch:
+      tags: [Cart]
+      operationId: updateCartItem
+      summary: Update cart item quantity
+      parameters:
+        - $ref: '#/components/parameters/CartItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCartItemRequest'
+      responses:
+        '200':
+          description: Updated cart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Cart]
+      operationId: removeCartItem
+      summary: Remove item from cart
+      parameters:
+        - $ref: '#/components/parameters/CartItemId'
+      responses:
+        '204':
+          description: Item removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/orders:
+    post:
+      tags: [Orders]
+      operationId: createOrder
+      summary: Checkout active cart and create order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '202':
+          description: Checkout accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/orders/{orderId}:
+    get:
+      tags: [Orders]
+      operationId: getOrderById
+      summary: Get order by id
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Order details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: string
+    CartItemId:
+      name: cartItemId
+      in: path
+      required: true
+      schema:
+        type: string
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication required or invalid token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Resource conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        correlationId:
+          type: string
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          x-oapi-codegen-extra-tags:
+            validate: "required,email,max=254"
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          x-oapi-codegen-extra-tags:
+            validate: "required,min=8,max=72"
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          x-oapi-codegen-extra-tags:
+            validate: "omitempty,min=1,max=100"
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          x-oapi-codegen-extra-tags:
+            validate: "required,email,max=254"
+        password:
+          type: string
+          minLength: 1
+          maxLength: 72
+          x-oapi-codegen-extra-tags:
+            validate: "required,min=1,max=72"
+    RefreshTokenRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+          x-oapi-codegen-extra-tags:
+            validate: "required"
+    AuthTokensResponse:
+      type: object
+      required: [accessToken, refreshToken]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+    UserProfile:
+      type: object
+      required: [userId, email, status]
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [active, disabled]
+        displayName:
+          type: string
+    UpdateProfileRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          x-oapi-codegen-extra-tags:
+            validate: "omitempty,min=1,max=100"
+    Product:
+      type: object
+      required: [productId, sku, name, price, currency, status]
+      properties:
+        productId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [draft, published, archived]
+        price:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+        categoryId:
+          type: string
+    ProductListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+    CartItem:
+      type: object
+      required: [cartItemId, productId, quantity, unitPrice, lineTotal]
+      properties:
+        cartItemId:
+          type: string
+        productId:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          type: integer
+          minimum: 0
+        lineTotal:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+        name:
+          type: string
+        sku:
+          type: string
+    Cart:
+      type: object
+      required: [cartId, userId, status, currency, items, totalAmount]
+      properties:
+        cartId:
+          type: string
+        userId:
+          type: string
+        status:
+          type: string
+          enum: [active, checked_out, expired]
+        currency:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CartItem'
+        totalAmount:
+          type: integer
+          minimum: 0
+    AddCartItemRequest:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: string
+          minLength: 1
+          x-oapi-codegen-extra-tags:
+            validate: "required"
+        quantity:
+          type: integer
+          minimum: 1
+          x-oapi-codegen-extra-tags:
+            validate: "required,min=1"
+    UpdateCartItemRequest:
+      type: object
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          x-oapi-codegen-extra-tags:
+            validate: "required,min=1"
+    CreateOrderRequest:
+      type: object
+      properties:
+        paymentMethod:
+          type: string
+          description: Placeholder for the initial payment method selection model.
+          minLength: 1
+          maxLength: 50
+          x-oapi-codegen-extra-tags:
+            validate: "omitempty,min=1,max=50"
+    OrderItem:
+      type: object
+      required: [productId, quantity, unitPrice, lineTotal]
+      properties:
+        productId:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          type: integer
+          minimum: 0
+        lineTotal:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+        name:
+          type: string
+        sku:
+          type: string
+    Order:
+      type: object
+      required: [orderId, userId, status, currency, totalAmount, items]
+      properties:
+        orderId:
+          type: string
+        userId:
+          type: string
+        status:
+          type: string
+          enum: [pending, awaiting_stock, awaiting_payment, confirmed, cancelled]
+        currency:
+          type: string
+        totalAmount:
+          type: integer
+          minimum: 0
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
