@@ -7,5 +7,5 @@ use (
 	./internal/order-svc
 	./internal/payment-svc
 	./internal/product-svc
-	./internal/user-svc
+	./internal/identity-svc
 )
