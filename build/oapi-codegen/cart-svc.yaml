@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/HEAD/configuration-schema.json
 package: dto
-output: internal/cart-svc/adapters/http/dto/dto.gen.go
+output: internal/cart-svc/internal/adapters/inbound/http/dto/dto.gen.go
 generate:
   models: true
   chi-server: true
