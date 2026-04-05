@@ -11,6 +11,16 @@ import (
 	"github.com/google/uuid"
 )
 
+type Session struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+	TokenHash string
+	ExpiresAt time.Time
+	RevokedAt sql.NullTime
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type User struct {
 	UserID       uuid.UUID
 	Email        string
