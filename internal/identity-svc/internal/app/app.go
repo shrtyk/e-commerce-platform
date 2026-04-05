@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"time"
 
-	commonconfig "github.com/shrtyk/e-commerce-platform/internal/common/config"
+	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/config"
 )
 
 type Application struct {
-	Config   *commonconfig.Config
+	Config   *config.Config
 	Database *sql.DB
 	Logger   *slog.Logger
 	Handler  http.Handler
@@ -23,7 +23,7 @@ type option func(*Application)
 var errConfigRequired = errors.New("app config is required")
 
 func NewApplication(
-	cfg *commonconfig.Config,
+	cfg *config.Config,
 	handler http.Handler,
 	db *sql.DB,
 	opts ...option,
@@ -69,7 +69,7 @@ func (a *Application) Run(ctx context.Context) error {
 
 func runHTTPServer(
 	ctx context.Context,
-	cfg commonconfig.Config,
+	cfg config.Config,
 	handler http.Handler,
 ) error {
 	srv := &http.Server{

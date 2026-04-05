@@ -1,0 +1,25 @@
+package config_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	config "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/config"
+)
+
+func TestMustLoadAuthSessionTTL(t *testing.T) {
+	t.Setenv("SERVICE_NAME", "identity")
+	t.Setenv("POSTGRES_HOST", "identity-postgres")
+	t.Setenv("POSTGRES_DB", "identity")
+	t.Setenv("POSTGRES_USER", "identity")
+	t.Setenv("POSTGRES_PASSWORD", "identity")
+	t.Setenv("KAFKA_BROKERS", "kafka:9092")
+	t.Setenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317")
+	t.Setenv("AUTH_SESSION_TTL", "24h")
+
+	cfg := config.MustLoad()
+	require.Equal(t, 24*time.Hour, cfg.Auth.SessionTTL)
+}

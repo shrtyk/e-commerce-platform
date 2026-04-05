@@ -7,15 +7,15 @@ import (
 	"os/signal"
 	"syscall"
 
-	commonconfig "github.com/shrtyk/e-commerce-platform/internal/common/config"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http"
 	adapterpostgres "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/postgres"
 	identityapp "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/app"
+	config "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/config"
 )
 
 func main() {
-	cfg := commonconfig.MustLoad()
-	db := adapterpostgres.MustCreatePostgres(cfg)
+	cfg := config.MustLoad()
+	db := adapterpostgres.MustCreatePostgres(cfg.Postgres)
 	ctx, cancel := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,

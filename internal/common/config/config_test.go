@@ -3,6 +3,7 @@ package config_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,6 +56,10 @@ func TestMustLoad(t *testing.T) {
 				is.Equal(":9090", cfg.Service.GRPCAddr)
 				is.Equal("5432", cfg.Postgres.Port)
 				is.Equal("disable", cfg.Postgres.SSLMode)
+				is.Equal(25, cfg.Postgres.MaxOpenConns)
+				is.Equal(10, cfg.Postgres.MaxIdleConns)
+				is.Equal(5*time.Minute, cfg.Postgres.ConnMaxLifetime)
+				is.Equal(1*time.Minute, cfg.Postgres.ConnMaxIdleTime)
 				is.False(cfg.Redis.Enabled)
 				is.False(cfg.OTel.Insecure)
 				is.Equal(
