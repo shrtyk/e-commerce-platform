@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,7 +10,33 @@ import (
 	config "github.com/shrtyk/e-commerce-platform/internal/common/config"
 )
 
+const (
+	defaultKafkaBrokers = "kafka:9092"
+	schemaRegistryURL   = "http://schema-registry:8081"
+	otelEndpoint        = "otel-collector:4317"
+)
+
+func serviceEnv(service string) map[string]string {
+	return map[string]string{
+		"SERVICE_NAME":                service,
+		"POSTGRES_HOST":               fmt.Sprintf("%s-postgres", service),
+		"POSTGRES_DB":                 service,
+		"POSTGRES_USER":               service,
+		"POSTGRES_PASSWORD":           service,
+		"KAFKA_BROKERS":               defaultKafkaBrokers,
+		"SCHEMA_REGISTRY_URL":         schemaRegistryURL,
+		"OTEL_EXPORTER_OTLP_ENDPOINT": otelEndpoint,
+	}
+}
+
 func TestMustLoad(t *testing.T) {
+	identityEnv := serviceEnv("identity")
+	missingSchemaRegistryEnv := serviceEnv("identity")
+	delete(missingSchemaRegistryEnv, "SCHEMA_REGISTRY_URL")
+	cartEnv := serviceEnv("cart")
+	cartEnv["OTEL_EXPORTER_OTLP_INSECURE"] = "true"
+	cartEnv["REDIS_ADDR"] = "cart-redis:6379"
+
 	tests := []struct {
 		name     string
 		env      map[string]string
@@ -18,16 +45,7 @@ func TestMustLoad(t *testing.T) {
 	}{
 		{
 			name: "defaults",
-			env: map[string]string{
-				"SERVICE_NAME":                "identity",
-				"POSTGRES_HOST":               "identity-postgres",
-				"POSTGRES_DB":                 "identity",
-				"POSTGRES_USER":               "identity",
-				"POSTGRES_PASSWORD":           "identity",
-				"KAFKA_BROKERS":               "kafka:9092",
-				"SCHEMA_REGISTRY_URL":         "http://schema-registry:8081",
-				"OTEL_EXPORTER_OTLP_ENDPOINT": "otel-collector:4317",
-			},
+			env:  identityEnv,
 			assertFn: func(t *testing.T, cfg config.Config) {
 				is := assert.New(t)
 
@@ -46,37 +64,18 @@ func TestMustLoad(t *testing.T) {
 			},
 		},
 		{
-			name: "missing schema registry",
-			env: map[string]string{
-				"SERVICE_NAME":                "identity",
-				"POSTGRES_HOST":               "identity-postgres",
-				"POSTGRES_DB":                 "identity",
-				"POSTGRES_USER":               "identity",
-				"POSTGRES_PASSWORD":           "identity",
-				"KAFKA_BROKERS":               "kafka:9092",
-				"OTEL_EXPORTER_OTLP_ENDPOINT": "otel-collector:4317",
-			},
+			name:     "missing schema registry",
+			env:      missingSchemaRegistryEnv,
 			panicMsg: `field "URL" is required but the value is not provided`,
 		},
 		{
 			name: "optional redis",
-			env: map[string]string{
-				"SERVICE_NAME":                "cart",
-				"POSTGRES_HOST":               "cart-postgres",
-				"POSTGRES_DB":                 "cart",
-				"POSTGRES_USER":               "cart",
-				"POSTGRES_PASSWORD":           "cart",
-				"KAFKA_BROKERS":               "kafka:9092",
-				"SCHEMA_REGISTRY_URL":         "http://schema-registry:8081",
-				"OTEL_EXPORTER_OTLP_ENDPOINT": "otel-collector:4317",
-				"OTEL_EXPORTER_OTLP_INSECURE": "true",
-				"REDIS_ADDR":                  "cart-redis:6379",
-			},
+			env:  cartEnv,
 			assertFn: func(t *testing.T, cfg config.Config) {
 				is := assert.New(t)
 
 				is.True(cfg.Redis.Enabled)
-				is.Equal("cart-redis:6379", cfg.Redis.Addr)
+				is.Equal(cartEnv["REDIS_ADDR"], cfg.Redis.Addr)
 				is.True(cfg.OTel.Insecure)
 			},
 		},
