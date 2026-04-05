@@ -24,12 +24,13 @@ type RegisterUserInput struct {
 }
 
 type RegisterUserResult struct {
-	ID          string
-	Email       string
-	DisplayName string
-	Status      domain.UserStatus
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	Email        string
+	DisplayName  string
+	Status       domain.UserStatus
+	RefreshToken string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type LoginUserInput struct {
@@ -40,17 +41,23 @@ type LoginUserInput struct {
 type LoginUserResult RegisterUserResult
 
 type AuthService struct {
-	users  outbound.UserRepository
-	hasher outbound.PasswordHasher
+	users      outbound.UserRepository
+	sessions   outbound.SessionRepository
+	hasher     outbound.PasswordHasher
+	sessionTTL time.Duration
 }
 
 func NewAuthService(
 	users outbound.UserRepository,
+	sessions outbound.SessionRepository,
 	hasher outbound.PasswordHasher,
+	sessionTTL time.Duration,
 ) *AuthService {
 	return &AuthService{
-		users:  users,
-		hasher: hasher,
+		users:      users,
+		sessions:   sessions,
+		hasher:     hasher,
+		sessionTTL: sessionTTL,
 	}
 }
 
@@ -88,7 +95,15 @@ func (s *AuthService) RegisterUser(
 		return RegisterUserResult{}, fmt.Errorf("create user: %w", err)
 	}
 
-	return toRegisterUserResult(createdUser), nil
+	refreshToken, err := s.createSession(ctx, createdUser.ID)
+	if err != nil {
+		return RegisterUserResult{}, err
+	}
+
+	result := toRegisterUserResult(createdUser)
+	result.RefreshToken = refreshToken
+
+	return result, nil
 }
 
 func (s *AuthService) LoginUser(
@@ -116,7 +131,15 @@ func (s *AuthService) LoginUser(
 		return LoginUserResult{}, ErrInvalidCredentials
 	}
 
-	return toLoginUserResult(*user), nil
+	refreshToken, err := s.createSession(ctx, user.ID)
+	if err != nil {
+		return LoginUserResult{}, err
+	}
+
+	result := toLoginUserResult(*user)
+	result.RefreshToken = refreshToken
+
+	return result, nil
 }
 
 func normalizeEmail(email string) string {
