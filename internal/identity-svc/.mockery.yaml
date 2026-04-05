@@ -1,0 +1,16 @@
+all: false
+formatter: goimports
+template: testify
+filename: mocks.go
+dir: "{{.InterfaceDir}}"
+pkgname: "{{.SrcPackageName}}mocks"
+structname: "{{.Mock}}{{.InterfaceName}}"
+recursive: false
+force-file-write: true
+
+packages:
+  github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports:
+    config:
+      recursive: true
+      all: true
+      dir: "{{.InterfaceDir}}/mocks"
