@@ -36,7 +36,7 @@ type Postgres struct {
 	MaxOpenConns    int           `env:"MAX_OPEN_CONNS" env-default:"25"`
 	MaxIdleConns    int           `env:"MAX_IDLE_CONNS" env-default:"10"`
 	ConnMaxLifetime time.Duration `env:"CONN_MAX_LIFETIME" env-default:"5m"`
-	ConnMaxIdleTime time.Duration `env:"CONN_NAX_IDLETIME" env-default:"1m"`
+	ConnMaxIdleTime time.Duration `env:"CONN_MAX_IDLETIME" env-default:"1m"`
 }
 
 type Redis struct {
