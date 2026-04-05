@@ -17,7 +17,7 @@ func TestMustLoad(t *testing.T) {
 		assertFn func(t *testing.T, cfg config.Config)
 	}{
 		{
-			name: "uses defaults and optional redis remains disabled",
+			name: "defaults",
 			env: map[string]string{
 				"SERVICE_NAME":                "identity",
 				"POSTGRES_HOST":               "identity-postgres",
@@ -46,7 +46,7 @@ func TestMustLoad(t *testing.T) {
 			},
 		},
 		{
-			name: "requires schema registry url",
+			name: "missing schema registry",
 			env: map[string]string{
 				"SERVICE_NAME":                "identity",
 				"POSTGRES_HOST":               "identity-postgres",
@@ -59,7 +59,7 @@ func TestMustLoad(t *testing.T) {
 			panicMsg: `field "URL" is required but the value is not provided`,
 		},
 		{
-			name: "parses optional redis and otel insecure flag",
+			name: "optional redis",
 			env: map[string]string{
 				"SERVICE_NAME":                "cart",
 				"POSTGRES_HOST":               "cart-postgres",

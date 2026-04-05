@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"net/url"
 
 	"github.com/ilyakaznacheev/cleanenv"
@@ -63,10 +64,15 @@ func MustLoad() Config {
 }
 
 func (p Postgres) DSN() string {
+	host := p.Host
+	if p.Port != "" {
+		host = net.JoinHostPort(p.Host, p.Port)
+	}
+
 	url := &url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword(p.User, p.Password),
-		Host:   p.Host,
+		Host:   host,
 		Path:   p.Database,
 	}
 
