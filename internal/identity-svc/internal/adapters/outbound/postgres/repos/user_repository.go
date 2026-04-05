@@ -12,7 +12,7 @@ import (
 )
 
 type UserRepository struct {
-	queries *sqlc.Queries
+	queries sqlc.Querier
 }
 
 func NewUserRepository(db *sql.DB) *UserRepository {
