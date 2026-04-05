@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestHandlerServesExpectedBootstrapRoutes(t *testing.T) {
+func TestHandlerRoutes(t *testing.T) {
 	tests := []struct {
 		name       string
 		method     string
@@ -17,14 +17,14 @@ func TestHandlerServesExpectedBootstrapRoutes(t *testing.T) {
 		body       string
 	}{
 		{
-			name:       "health endpoint returns ok",
+			name:       "healthz",
 			method:     http.MethodGet,
 			target:     "/healthz",
 			statusCode: http.StatusOK,
 			body:       "ok",
 		},
 		{
-			name:       "generated login route is mounted",
+			name:       "login route",
 			method:     http.MethodPost,
 			target:     "/v1/auth/login",
 			statusCode: http.StatusNotImplemented,
