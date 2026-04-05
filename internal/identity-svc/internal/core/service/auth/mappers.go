@@ -12,3 +12,7 @@ func toRegisterUserResult(user domain.User) RegisterUserResult {
 		UpdatedAt:   user.UpdatedAt,
 	}
 }
+
+func toLoginUserResult(user domain.User) LoginUserResult {
+	return LoginUserResult(toRegisterUserResult(user))
+}

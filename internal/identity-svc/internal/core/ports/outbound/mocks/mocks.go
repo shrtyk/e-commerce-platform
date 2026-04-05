@@ -98,6 +98,72 @@ func (_c *MockPasswordHasher_Hash_Call) RunAndReturn(run func(password string) (
 	return _c
 }
 
+// Verify provides a mock function for the type MockPasswordHasher
+func (_mock *MockPasswordHasher) Verify(password string, hash string) (bool, error) {
+	ret := _mock.Called(password, hash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Verify")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(string, string) (bool, error)); ok {
+		return returnFunc(password, hash)
+	}
+	if returnFunc, ok := ret.Get(0).(func(string, string) bool); ok {
+		r0 = returnFunc(password, hash)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(string, string) error); ok {
+		r1 = returnFunc(password, hash)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockPasswordHasher_Verify_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Verify'
+type MockPasswordHasher_Verify_Call struct {
+	*mock.Call
+}
+
+// Verify is a helper method to define mock.On call
+//   - password string
+//   - hash string
+func (_e *MockPasswordHasher_Expecter) Verify(password interface{}, hash interface{}) *MockPasswordHasher_Verify_Call {
+	return &MockPasswordHasher_Verify_Call{Call: _e.mock.On("Verify", password, hash)}
+}
+
+func (_c *MockPasswordHasher_Verify_Call) Run(run func(password string, hash string)) *MockPasswordHasher_Verify_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockPasswordHasher_Verify_Call) Return(b bool, err error) *MockPasswordHasher_Verify_Call {
+	_c.Call.Return(b, err)
+	return _c
+}
+
+func (_c *MockPasswordHasher_Verify_Call) RunAndReturn(run func(password string, hash string) (bool, error)) *MockPasswordHasher_Verify_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewMockUserRepository creates a new instance of MockUserRepository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewMockUserRepository(t interface {

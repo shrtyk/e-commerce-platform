@@ -39,7 +39,9 @@ func TestRegisterUserCreatesUser(t *testing.T) {
 	repo.EXPECT().
 		GetByEmail(testifymock.Anything, normalizedEmail).
 		Return(nil, outbound.ErrUserNotFound)
-	hasher.EXPECT().Hash(pwd).Return(pwdHash, nil)
+	hasher.EXPECT().
+		Hash(pwd).
+		Return(pwdHash, nil)
 	repo.EXPECT().
 		Create(testifymock.Anything, expectedUser).
 		Return(domain.User{
@@ -90,7 +92,9 @@ func TestRegisterUserHashError(t *testing.T) {
 	repo.EXPECT().
 		GetByEmail(testifymock.Anything, registeredEmail).
 		Return(nil, outbound.ErrUserNotFound)
-	hasher.EXPECT().Hash(strongPassword).Return("", errors.New("hash failed"))
+	hasher.EXPECT().
+		Hash(strongPassword).
+		Return("", errors.New("hash failed"))
 
 	_, err := auth.RegisterUser(context.Background(), RegisterUserInput{
 		Email:    registeredEmail,
@@ -146,4 +150,110 @@ func TestRegisterUserRepoError(t *testing.T) {
 			require.ErrorContains(t, err, tt.expectedText)
 		})
 	}
+}
+
+func TestLoginUserReturnsUser(t *testing.T) {
+	userUUID := uuid.New()
+	normalizedEmail := registeredEmail
+	repo := outboundmocks.NewMockUserRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	auth := NewAuthService(repo, hasher)
+	storedUser := &domain.User{
+		ID:           userUUID.String(),
+		Email:        normalizedEmail,
+		PasswordHash: "stored-hash",
+		DisplayName:  "John Doe",
+		Status:       domain.UserStatusActive,
+	}
+
+	repo.EXPECT().
+		GetByEmail(testifymock.Anything, normalizedEmail).
+		Return(storedUser, nil)
+	hasher.EXPECT().
+		Verify(strongPassword, storedUser.PasswordHash).
+		Return(true, nil)
+
+	result, err := auth.LoginUser(context.Background(), LoginUserInput{
+		Email:    "  USER@Example.com  ",
+		Password: strongPassword,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, storedUser.ID, result.ID)
+	require.Equal(t, normalizedEmail, result.Email)
+	require.Equal(t, storedUser.DisplayName, result.DisplayName)
+	require.Equal(t, storedUser.Status, result.Status)
+}
+
+func TestLoginUserRejectsInvalidCredentials(t *testing.T) {
+	tests := []struct {
+		name      string
+		user      *domain.User
+		lookupErr error
+		verified  bool
+	}{
+		{
+			name:      "missing user",
+			lookupErr: outbound.ErrUserNotFound,
+		},
+		{
+			name: "bad password",
+			user: &domain.User{
+				ID:           uuid.NewString(),
+				Email:        registeredEmail,
+				PasswordHash: "stored-hash",
+				Status:       domain.UserStatusActive,
+			},
+			verified: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := outboundmocks.NewMockUserRepository(t)
+			hasher := outboundmocks.NewMockPasswordHasher(t)
+			auth := NewAuthService(repo, hasher)
+
+			repo.EXPECT().
+				GetByEmail(testifymock.Anything, registeredEmail).
+				Return(tt.user, tt.lookupErr)
+
+			if tt.user != nil {
+				hasher.EXPECT().Verify(strongPassword, tt.user.PasswordHash).Return(tt.verified, nil)
+			}
+
+			_, err := auth.LoginUser(context.Background(), LoginUserInput{
+				Email:    registeredEmail,
+				Password: strongPassword,
+			})
+
+			require.ErrorIs(t, err, ErrInvalidCredentials)
+		})
+	}
+}
+
+func TestLoginUserVerifyError(t *testing.T) {
+	repo := outboundmocks.NewMockUserRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	auth := NewAuthService(repo, hasher)
+	storedUser := &domain.User{
+		ID:           uuid.NewString(),
+		Email:        registeredEmail,
+		PasswordHash: "stored-hash",
+		Status:       domain.UserStatusActive,
+	}
+
+	repo.EXPECT().
+		GetByEmail(testifymock.Anything, registeredEmail).
+		Return(storedUser, nil)
+	hasher.EXPECT().
+		Verify(strongPassword, storedUser.PasswordHash).
+		Return(false, errors.New("bcrypt down"))
+
+	_, err := auth.LoginUser(context.Background(), LoginUserInput{
+		Email:    registeredEmail,
+		Password: strongPassword,
+	})
+
+	require.ErrorContains(t, err, "verify password")
 }

@@ -25,3 +25,15 @@ func (h *Hasher) Hash(password string) (string, error) {
 
 	return string(hash), nil
 }
+
+func (h *Hasher) Verify(password, hash string) (bool, error) {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	if err == nil {
+		return true, nil
+	}
+	if err == bcrypt.ErrMismatchedHashAndPassword {
+		return false, nil
+	}
+
+	return false, err
+}
