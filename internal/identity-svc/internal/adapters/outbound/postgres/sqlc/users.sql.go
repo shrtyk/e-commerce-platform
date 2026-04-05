@@ -8,18 +8,22 @@ package sqlc
 import (
 	"context"
 	"database/sql"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO
-  users (email, password_hash, display_name, status)
+  users (email, password_hash, display_name, role_code, status)
 VALUES
-  ($1, $2, $3, $4)
+  ($1, $2, $3, $4, $5)
 RETURNING
   user_id,
   email,
   password_hash,
   display_name,
+  role_code,
   status,
   created_at,
   updated_at
@@ -29,22 +33,36 @@ type CreateUserParams struct {
 	Email        string
 	PasswordHash string
 	DisplayName  sql.NullString
+	RoleCode     string
 	Status       string
 }
 
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
+type CreateUserRow struct {
+	UserID       uuid.UUID
+	Email        string
+	PasswordHash string
+	DisplayName  sql.NullString
+	RoleCode     string
+	Status       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
 	row := q.db.QueryRowContext(ctx, createUser,
 		arg.Email,
 		arg.PasswordHash,
 		arg.DisplayName,
+		arg.RoleCode,
 		arg.Status,
 	)
-	var i User
+	var i CreateUserRow
 	err := row.Scan(
 		&i.UserID,
 		&i.Email,
 		&i.PasswordHash,
 		&i.DisplayName,
+		&i.RoleCode,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -58,6 +76,7 @@ SELECT
   email,
   password_hash,
   display_name,
+  role_code,
   status,
   created_at,
   updated_at
@@ -67,14 +86,26 @@ WHERE
   email = $1
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+type GetUserByEmailRow struct {
+	UserID       uuid.UUID
+	Email        string
+	PasswordHash string
+	DisplayName  sql.NullString
+	RoleCode     string
+	Status       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error) {
 	row := q.db.QueryRowContext(ctx, getUserByEmail, email)
-	var i User
+	var i GetUserByEmailRow
 	err := row.Scan(
 		&i.UserID,
 		&i.Email,
 		&i.PasswordHash,
 		&i.DisplayName,
+		&i.RoleCode,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,

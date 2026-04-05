@@ -27,7 +27,8 @@ func (r *UserRepository) Create(ctx context.Context, user domain.User) (domain.U
 			String: user.DisplayName,
 			Valid:  user.DisplayName != "",
 		},
-		Status: string(user.Status),
+		RoleCode: string(user.Role),
+		Status:   string(user.Status),
 	})
 	if err != nil {
 		return domain.User{}, fmt.Errorf("create user: %w", err)
@@ -37,6 +38,7 @@ func (r *UserRepository) Create(ctx context.Context, user domain.User) (domain.U
 		ID:           result.UserID.String(),
 		Email:        result.Email,
 		PasswordHash: result.PasswordHash,
+		Role:         domain.UserRole(result.RoleCode),
 		Status:       domain.UserStatus(result.Status),
 		CreatedAt:    result.CreatedAt,
 		UpdatedAt:    result.UpdatedAt,
@@ -62,6 +64,7 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*domain.
 		ID:           result.UserID.String(),
 		Email:        result.Email,
 		PasswordHash: result.PasswordHash,
+		Role:         domain.UserRole(result.RoleCode),
 		Status:       domain.UserStatus(result.Status),
 		CreatedAt:    result.CreatedAt,
 		UpdatedAt:    result.UpdatedAt,

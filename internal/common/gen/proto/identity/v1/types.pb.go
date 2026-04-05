@@ -70,12 +70,62 @@ func (UserStatus) EnumDescriptor() ([]byte, []int) {
 	return file_identity_v1_types_proto_rawDescGZIP(), []int{0}
 }
 
+type UserRole int32
+
+const (
+	UserRole_USER_ROLE_UNSPECIFIED UserRole = 0
+	UserRole_USER_ROLE_USER        UserRole = 1
+	UserRole_USER_ROLE_ADMIN       UserRole = 2
+)
+
+// Enum value maps for UserRole.
+var (
+	UserRole_name = map[int32]string{
+		0: "USER_ROLE_UNSPECIFIED",
+		1: "USER_ROLE_USER",
+		2: "USER_ROLE_ADMIN",
+	}
+	UserRole_value = map[string]int32{
+		"USER_ROLE_UNSPECIFIED": 0,
+		"USER_ROLE_USER":        1,
+		"USER_ROLE_ADMIN":       2,
+	}
+)
+
+func (x UserRole) Enum() *UserRole {
+	p := new(UserRole)
+	*p = x
+	return p
+}
+
+func (x UserRole) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UserRole) Descriptor() protoreflect.EnumDescriptor {
+	return file_identity_v1_types_proto_enumTypes[1].Descriptor()
+}
+
+func (UserRole) Type() protoreflect.EnumType {
+	return &file_identity_v1_types_proto_enumTypes[1]
+}
+
+func (x UserRole) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UserRole.Descriptor instead.
+func (UserRole) EnumDescriptor() ([]byte, []int) {
+	return file_identity_v1_types_proto_rawDescGZIP(), []int{1}
+}
+
 type UserProfile struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	Email         string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
 	Status        UserStatus             `protobuf:"varint,3,opt,name=status,proto3,enum=ecommerce.identity.v1.UserStatus" json:"status,omitempty"`
 	DisplayName   string                 `protobuf:"bytes,4,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	Role          UserRole               `protobuf:"varint,5,opt,name=role,proto3,enum=ecommerce.identity.v1.UserRole" json:"role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -138,21 +188,33 @@ func (x *UserProfile) GetDisplayName() string {
 	return ""
 }
 
+func (x *UserProfile) GetRole() UserRole {
+	if x != nil {
+		return x.Role
+	}
+	return UserRole_USER_ROLE_UNSPECIFIED
+}
+
 var File_identity_v1_types_proto protoreflect.FileDescriptor
 
 const file_identity_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x17identity/v1/types.proto\x12\x15ecommerce.identity.v1\"\x9a\x01\n" +
+	"\x17identity/v1/types.proto\x12\x15ecommerce.identity.v1\"\xcf\x01\n" +
 	"\vUserProfile\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x14\n" +
 	"\x05email\x18\x02 \x01(\tR\x05email\x129\n" +
 	"\x06status\x18\x03 \x01(\x0e2!.ecommerce.identity.v1.UserStatusR\x06status\x12!\n" +
-	"\fdisplay_name\x18\x04 \x01(\tR\vdisplayName*[\n" +
+	"\fdisplay_name\x18\x04 \x01(\tR\vdisplayName\x123\n" +
+	"\x04role\x18\x05 \x01(\x0e2\x1f.ecommerce.identity.v1.UserRoleR\x04role*[\n" +
 	"\n" +
 	"UserStatus\x12\x1b\n" +
 	"\x17USER_STATUS_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12USER_STATUS_ACTIVE\x10\x01\x12\x18\n" +
-	"\x14USER_STATUS_DISABLED\x10\x02BXZVgithub.com/shrtyk/e-commerce-platform/internal/common/gen/proto/identity/v1;identityv1b\x06proto3"
+	"\x14USER_STATUS_DISABLED\x10\x02*N\n" +
+	"\bUserRole\x12\x19\n" +
+	"\x15USER_ROLE_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eUSER_ROLE_USER\x10\x01\x12\x13\n" +
+	"\x0fUSER_ROLE_ADMIN\x10\x02BXZVgithub.com/shrtyk/e-commerce-platform/internal/common/gen/proto/identity/v1;identityv1b\x06proto3"
 
 var (
 	file_identity_v1_types_proto_rawDescOnce sync.Once
@@ -166,19 +228,21 @@ func file_identity_v1_types_proto_rawDescGZIP() []byte {
 	return file_identity_v1_types_proto_rawDescData
 }
 
-var file_identity_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_identity_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_identity_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_identity_v1_types_proto_goTypes = []any{
 	(UserStatus)(0),     // 0: ecommerce.identity.v1.UserStatus
-	(*UserProfile)(nil), // 1: ecommerce.identity.v1.UserProfile
+	(UserRole)(0),       // 1: ecommerce.identity.v1.UserRole
+	(*UserProfile)(nil), // 2: ecommerce.identity.v1.UserProfile
 }
 var file_identity_v1_types_proto_depIdxs = []int32{
 	0, // 0: ecommerce.identity.v1.UserProfile.status:type_name -> ecommerce.identity.v1.UserStatus
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 1: ecommerce.identity.v1.UserProfile.role:type_name -> ecommerce.identity.v1.UserRole
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_identity_v1_types_proto_init() }
@@ -191,7 +255,7 @@ func file_identity_v1_types_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_identity_v1_types_proto_rawDesc), len(file_identity_v1_types_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,

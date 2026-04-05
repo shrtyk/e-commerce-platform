@@ -7,6 +7,7 @@ func toRegisterUserResult(user domain.User) RegisterUserResult {
 		ID:          user.ID,
 		Email:       user.Email,
 		DisplayName: user.DisplayName,
+		Role:        user.Role,
 		Status:      user.Status,
 		CreatedAt:   user.CreatedAt,
 		UpdatedAt:   user.UpdatedAt,

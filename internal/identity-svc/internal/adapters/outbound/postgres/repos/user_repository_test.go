@@ -21,23 +21,26 @@ func TestUserRepositoryCreate(t *testing.T) {
 		Email:        "user@example.com",
 		PasswordHash: "hash",
 		DisplayName:  "Test User",
+		Role:         domain.UserRoleUser,
 		Status:       domain.UserStatusActive,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 	repo := &UserRepository{queries: stubQuerier{
-		createUserFunc: func(_ context.Context, arg sqlc.CreateUserParams) (sqlc.User, error) {
+		createUserFunc: func(_ context.Context, arg sqlc.CreateUserParams) (sqlc.CreateUserRow, error) {
 			require.Equal(t, user.Email, arg.Email)
 			require.Equal(t, user.PasswordHash, arg.PasswordHash)
 			require.Equal(t, user.DisplayName, arg.DisplayName.String)
 			require.True(t, arg.DisplayName.Valid)
+			require.Equal(t, string(user.Role), arg.RoleCode)
 			require.Equal(t, string(user.Status), arg.Status)
 
-			return sqlc.User{
+			return sqlc.CreateUserRow{
 				UserID:       userID,
 				Email:        user.Email,
 				PasswordHash: user.PasswordHash,
 				DisplayName:  sql.NullString{String: user.DisplayName, Valid: true},
+				RoleCode:     string(user.Role),
 				Status:       string(user.Status),
 				CreatedAt:    user.CreatedAt,
 				UpdatedAt:    user.UpdatedAt,
@@ -48,6 +51,7 @@ func TestUserRepositoryCreate(t *testing.T) {
 	createdUser, err := repo.Create(context.Background(), user)
 	require.NoError(t, err)
 	require.Equal(t, userID.String(), createdUser.ID)
+	require.Equal(t, domain.UserRoleUser, createdUser.Role)
 }
 
 func TestUserRepositoryGetByEmail(t *testing.T) {
@@ -56,14 +60,15 @@ func TestUserRepositoryGetByEmail(t *testing.T) {
 	email := "user@example.com"
 	displayName := "Test User"
 	repo := &UserRepository{queries: stubQuerier{
-		getUserByEmailFunc: func(_ context.Context, gotEmail string) (sqlc.User, error) {
+		getUserByEmailFunc: func(_ context.Context, gotEmail string) (sqlc.GetUserByEmailRow, error) {
 			require.Equal(t, email, gotEmail)
 
-			return sqlc.User{
+			return sqlc.GetUserByEmailRow{
 				UserID:       userID,
 				Email:        email,
 				PasswordHash: "hash",
 				DisplayName:  sql.NullString{String: displayName, Valid: true},
+				RoleCode:     string(domain.UserRoleAdmin),
 				Status:       string(domain.UserStatusActive),
 				CreatedAt:    now,
 				UpdatedAt:    now,
@@ -75,6 +80,7 @@ func TestUserRepositoryGetByEmail(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, user)
 	require.Equal(t, userID.String(), user.ID)
+	require.Equal(t, domain.UserRoleAdmin, user.Role)
 	require.Equal(t, domain.UserStatusActive, user.Status)
 	require.Equal(t, displayName, user.DisplayName)
 }
@@ -82,9 +88,9 @@ func TestUserRepositoryGetByEmail(t *testing.T) {
 func TestUserRepositoryGetByEmailNotFound(t *testing.T) {
 	email := "missing@example.com"
 	repo := &UserRepository{queries: stubQuerier{
-		getUserByEmailFunc: func(_ context.Context, gotEmail string) (sqlc.User, error) {
+		getUserByEmailFunc: func(_ context.Context, gotEmail string) (sqlc.GetUserByEmailRow, error) {
 			require.Equal(t, email, gotEmail)
-			return sqlc.User{}, sql.ErrNoRows
+			return sqlc.GetUserByEmailRow{}, sql.ErrNoRows
 		},
 	}}
 

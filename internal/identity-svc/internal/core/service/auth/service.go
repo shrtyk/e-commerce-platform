@@ -27,7 +27,9 @@ type RegisterUserResult struct {
 	ID           string
 	Email        string
 	DisplayName  string
+	Role         domain.UserRole
 	Status       domain.UserStatus
+	AccessToken  string
 	RefreshToken string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
@@ -44,6 +46,7 @@ type AuthService struct {
 	users      outbound.UserRepository
 	sessions   outbound.SessionRepository
 	hasher     outbound.PasswordHasher
+	tokens     outbound.TokenIssuer
 	sessionTTL time.Duration
 }
 
@@ -51,12 +54,14 @@ func NewAuthService(
 	users outbound.UserRepository,
 	sessions outbound.SessionRepository,
 	hasher outbound.PasswordHasher,
+	tokens outbound.TokenIssuer,
 	sessionTTL time.Duration,
 ) *AuthService {
 	return &AuthService{
 		users:      users,
 		sessions:   sessions,
 		hasher:     hasher,
+		tokens:     tokens,
 		sessionTTL: sessionTTL,
 	}
 }
@@ -87,6 +92,7 @@ func (s *AuthService) RegisterUser(
 		Email:        email,
 		PasswordHash: passwordHash,
 		DisplayName:  normalizeDisplayName(input.DisplayName),
+		Role:         domain.UserRoleUser,
 		Status:       domain.UserStatusActive,
 	}
 
@@ -101,6 +107,11 @@ func (s *AuthService) RegisterUser(
 	}
 
 	result := toRegisterUserResult(createdUser)
+	accessToken, err := s.tokens.IssueToken(createdUser)
+	if err != nil {
+		return RegisterUserResult{}, fmt.Errorf("issue access token: %w", err)
+	}
+	result.AccessToken = accessToken
 	result.RefreshToken = refreshToken
 
 	return result, nil
@@ -137,6 +148,11 @@ func (s *AuthService) LoginUser(
 	}
 
 	result := toLoginUserResult(*user)
+	accessToken, err := s.tokens.IssueToken(*user)
+	if err != nil {
+		return LoginUserResult{}, fmt.Errorf("issue access token: %w", err)
+	}
+	result.AccessToken = accessToken
 	result.RefreshToken = refreshToken
 
 	return result, nil

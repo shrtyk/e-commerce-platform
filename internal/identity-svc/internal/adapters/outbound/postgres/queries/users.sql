@@ -1,13 +1,14 @@
 -- name: CreateUser :one
 INSERT INTO
-  users (email, password_hash, display_name, status)
+  users (email, password_hash, display_name, role_code, status)
 VALUES
-  ($1, $2, $3, $4)
+  ($1, $2, $3, $4, $5)
 RETURNING
   user_id,
   email,
   password_hash,
   display_name,
+  role_code,
   status,
   created_at,
   updated_at;
@@ -18,6 +19,7 @@ SELECT
   email,
   password_hash,
   display_name,
+  role_code,
   status,
   created_at,
   updated_at

@@ -11,6 +11,10 @@ import (
 	"github.com/google/uuid"
 )
 
+type Role struct {
+	RoleCode string
+}
+
 type Session struct {
 	SessionID uuid.UUID
 	UserID    uuid.UUID
@@ -29,4 +33,5 @@ type User struct {
 	Status       string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	RoleCode     string
 }

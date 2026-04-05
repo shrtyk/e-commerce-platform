@@ -10,9 +10,16 @@ enum UserStatus {
   USER_STATUS_DISABLED = 2;
 }
 
+enum UserRole {
+  USER_ROLE_UNSPECIFIED = 0;
+  USER_ROLE_USER = 1;
+  USER_ROLE_ADMIN = 2;
+}
+
 message UserProfile {
   string user_id = 1;
   string email = 2;
   UserStatus status = 3;
   string display_name = 4;
+  UserRole role = 5;
 }

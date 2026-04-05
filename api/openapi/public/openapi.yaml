@@ -383,13 +383,16 @@ components:
           type: string
     UserProfile:
       type: object
-      required: [userId, email, status]
+      required: [userId, email, role, status]
       properties:
         userId:
           type: string
         email:
           type: string
           format: email
+        role:
+          type: string
+          enum: [user, admin]
         status:
           type: string
           enum: [active, disabled]
