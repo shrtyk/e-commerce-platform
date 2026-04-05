@@ -7,10 +7,12 @@ package sqlc
 import (
 	"database/sql"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type User struct {
-	UserID       string
+	UserID       uuid.UUID
 	Email        string
 	PasswordHash string
 	DisplayName  sql.NullString

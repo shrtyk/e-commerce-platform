@@ -8,10 +8,10 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	commonconfig "github.com/shrtyk/e-commerce-platform/internal/common/config"
+	"github.com/shrtyk/e-commerce-platform/internal/common/config"
 )
 
-func MustCreatePostgres(cfg commonconfig.Config) *sql.DB {
+func MustCreatePostgres(cfg config.Config) *sql.DB {
 	db, err := sql.Open("pgx", cfg.Postgres.DSN())
 	if err != nil {
 		panic(fmt.Errorf("open postgres: %w", err))

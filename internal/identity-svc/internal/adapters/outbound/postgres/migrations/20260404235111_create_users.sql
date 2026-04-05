@@ -1,13 +1,13 @@
 -- +goose Up
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS users (
-  user_id TEXT PRIMARY KEY,
+  user_id UUID PRIMARY KEY DEFAULT uuidv7 (),
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   display_name TEXT,
   status TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (
     email <> ''
     AND char_length(email) <= 254

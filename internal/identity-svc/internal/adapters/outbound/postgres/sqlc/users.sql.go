@@ -8,42 +8,43 @@ package sqlc
 import (
 	"context"
 	"database/sql"
-	"time"
 )
 
-const createUser = `-- name: CreateUser :exec
+const createUser = `-- name: CreateUser :one
 INSERT INTO users (
-    user_id,
     email,
     password_hash,
     display_name,
-    status,
-    created_at,
-    updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    status
+) VALUES ($1, $2, $3, $4)
+RETURNING user_id, email, password_hash, display_name, status, created_at, updated_at
 `
 
 type CreateUserParams struct {
-	UserID       string
 	Email        string
 	PasswordHash string
 	DisplayName  sql.NullString
 	Status       string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
 }
 
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
-	_, err := q.db.ExecContext(ctx, createUser,
-		arg.UserID,
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, createUser,
 		arg.Email,
 		arg.PasswordHash,
 		arg.DisplayName,
 		arg.Status,
-		arg.CreatedAt,
-		arg.UpdatedAt,
 	)
-	return err
+	var i User
+	err := row.Scan(
+		&i.UserID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.DisplayName,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
