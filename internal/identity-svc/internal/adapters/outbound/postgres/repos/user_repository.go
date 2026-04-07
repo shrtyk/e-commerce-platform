@@ -55,14 +55,14 @@ func (r *UserRepository) Create(ctx context.Context, user domain.User) (domain.U
 	return createdUser, nil
 }
 
-func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (domain.User, error) {
 	result, err := r.queries.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, outbound.ErrUserNotFound
+			return domain.User{}, outbound.ErrUserNotFound
 		}
 
-		return nil, fmt.Errorf("get user by email %q: %w", email, err)
+		return domain.User{}, fmt.Errorf("get user by email %q: %w", email, err)
 	}
 
 	user := domain.User{
@@ -78,5 +78,5 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*domain.
 		user.DisplayName = result.DisplayName.String
 	}
 
-	return &user, nil
+	return user, nil
 }

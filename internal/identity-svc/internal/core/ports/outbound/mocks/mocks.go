@@ -258,24 +258,22 @@ func (_c *MockSessionRepository_Create_Call) RunAndReturn(run func(ctx context.C
 }
 
 // GetByID provides a mock function for the type MockSessionRepository
-func (_mock *MockSessionRepository) GetByID(ctx context.Context, sessionID string) (*domain.Session, error) {
+func (_mock *MockSessionRepository) GetByID(ctx context.Context, sessionID string) (domain.Session, error) {
 	ret := _mock.Called(ctx, sessionID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetByID")
 	}
 
-	var r0 *domain.Session
+	var r0 domain.Session
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*domain.Session, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (domain.Session, error)); ok {
 		return returnFunc(ctx, sessionID)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *domain.Session); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) domain.Session); ok {
 		r0 = returnFunc(ctx, sessionID)
 	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*domain.Session)
-		}
+		r0 = ret.Get(0).(domain.Session)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
 		r1 = returnFunc(ctx, sessionID)
@@ -315,12 +313,12 @@ func (_c *MockSessionRepository_GetByID_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockSessionRepository_GetByID_Call) Return(session *domain.Session, err error) *MockSessionRepository_GetByID_Call {
-	_c.Call.Return(session, err)
+func (_c *MockSessionRepository_GetByID_Call) Return(session1 domain.Session, err error) *MockSessionRepository_GetByID_Call {
+	_c.Call.Return(session1, err)
 	return _c
 }
 
-func (_c *MockSessionRepository_GetByID_Call) RunAndReturn(run func(ctx context.Context, sessionID string) (*domain.Session, error)) *MockSessionRepository_GetByID_Call {
+func (_c *MockSessionRepository_GetByID_Call) RunAndReturn(run func(ctx context.Context, sessionID string) (domain.Session, error)) *MockSessionRepository_GetByID_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -506,24 +504,22 @@ func (_c *MockUserRepository_Create_Call) RunAndReturn(run func(ctx context.Cont
 }
 
 // GetByEmail provides a mock function for the type MockUserRepository
-func (_mock *MockUserRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
+func (_mock *MockUserRepository) GetByEmail(ctx context.Context, email string) (domain.User, error) {
 	ret := _mock.Called(ctx, email)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetByEmail")
 	}
 
-	var r0 *domain.User
+	var r0 domain.User
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*domain.User, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (domain.User, error)); ok {
 		return returnFunc(ctx, email)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *domain.User); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) domain.User); ok {
 		r0 = returnFunc(ctx, email)
 	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*domain.User)
-		}
+		r0 = ret.Get(0).(domain.User)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
 		r1 = returnFunc(ctx, email)
@@ -563,12 +559,12 @@ func (_c *MockUserRepository_GetByEmail_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockUserRepository_GetByEmail_Call) Return(user *domain.User, err error) *MockUserRepository_GetByEmail_Call {
-	_c.Call.Return(user, err)
+func (_c *MockUserRepository_GetByEmail_Call) Return(user1 domain.User, err error) *MockUserRepository_GetByEmail_Call {
+	_c.Call.Return(user1, err)
 	return _c
 }
 
-func (_c *MockUserRepository_GetByEmail_Call) RunAndReturn(run func(ctx context.Context, email string) (*domain.User, error)) *MockUserRepository_GetByEmail_Call {
+func (_c *MockUserRepository_GetByEmail_Call) RunAndReturn(run func(ctx context.Context, email string) (domain.User, error)) *MockUserRepository_GetByEmail_Call {
 	_c.Call.Return(run)
 	return _c
 }

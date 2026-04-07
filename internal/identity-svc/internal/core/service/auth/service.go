@@ -142,8 +142,8 @@ func (s *AuthService) LoginUser(
 		return LoginUserResult{}, err
 	}
 
-	result := toLoginUserResult(*user)
-	accessToken, err := s.tokens.IssueToken(*user)
+	result := toLoginUserResult(user)
+	accessToken, err := s.tokens.IssueToken(user)
 	if err != nil {
 		return LoginUserResult{}, fmt.Errorf("issue access token: %w", err)
 	}

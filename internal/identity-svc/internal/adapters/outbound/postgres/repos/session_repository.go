@@ -39,23 +39,23 @@ func (r *SessionRepository) Create(ctx context.Context, session domain.Session) 
 	return mapSession(result), nil
 }
 
-func (r *SessionRepository) GetByID(ctx context.Context, sessionID string) (*domain.Session, error) {
+func (r *SessionRepository) GetByID(ctx context.Context, sessionID string) (domain.Session, error) {
 	id, err := uuid.Parse(sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("parse session id: %w", err)
+		return domain.Session{}, fmt.Errorf("parse session id: %w", err)
 	}
 
 	result, err := r.queries.GetSessionByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, outbound.ErrSessionNotFound
+			return domain.Session{}, outbound.ErrSessionNotFound
 		}
 
-		return nil, fmt.Errorf("get session by id %q: %w", sessionID, err)
+		return domain.Session{}, fmt.Errorf("get session by id %q: %w", sessionID, err)
 	}
 
 	session := mapSession(result)
-	return &session, nil
+	return session, nil
 }
 
 func mapSession(session sqlc.Session) domain.Session {

@@ -227,7 +227,7 @@ func TestLoginUserReturnsUser(t *testing.T) {
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
 	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
-	storedUser := &domain.User{
+	storedUser := domain.User{
 		ID:           userUUID.String(),
 		Email:        normalizedEmail,
 		PasswordHash: "stored-hash",
@@ -278,7 +278,7 @@ func TestLoginUserReturnsUser(t *testing.T) {
 func TestLoginUserRejectsInvalidCredentials(t *testing.T) {
 	tests := []struct {
 		name      string
-		user      *domain.User
+		user      domain.User
 		lookupErr error
 		verified  bool
 	}{
@@ -288,7 +288,7 @@ func TestLoginUserRejectsInvalidCredentials(t *testing.T) {
 		},
 		{
 			name: "bad password",
-			user: &domain.User{
+			user: domain.User{
 				ID:           uuid.NewString(),
 				Email:        registeredEmail,
 				PasswordHash: "stored-hash",
@@ -310,7 +310,7 @@ func TestLoginUserRejectsInvalidCredentials(t *testing.T) {
 				GetByEmail(testifymock.Anything, registeredEmail).
 				Return(tt.user, tt.lookupErr)
 
-			if tt.user != nil {
+			if tt.lookupErr == nil {
 				hasher.EXPECT().Verify(strongPassword, tt.user.PasswordHash).Return(tt.verified, nil)
 			}
 
@@ -332,7 +332,7 @@ func TestLoginUserVerifyError(t *testing.T) {
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
 	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
-	storedUser := &domain.User{
+	storedUser := domain.User{
 		ID:           uuid.NewString(),
 		Email:        registeredEmail,
 		PasswordHash: "stored-hash",
@@ -362,7 +362,7 @@ func TestLoginUserSessionError(t *testing.T) {
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
 	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
-	storedUser := &domain.User{
+	storedUser := domain.User{
 		ID:           uuid.NewString(),
 		Email:        registeredEmail,
 		PasswordHash: "stored-hash",
@@ -394,7 +394,7 @@ func TestLoginUserAccessTokenError(t *testing.T) {
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
 	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
-	storedUser := &domain.User{ID: uuid.NewString(), Email: registeredEmail, PasswordHash: "stored-hash", Status: domain.UserStatusActive}
+	storedUser := domain.User{ID: uuid.NewString(), Email: registeredEmail, PasswordHash: "stored-hash", Status: domain.UserStatusActive}
 
 	repo.EXPECT().GetByEmail(testifymock.Anything, registeredEmail).Return(storedUser, nil)
 	hasher.EXPECT().Verify(strongPassword, storedUser.PasswordHash).Return(true, nil)

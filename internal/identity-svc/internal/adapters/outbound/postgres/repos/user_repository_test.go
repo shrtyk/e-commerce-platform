@@ -79,7 +79,6 @@ func TestUserRepositoryGetByEmail(t *testing.T) {
 
 	user, err := repo.GetByEmail(context.Background(), email)
 	require.NoError(t, err)
-	require.NotNil(t, user)
 	require.Equal(t, userID.String(), user.ID)
 	require.Equal(t, domain.UserRoleAdmin, user.Role)
 	require.Equal(t, domain.UserStatusActive, user.Status)
@@ -97,7 +96,7 @@ func TestUserRepositoryGetByEmailNotFound(t *testing.T) {
 
 	user, err := repo.GetByEmail(context.Background(), email)
 	require.ErrorIs(t, err, outbound.ErrUserNotFound)
-	require.Nil(t, user)
+	require.Zero(t, user)
 }
 
 func TestUserRepositoryCreateDuplicateEmail(t *testing.T) {

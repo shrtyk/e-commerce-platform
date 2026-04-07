@@ -70,7 +70,6 @@ func TestSessionRepositoryGetByID(t *testing.T) {
 
 	session, err := repo.GetByID(context.Background(), sessionID.String())
 	require.NoError(t, err)
-	require.NotNil(t, session)
 	require.Equal(t, sessionID.String(), session.ID)
 	require.Equal(t, userID.String(), session.UserID)
 }
@@ -86,5 +85,5 @@ func TestSessionRepositoryGetByIDNotFound(t *testing.T) {
 
 	session, err := repo.GetByID(context.Background(), sessionID)
 	require.ErrorIs(t, err, outbound.ErrSessionNotFound)
-	require.Nil(t, session)
+	require.Zero(t, session)
 }
