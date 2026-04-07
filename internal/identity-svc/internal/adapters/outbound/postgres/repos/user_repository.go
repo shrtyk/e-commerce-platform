@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/postgres/sqlc"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports/outbound"
@@ -31,6 +32,10 @@ func (r *UserRepository) Create(ctx context.Context, user domain.User) (domain.U
 		Status:   string(user.Status),
 	})
 	if err != nil {
+		pgErr, ok := errors.AsType[*pgconn.PgError](err)
+		if ok && pgErr.Code == "23505" {
+			return domain.User{}, fmt.Errorf("create user: %w", outbound.ErrDuplicateEmail)
+		}
 		return domain.User{}, fmt.Errorf("create user: %w", err)
 	}
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/postgres/sqlc"
@@ -97,4 +98,21 @@ func TestUserRepositoryGetByEmailNotFound(t *testing.T) {
 	user, err := repo.GetByEmail(context.Background(), email)
 	require.ErrorIs(t, err, outbound.ErrUserNotFound)
 	require.Nil(t, user)
+}
+
+func TestUserRepositoryCreateDuplicateEmail(t *testing.T) {
+	user := domain.User{
+		Email:        "dup@example.com",
+		PasswordHash: "hash",
+		Role:         domain.UserRoleUser,
+		Status:       domain.UserStatusActive,
+	}
+	repo := &UserRepository{queries: stubQuerier{
+		createUserFunc: func(_ context.Context, _ sqlc.CreateUserParams) (sqlc.CreateUserRow, error) {
+			return sqlc.CreateUserRow{}, &pgconn.PgError{Code: "23505"}
+		},
+	}}
+
+	_, err := repo.Create(context.Background(), user)
+	require.ErrorIs(t, err, outbound.ErrDuplicateEmail)
 }

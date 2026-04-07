@@ -7,7 +7,10 @@ import (
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
 )
 
-var ErrUserNotFound = errors.New("identity user not found")
+var (
+	ErrUserNotFound   = errors.New("identity user not found")
+	ErrDuplicateEmail = errors.New("identity duplicate email")
+)
 
 //mockery:generate: true
 type UserRepository interface {

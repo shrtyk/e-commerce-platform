@@ -75,14 +75,6 @@ func (s *AuthService) RegisterUser(
 		return RegisterUserResult{}, ErrInvalidRegisterInput
 	}
 
-	existingUser, err := s.users.GetByEmail(ctx, email)
-	if err == nil && existingUser != nil {
-		return RegisterUserResult{}, ErrEmailAlreadyRegistered
-	}
-	if err != nil && !errors.Is(err, outbound.ErrUserNotFound) {
-		return RegisterUserResult{}, fmt.Errorf("lookup user by email: %w", err)
-	}
-
 	passwordHash, err := s.hasher.Hash(input.Password)
 	if err != nil {
 		return RegisterUserResult{}, fmt.Errorf("hash password: %w", err)
@@ -98,6 +90,9 @@ func (s *AuthService) RegisterUser(
 
 	createdUser, err := s.users.Create(ctx, user)
 	if err != nil {
+		if errors.Is(err, outbound.ErrDuplicateEmail) {
+			return RegisterUserResult{}, ErrEmailAlreadyRegistered
+		}
 		return RegisterUserResult{}, fmt.Errorf("create user: %w", err)
 	}
 

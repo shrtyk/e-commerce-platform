@@ -45,9 +45,6 @@ func TestRegisterUserCreatesUser(t *testing.T) {
 	displayName := "  John Doe  "
 	sessionID := uuid.New()
 
-	repo.EXPECT().
-		GetByEmail(testifymock.Anything, normalizedEmail).
-		Return(nil, outbound.ErrUserNotFound)
 	hasher.EXPECT().
 		Hash(pwd).
 		Return(pwdHash, nil)
@@ -102,9 +99,12 @@ func TestRegisterUserRejectsDuplicateEmail(t *testing.T) {
 	issuer := outboundmocks.NewMockTokenIssuer(t)
 	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
 
+	hasher.EXPECT().
+		Hash(strongPassword).
+		Return("hash", nil)
 	repo.EXPECT().
-		GetByEmail(testifymock.Anything, registeredEmail).
-		Return(&domain.User{ID: "existing-user"}, nil)
+		Create(testifymock.Anything, testifymock.Anything).
+		Return(domain.User{}, outbound.ErrDuplicateEmail)
 
 	_, err := auth.RegisterUser(context.Background(), RegisterUserInput{
 		Email:    registeredEmail,
@@ -112,8 +112,6 @@ func TestRegisterUserRejectsDuplicateEmail(t *testing.T) {
 	})
 
 	require.ErrorIs(t, err, ErrEmailAlreadyRegistered)
-	hasher.AssertNotCalled(t, "Hash", testifymock.Anything)
-	repo.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
 	sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
 	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
 }
@@ -125,9 +123,6 @@ func TestRegisterUserHashError(t *testing.T) {
 	issuer := outboundmocks.NewMockTokenIssuer(t)
 	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
 
-	repo.EXPECT().
-		GetByEmail(testifymock.Anything, registeredEmail).
-		Return(nil, outbound.ErrUserNotFound)
 	hasher.EXPECT().
 		Hash(strongPassword).
 		Return("", errors.New("hash failed"))
@@ -146,18 +141,11 @@ func TestRegisterUserHashError(t *testing.T) {
 func TestRegisterUserRepoError(t *testing.T) {
 	tests := []struct {
 		name         string
-		lookupErr    error
 		createErr    error
 		expectedText string
 	}{
 		{
-			name:         "lookup",
-			lookupErr:    errors.New("db down"),
-			expectedText: "lookup user by email",
-		},
-		{
 			name:         "create",
-			lookupErr:    outbound.ErrUserNotFound,
 			createErr:    errors.New("insert failed"),
 			expectedText: "create user",
 		},
@@ -171,16 +159,10 @@ func TestRegisterUserRepoError(t *testing.T) {
 			issuer := outboundmocks.NewMockTokenIssuer(t)
 			auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
 
+			hasher.EXPECT().Hash(strongPassword).Return("hashed-password", nil)
 			repo.EXPECT().
-				GetByEmail(testifymock.Anything, registeredEmail).
-				Return(nil, tt.lookupErr)
-
-			if tt.lookupErr == outbound.ErrUserNotFound {
-				hasher.EXPECT().Hash(strongPassword).Return("hashed-password", nil)
-				repo.EXPECT().
-					Create(testifymock.Anything, testifymock.Anything).
-					Return(domain.User{}, tt.createErr)
-			}
+				Create(testifymock.Anything, testifymock.Anything).
+				Return(domain.User{}, tt.createErr)
 
 			_, err := auth.RegisterUser(context.Background(), RegisterUserInput{
 				Email:    registeredEmail,
@@ -201,9 +183,6 @@ func TestRegisterUserSessionError(t *testing.T) {
 	issuer := outboundmocks.NewMockTokenIssuer(t)
 	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
 
-	repo.EXPECT().
-		GetByEmail(testifymock.Anything, registeredEmail).
-		Return(nil, outbound.ErrUserNotFound)
 	hasher.EXPECT().Hash(strongPassword).Return("hash", nil)
 	repo.EXPECT().
 		Create(testifymock.Anything, testifymock.Anything).
@@ -229,7 +208,6 @@ func TestRegisterUserAccessTokenError(t *testing.T) {
 	issuer := outboundmocks.NewMockTokenIssuer(t)
 	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
 
-	repo.EXPECT().GetByEmail(testifymock.Anything, registeredEmail).Return(nil, outbound.ErrUserNotFound)
 	hasher.EXPECT().Hash(strongPassword).Return("hash", nil)
 	repo.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.User{ID: userUUID.String(), Email: registeredEmail, Status: domain.UserStatusActive}, nil)
 	sessions.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.Session{ID: uuid.NewString(), UserID: userUUID.String()}, nil)
