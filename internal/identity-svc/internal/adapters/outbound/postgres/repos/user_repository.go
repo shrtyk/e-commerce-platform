@@ -17,7 +17,11 @@ type UserRepository struct {
 }
 
 func NewUserRepository(db *sql.DB) *UserRepository {
-	return &UserRepository{queries: sqlc.New(db)}
+	return NewUserRepositoryFromQuerier(sqlc.New(db))
+}
+
+func NewUserRepositoryFromQuerier(queries sqlc.Querier) *UserRepository {
+	return &UserRepository{queries: queries}
 }
 
 func (r *UserRepository) Create(ctx context.Context, user domain.User) (domain.User, error) {

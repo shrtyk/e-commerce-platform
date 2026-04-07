@@ -18,7 +18,11 @@ type SessionRepository struct {
 }
 
 func NewSessionRepository(db *sql.DB) *SessionRepository {
-	return &SessionRepository{queries: sqlc.New(db)}
+	return NewSessionRepositoryFromQuerier(sqlc.New(db))
+}
+
+func NewSessionRepositoryFromQuerier(queries sqlc.Querier) *SessionRepository {
+	return &SessionRepository{queries: queries}
 }
 
 func (r *SessionRepository) Create(ctx context.Context, session domain.Session) (domain.Session, error) {
