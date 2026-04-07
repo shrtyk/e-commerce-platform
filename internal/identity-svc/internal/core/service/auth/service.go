@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shrtyk/e-commerce-platform/internal/common/tx"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports/outbound"
 )
@@ -42,9 +43,14 @@ type LoginUserInput struct {
 
 type LoginUserResult RegisterUserResult
 
+type IdentityRepos struct {
+	Users    outbound.UserRepository
+	Sessions outbound.SessionRepository
+}
+
 type AuthService struct {
-	users      outbound.UserRepository
-	sessions   outbound.SessionRepository
+	repos      IdentityRepos
+	txProvider tx.Provider[IdentityRepos]
 	hasher     outbound.PasswordHasher
 	tokens     outbound.TokenIssuer
 	sessionTTL time.Duration
@@ -53,13 +59,17 @@ type AuthService struct {
 func NewAuthService(
 	users outbound.UserRepository,
 	sessions outbound.SessionRepository,
+	txProvider tx.Provider[IdentityRepos],
 	hasher outbound.PasswordHasher,
 	tokens outbound.TokenIssuer,
 	sessionTTL time.Duration,
 ) *AuthService {
 	return &AuthService{
-		users:      users,
-		sessions:   sessions,
+		repos: IdentityRepos{
+			Users:    users,
+			Sessions: sessions,
+		},
+		txProvider: txProvider,
 		hasher:     hasher,
 		tokens:     tokens,
 		sessionTTL: sessionTTL,
@@ -88,15 +98,25 @@ func (s *AuthService) RegisterUser(
 		Status:       domain.UserStatusActive,
 	}
 
-	createdUser, err := s.users.Create(ctx, user)
-	if err != nil {
-		if errors.Is(err, outbound.ErrDuplicateEmail) {
-			return RegisterUserResult{}, ErrEmailAlreadyRegistered
-		}
-		return RegisterUserResult{}, fmt.Errorf("create user: %w", err)
-	}
+	var (
+		createdUser  domain.User
+		refreshToken string
+	)
 
-	refreshToken, err := s.createSession(ctx, createdUser.ID)
+	err = s.txProvider.WithTransaction(ctx, func(uow tx.UnitOfWork[IdentityRepos]) error {
+		repos := uow.Repos()
+		var err error
+		createdUser, err = repos.Users.Create(ctx, user)
+		if err != nil {
+			if errors.Is(err, outbound.ErrDuplicateEmail) {
+				return ErrEmailAlreadyRegistered
+			}
+			return fmt.Errorf("create user: %w", err)
+		}
+
+		refreshToken, err = s.createSessionWithRepository(ctx, repos.Sessions, createdUser.ID)
+		return err
+	})
 	if err != nil {
 		return RegisterUserResult{}, err
 	}
@@ -121,7 +141,7 @@ func (s *AuthService) LoginUser(
 		return LoginUserResult{}, ErrInvalidCredentials
 	}
 
-	user, err := s.users.GetByEmail(ctx, email)
+	user, err := s.repos.Users.GetByEmail(ctx, email)
 	if errors.Is(err, outbound.ErrUserNotFound) {
 		return LoginUserResult{}, ErrInvalidCredentials
 	}

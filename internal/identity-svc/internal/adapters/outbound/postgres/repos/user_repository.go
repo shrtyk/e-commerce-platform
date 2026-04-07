@@ -24,6 +24,10 @@ func NewUserRepositoryFromQuerier(queries sqlc.Querier) *UserRepository {
 	return &UserRepository{queries: queries}
 }
 
+func NewUserRepositoryFromTx(tx *sql.Tx) *UserRepository {
+	return NewUserRepositoryFromQuerier(sqlc.New(tx))
+}
+
 func (r *UserRepository) Create(ctx context.Context, user domain.User) (domain.User, error) {
 	result, err := r.queries.CreateUser(ctx, sqlc.CreateUserParams{
 		Email:        user.Email,

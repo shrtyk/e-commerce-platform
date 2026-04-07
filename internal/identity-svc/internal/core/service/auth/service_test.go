@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shrtyk/e-commerce-platform/internal/common/tx"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports/outbound"
 	outboundmocks "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports/outbound/mocks"
@@ -41,7 +42,8 @@ func TestRegisterUserCreatesUser(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 	displayName := "  John Doe  "
 	sessionID := uuid.New()
 
@@ -97,7 +99,8 @@ func TestRegisterUserRejectsDuplicateEmail(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 
 	hasher.EXPECT().
 		Hash(strongPassword).
@@ -121,7 +124,8 @@ func TestRegisterUserHashError(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 
 	hasher.EXPECT().
 		Hash(strongPassword).
@@ -133,8 +137,6 @@ func TestRegisterUserHashError(t *testing.T) {
 	})
 
 	require.ErrorContains(t, err, "hash password")
-	repo.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
-	sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
 	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
 }
 
@@ -157,7 +159,8 @@ func TestRegisterUserRepoError(t *testing.T) {
 			sessions := outboundmocks.NewMockSessionRepository(t)
 			hasher := outboundmocks.NewMockPasswordHasher(t)
 			issuer := outboundmocks.NewMockTokenIssuer(t)
-			auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+			txProvider := newStubProvider(repo, sessions)
+			auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 
 			hasher.EXPECT().Hash(strongPassword).Return("hashed-password", nil)
 			repo.EXPECT().
@@ -181,7 +184,8 @@ func TestRegisterUserSessionError(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 
 	hasher.EXPECT().Hash(strongPassword).Return("hash", nil)
 	repo.EXPECT().
@@ -206,7 +210,8 @@ func TestRegisterUserAccessTokenError(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 
 	hasher.EXPECT().Hash(strongPassword).Return("hash", nil)
 	repo.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.User{ID: userUUID.String(), Email: registeredEmail, Status: domain.UserStatusActive}, nil)
@@ -218,6 +223,23 @@ func TestRegisterUserAccessTokenError(t *testing.T) {
 	require.ErrorContains(t, err, "issue access token")
 }
 
+func TestRegisterUserTxProviderError(t *testing.T) {
+	txErr := errors.New("tx store unavailable")
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := &stubProvider{err: txErr}
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	hasher.EXPECT().Hash(strongPassword).Return("hash", nil)
+
+	_, err := auth.RegisterUser(context.Background(), RegisterUserInput{Email: registeredEmail, Password: strongPassword})
+
+	require.ErrorIs(t, err, txErr)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
 func TestLoginUserReturnsUser(t *testing.T) {
 	accessToken := "access-token"
 	userUUID := uuid.New()
@@ -226,7 +248,7 @@ func TestLoginUserReturnsUser(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+	auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
 	storedUser := domain.User{
 		ID:           userUUID.String(),
 		Email:        normalizedEmail,
@@ -304,7 +326,7 @@ func TestLoginUserRejectsInvalidCredentials(t *testing.T) {
 			sessions := outboundmocks.NewMockSessionRepository(t)
 			hasher := outboundmocks.NewMockPasswordHasher(t)
 			issuer := outboundmocks.NewMockTokenIssuer(t)
-			auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+			auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
 
 			repo.EXPECT().
 				GetByEmail(testifymock.Anything, registeredEmail).
@@ -331,7 +353,7 @@ func TestLoginUserVerifyError(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+	auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
 	storedUser := domain.User{
 		ID:           uuid.NewString(),
 		Email:        registeredEmail,
@@ -361,7 +383,7 @@ func TestLoginUserSessionError(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+	auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
 	storedUser := domain.User{
 		ID:           uuid.NewString(),
 		Email:        registeredEmail,
@@ -393,7 +415,7 @@ func TestLoginUserAccessTokenError(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, hasher, issuer, testSessionTTL)
+	auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
 	storedUser := domain.User{ID: uuid.NewString(), Email: registeredEmail, PasswordHash: "stored-hash", Status: domain.UserStatusActive}
 
 	repo.EXPECT().GetByEmail(testifymock.Anything, registeredEmail).Return(storedUser, nil)
@@ -404,4 +426,33 @@ func TestLoginUserAccessTokenError(t *testing.T) {
 	_, err := auth.LoginUser(context.Background(), LoginUserInput{Email: registeredEmail, Password: strongPassword})
 
 	require.ErrorContains(t, err, "issue access token")
+}
+
+// stubProvider implements tx.Provider[service.IdentityRepos] for tests.
+type stubProvider struct {
+	repos  IdentityRepos
+	err    error
+	called bool
+}
+
+func newStubProvider(users outbound.UserRepository, sessions outbound.SessionRepository) *stubProvider {
+	return &stubProvider{
+		repos: IdentityRepos{Users: users, Sessions: sessions},
+	}
+}
+
+func (p *stubProvider) WithTransaction(_ context.Context, fn func(uow tx.UnitOfWork[IdentityRepos]) error) error {
+	p.called = true
+	if p.err != nil {
+		return p.err
+	}
+	return fn(&stubUnitOfWork{repos: p.repos})
+}
+
+type stubUnitOfWork struct {
+	repos IdentityRepos
+}
+
+func (u stubUnitOfWork) Repos() IdentityRepos {
+	return u.repos
 }

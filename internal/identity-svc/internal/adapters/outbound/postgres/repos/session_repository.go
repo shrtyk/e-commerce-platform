@@ -25,6 +25,10 @@ func NewSessionRepositoryFromQuerier(queries sqlc.Querier) *SessionRepository {
 	return &SessionRepository{queries: queries}
 }
 
+func NewSessionRepositoryFromTx(tx *sql.Tx) *SessionRepository {
+	return NewSessionRepositoryFromQuerier(sqlc.New(tx))
+}
+
 func (r *SessionRepository) Create(ctx context.Context, session domain.Session) (domain.Session, error) {
 	userID, err := uuid.Parse(session.UserID)
 	if err != nil {
