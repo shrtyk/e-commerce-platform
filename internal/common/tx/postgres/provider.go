@@ -36,25 +36,30 @@ func (p *Provider[T]) WithTransaction(ctx context.Context, fn func(tx.UnitOfWork
 
 	defer func() {
 		if r := recover(); r != nil {
-			_ = sqlTx.Rollback()
+			if rbErr := sqlTx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+				panic(errors.Join(
+					fmt.Errorf("panic recovered: %v", r),
+					fmt.Errorf("%w: %w", tx.ErrTxRollback, rbErr),
+				))
+			}
 			panic(r)
+		}
+
+		if err != nil {
+			if rbErr := sqlTx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+				err = errors.Join(
+					fmt.Errorf("within tx callback: %w", err),
+					fmt.Errorf("%w: %w", tx.ErrTxRollback, rbErr),
+				)
+			}
+			return
+		}
+
+		if commitErr := sqlTx.Commit(); commitErr != nil {
+			err = fmt.Errorf("%w: %w", tx.ErrTxCommit, commitErr)
 		}
 	}()
 
 	err = fn(uow)
-	if err != nil {
-		if rbErr := sqlTx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			return errors.Join(
-				fmt.Errorf("within tx callback: %w", err),
-				fmt.Errorf("%w: %w", tx.ErrTxRollback, rbErr),
-			)
-		}
-		return fmt.Errorf("within tx callback: %w", err)
-	}
-
-	if err = sqlTx.Commit(); err != nil {
-		return fmt.Errorf("%w: %w", tx.ErrTxCommit, err)
-	}
-
-	return nil
+	return err
 }
