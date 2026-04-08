@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/jwt"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/password/bcrypt"
@@ -16,8 +17,6 @@ import (
 	identityapp "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/app"
 	config "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/config"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/service/auth"
-
-	txpostgres "github.com/shrtyk/e-commerce-platform/internal/common/tx/postgres"
 )
 
 func main() {
@@ -34,7 +33,7 @@ func main() {
 	handler := adapterhttp.NewRouter()
 	app := identityapp.NewApplication(&cfg, handler, db)
 
-	txProvider := txpostgres.NewProvider(db, func(tx *sql.Tx) auth.IdentityRepos {
+	txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) auth.IdentityRepos {
 		return auth.IdentityRepos{
 			Users:    repos.NewUserRepositoryFromTx(tx),
 			Sessions: repos.NewSessionRepositoryFromTx(tx),

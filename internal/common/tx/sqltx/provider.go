@@ -1,4 +1,4 @@
-package postgres
+package sqltx
 
 import (
 	"context"
@@ -26,8 +26,8 @@ func NewProvider[T any](db *sql.DB, buildRepos func(*sql.Tx) T) *Provider[T] {
 	return &Provider[T]{db: db, buildRepos: buildRepos}
 }
 
-func (p *Provider[T]) WithTransaction(ctx context.Context, fn func(tx.UnitOfWork[T]) error) error {
-	sqlTx, err := p.db.BeginTx(ctx, nil)
+func (p *Provider[T]) WithTransaction(ctx context.Context, txOpts *sql.TxOptions, fn func(tx.UnitOfWork[T]) error) error {
+	sqlTx, err := p.db.BeginTx(ctx, txOpts)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}

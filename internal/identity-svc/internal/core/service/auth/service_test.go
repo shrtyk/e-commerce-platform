@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -441,7 +442,7 @@ func newStubProvider(users outbound.UserRepository, sessions outbound.SessionRep
 	}
 }
 
-func (p *stubProvider) WithTransaction(_ context.Context, fn func(uow tx.UnitOfWork[IdentityRepos]) error) error {
+func (p *stubProvider) WithTransaction(_ context.Context, txOpts *sql.TxOptions, fn func(uow tx.UnitOfWork[IdentityRepos]) error) error {
 	p.called = true
 	if p.err != nil {
 		return p.err

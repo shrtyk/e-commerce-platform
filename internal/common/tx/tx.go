@@ -2,6 +2,7 @@ package tx
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 )
 
@@ -15,5 +16,5 @@ type UnitOfWork[T any] interface {
 }
 
 type Provider[T any] interface {
-	WithTransaction(ctx context.Context, fn func(uow UnitOfWork[T]) error) error
+	WithTransaction(ctx context.Context, txOpts *sql.TxOptions, fn func(uow UnitOfWork[T]) error) error
 }

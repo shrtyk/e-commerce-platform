@@ -103,7 +103,7 @@ func (s *AuthService) RegisterUser(
 		refreshToken string
 	)
 
-	err = s.txProvider.WithTransaction(ctx, func(uow tx.UnitOfWork[IdentityRepos]) error {
+	err = s.txProvider.WithTransaction(ctx, nil, func(uow tx.UnitOfWork[IdentityRepos]) error {
 		repos := uow.Repos()
 		var err error
 		createdUser, err = repos.Users.Create(ctx, user)
