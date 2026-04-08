@@ -28,7 +28,7 @@ func TestUserRepositoryCreate(t *testing.T) {
 		UpdatedAt:    now,
 	}
 	repo := &UserRepository{queries: stubQuerier{
-		createUserFunc: func(_ context.Context, arg sqlc.CreateUserParams) (sqlc.CreateUserRow, error) {
+		createUserFunc: func(_ context.Context, arg sqlc.CreateUserParams) (sqlc.User, error) {
 			require.Equal(t, user.Email, arg.Email)
 			require.Equal(t, user.PasswordHash, arg.PasswordHash)
 			require.Equal(t, user.DisplayName, arg.DisplayName.String)
@@ -36,7 +36,7 @@ func TestUserRepositoryCreate(t *testing.T) {
 			require.Equal(t, string(user.Role), arg.RoleCode)
 			require.Equal(t, string(user.Status), arg.Status)
 
-			return sqlc.CreateUserRow{
+			return sqlc.User{
 				UserID:       userID,
 				Email:        user.Email,
 				PasswordHash: user.PasswordHash,
@@ -51,7 +51,7 @@ func TestUserRepositoryCreate(t *testing.T) {
 
 	createdUser, err := repo.Create(context.Background(), user)
 	require.NoError(t, err)
-	require.Equal(t, userID.String(), createdUser.ID)
+	require.Equal(t, userID, createdUser.ID)
 	require.Equal(t, domain.UserRoleUser, createdUser.Role)
 }
 
@@ -61,10 +61,10 @@ func TestUserRepositoryGetByEmail(t *testing.T) {
 	email := "user@example.com"
 	displayName := "Test User"
 	repo := &UserRepository{queries: stubQuerier{
-		getUserByEmailFunc: func(_ context.Context, gotEmail string) (sqlc.GetUserByEmailRow, error) {
+		getUserByEmailFunc: func(_ context.Context, gotEmail string) (sqlc.User, error) {
 			require.Equal(t, email, gotEmail)
 
-			return sqlc.GetUserByEmailRow{
+			return sqlc.User{
 				UserID:       userID,
 				Email:        email,
 				PasswordHash: "hash",
@@ -79,7 +79,7 @@ func TestUserRepositoryGetByEmail(t *testing.T) {
 
 	user, err := repo.GetByEmail(context.Background(), email)
 	require.NoError(t, err)
-	require.Equal(t, userID.String(), user.ID)
+	require.Equal(t, userID, user.ID)
 	require.Equal(t, domain.UserRoleAdmin, user.Role)
 	require.Equal(t, domain.UserStatusActive, user.Status)
 	require.Equal(t, displayName, user.DisplayName)
@@ -88,9 +88,9 @@ func TestUserRepositoryGetByEmail(t *testing.T) {
 func TestUserRepositoryGetByEmailNotFound(t *testing.T) {
 	email := "missing@example.com"
 	repo := &UserRepository{queries: stubQuerier{
-		getUserByEmailFunc: func(_ context.Context, gotEmail string) (sqlc.GetUserByEmailRow, error) {
+		getUserByEmailFunc: func(_ context.Context, gotEmail string) (sqlc.User, error) {
 			require.Equal(t, email, gotEmail)
-			return sqlc.GetUserByEmailRow{}, sql.ErrNoRows
+			return sqlc.User{}, sql.ErrNoRows
 		},
 	}}
 
@@ -107,11 +107,48 @@ func TestUserRepositoryCreateDuplicateEmail(t *testing.T) {
 		Status:       domain.UserStatusActive,
 	}
 	repo := &UserRepository{queries: stubQuerier{
-		createUserFunc: func(_ context.Context, _ sqlc.CreateUserParams) (sqlc.CreateUserRow, error) {
-			return sqlc.CreateUserRow{}, &pgconn.PgError{Code: "23505"}
+		createUserFunc: func(_ context.Context, _ sqlc.CreateUserParams) (sqlc.User, error) {
+			return sqlc.User{}, &pgconn.PgError{Code: "23505"}
 		},
 	}}
 
 	_, err := repo.Create(context.Background(), user)
 	require.ErrorIs(t, err, outbound.ErrDuplicateEmail)
+}
+
+func TestUserRepositoryGetByID(t *testing.T) {
+	now := time.Date(2026, time.April, 4, 12, 0, 0, 0, time.UTC)
+	userID := uuid.New()
+	repo := &UserRepository{queries: stubQuerier{
+		getUserByIDFunc: func(_ context.Context, gotUserID uuid.UUID) (sqlc.User, error) {
+			require.Equal(t, userID, gotUserID)
+			return sqlc.User{
+				UserID:       userID,
+				Email:        "user@example.com",
+				PasswordHash: "hash",
+				RoleCode:     string(domain.UserRoleUser),
+				Status:       string(domain.UserStatusActive),
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			}, nil
+		},
+	}}
+
+	user, err := repo.GetByID(context.Background(), userID)
+	require.NoError(t, err)
+	require.Equal(t, userID, user.ID)
+}
+
+func TestUserRepositoryGetByIDNotFound(t *testing.T) {
+	userID := uuid.New()
+	repo := &UserRepository{queries: stubQuerier{
+		getUserByIDFunc: func(_ context.Context, gotUserID uuid.UUID) (sqlc.User, error) {
+			require.Equal(t, userID, gotUserID)
+			return sqlc.User{}, sql.ErrNoRows
+		},
+	}}
+
+	user, err := repo.GetByID(context.Background(), userID)
+	require.ErrorIs(t, err, outbound.ErrUserNotFound)
+	require.Zero(t, user)
 }

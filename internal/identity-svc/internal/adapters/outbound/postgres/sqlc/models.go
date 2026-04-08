@@ -30,8 +30,8 @@ type User struct {
 	Email        string
 	PasswordHash string
 	DisplayName  sql.NullString
+	RoleCode     string
 	Status       string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
-	RoleCode     string
 }

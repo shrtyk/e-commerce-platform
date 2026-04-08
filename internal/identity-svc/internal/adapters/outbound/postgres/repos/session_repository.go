@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -30,13 +31,8 @@ func NewSessionRepositoryFromTx(tx *sql.Tx) *SessionRepository {
 }
 
 func (r *SessionRepository) Create(ctx context.Context, session domain.Session) (domain.Session, error) {
-	userID, err := uuid.Parse(session.UserID)
-	if err != nil {
-		return domain.Session{}, fmt.Errorf("parse user id: %w", err)
-	}
-
 	result, err := r.queries.CreateSession(ctx, sqlc.CreateSessionParams{
-		UserID:    userID,
+		UserID:    session.UserID,
 		TokenHash: session.TokenHash,
 		ExpiresAt: session.ExpiresAt,
 	})
@@ -47,29 +43,40 @@ func (r *SessionRepository) Create(ctx context.Context, session domain.Session) 
 	return mapSession(result), nil
 }
 
-func (r *SessionRepository) GetByID(ctx context.Context, sessionID string) (domain.Session, error) {
-	id, err := uuid.Parse(sessionID)
-	if err != nil {
-		return domain.Session{}, fmt.Errorf("parse session id: %w", err)
-	}
-
-	result, err := r.queries.GetSessionByID(ctx, id)
+func (r *SessionRepository) GetByID(ctx context.Context, sessionID uuid.UUID) (domain.Session, error) {
+	result, err := r.queries.GetSessionByID(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Session{}, outbound.ErrSessionNotFound
 		}
 
-		return domain.Session{}, fmt.Errorf("get session by id %q: %w", sessionID, err)
+		return domain.Session{}, fmt.Errorf("get session by id %q: %w", sessionID.String(), err)
 	}
 
 	session := mapSession(result)
 	return session, nil
 }
 
+func (r *SessionRepository) Revoke(ctx context.Context, sessionID uuid.UUID, revokedAt time.Time) error {
+	affectedRows, err := r.queries.RevokeSession(ctx, sqlc.RevokeSessionParams{
+		SessionID: sessionID,
+		RevokedAt: sql.NullTime{Time: revokedAt, Valid: true},
+	})
+	if err != nil {
+		return fmt.Errorf("revoke session %q: %w", sessionID.String(), err)
+	}
+
+	if affectedRows == 0 {
+		return outbound.ErrSessionNotFound
+	}
+
+	return nil
+}
+
 func mapSession(session sqlc.Session) domain.Session {
 	result := domain.Session{
-		ID:        session.SessionID.String(),
-		UserID:    session.UserID.String(),
+		ID:        session.SessionID,
+		UserID:    session.UserID,
 		TokenHash: session.TokenHash,
 		ExpiresAt: session.ExpiresAt,
 		CreatedAt: session.CreatedAt,

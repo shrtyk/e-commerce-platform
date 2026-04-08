@@ -4,7 +4,7 @@ import "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/cor
 
 func toRegisterUserResult(user domain.User) RegisterUserResult {
 	return RegisterUserResult{
-		ID:          user.ID,
+		ID:          user.ID.String(),
 		Email:       user.Email,
 		DisplayName: user.DisplayName,
 		Role:        user.Role,

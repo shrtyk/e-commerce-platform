@@ -20,7 +20,7 @@ func TestSessionRepositoryCreate(t *testing.T) {
 	userID := uuid.New()
 	expiresAt := now.Add(24 * time.Hour)
 	session := domain.Session{
-		UserID:    userID.String(),
+		UserID:    userID,
 		TokenHash: "token-hash",
 		ExpiresAt: expiresAt,
 	}
@@ -43,7 +43,7 @@ func TestSessionRepositoryCreate(t *testing.T) {
 
 	createdSession, err := repo.Create(context.Background(), session)
 	require.NoError(t, err)
-	require.Equal(t, sessionID.String(), createdSession.ID)
+	require.Equal(t, sessionID, createdSession.ID)
 	require.Equal(t, session.UserID, createdSession.UserID)
 	require.Equal(t, session.TokenHash, createdSession.TokenHash)
 }
@@ -68,17 +68,17 @@ func TestSessionRepositoryGetByID(t *testing.T) {
 		},
 	}}
 
-	session, err := repo.GetByID(context.Background(), sessionID.String())
+	session, err := repo.GetByID(context.Background(), sessionID)
 	require.NoError(t, err)
-	require.Equal(t, sessionID.String(), session.ID)
-	require.Equal(t, userID.String(), session.UserID)
+	require.Equal(t, sessionID, session.ID)
+	require.Equal(t, userID, session.UserID)
 }
 
 func TestSessionRepositoryGetByIDNotFound(t *testing.T) {
-	sessionID := uuid.NewString()
+	sessionID := uuid.New()
 	repo := &SessionRepository{queries: stubQuerier{
 		getSessionByIDFunc: func(_ context.Context, gotID uuid.UUID) (sqlc.Session, error) {
-			require.Equal(t, sessionID, gotID.String())
+			require.Equal(t, sessionID, gotID)
 			return sqlc.Session{}, sql.ErrNoRows
 		},
 	}}
@@ -86,4 +86,31 @@ func TestSessionRepositoryGetByIDNotFound(t *testing.T) {
 	session, err := repo.GetByID(context.Background(), sessionID)
 	require.ErrorIs(t, err, outbound.ErrSessionNotFound)
 	require.Zero(t, session)
+}
+
+func TestSessionRepositoryRevoke(t *testing.T) {
+	sessionID := uuid.New()
+	repo := &SessionRepository{queries: stubQuerier{
+		revokeSessionFunc: func(_ context.Context, arg sqlc.RevokeSessionParams) (int64, error) {
+			require.Equal(t, sessionID, arg.SessionID)
+			require.True(t, arg.RevokedAt.Valid)
+			return 1, nil
+		},
+	}}
+
+	err := repo.Revoke(context.Background(), sessionID, time.Now().UTC())
+	require.NoError(t, err)
+}
+
+func TestSessionRepositoryRevokeNotFound(t *testing.T) {
+	sessionID := uuid.New()
+	repo := &SessionRepository{queries: stubQuerier{
+		revokeSessionFunc: func(_ context.Context, arg sqlc.RevokeSessionParams) (int64, error) {
+			require.Equal(t, sessionID, arg.SessionID)
+			return 0, nil
+		},
+	}}
+
+	err := repo.Revoke(context.Background(), sessionID, time.Now().UTC())
+	require.ErrorIs(t, err, outbound.ErrSessionNotFound)
 }

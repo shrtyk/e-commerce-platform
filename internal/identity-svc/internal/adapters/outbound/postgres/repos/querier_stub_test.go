@@ -2,6 +2,7 @@ package repos
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -10,26 +11,36 @@ import (
 )
 
 type stubQuerier struct {
-	createUserFunc     func(ctx context.Context, arg sqlc.CreateUserParams) (sqlc.CreateUserRow, error)
-	getUserByEmailFunc func(ctx context.Context, email string) (sqlc.GetUserByEmailRow, error)
+	createUserFunc     func(ctx context.Context, arg sqlc.CreateUserParams) (sqlc.User, error)
+	getUserByEmailFunc func(ctx context.Context, email string) (sqlc.User, error)
+	getUserByIDFunc    func(ctx context.Context, userID uuid.UUID) (sqlc.User, error)
 	createSessionFunc  func(ctx context.Context, arg sqlc.CreateSessionParams) (sqlc.Session, error)
 	getSessionByIDFunc func(ctx context.Context, sessionID uuid.UUID) (sqlc.Session, error)
+	revokeSessionFunc  func(ctx context.Context, arg sqlc.RevokeSessionParams) (int64, error)
 }
 
-func (s stubQuerier) CreateUser(ctx context.Context, arg sqlc.CreateUserParams) (sqlc.CreateUserRow, error) {
+func (s stubQuerier) CreateUser(ctx context.Context, arg sqlc.CreateUserParams) (sqlc.User, error) {
 	if s.createUserFunc == nil {
-		return sqlc.CreateUserRow{}, fmt.Errorf("unexpected CreateUser call")
+		return sqlc.User{}, fmt.Errorf("unexpected CreateUser call")
 	}
 
 	return s.createUserFunc(ctx, arg)
 }
 
-func (s stubQuerier) GetUserByEmail(ctx context.Context, email string) (sqlc.GetUserByEmailRow, error) {
+func (s stubQuerier) GetUserByEmail(ctx context.Context, email string) (sqlc.User, error) {
 	if s.getUserByEmailFunc == nil {
-		return sqlc.GetUserByEmailRow{}, fmt.Errorf("unexpected GetUserByEmail call")
+		return sqlc.User{}, fmt.Errorf("unexpected GetUserByEmail call")
 	}
 
 	return s.getUserByEmailFunc(ctx, email)
+}
+
+func (s stubQuerier) GetUserByID(ctx context.Context, userID uuid.UUID) (sqlc.User, error) {
+	if s.getUserByIDFunc == nil {
+		return sqlc.User{}, fmt.Errorf("unexpected GetUserByID call")
+	}
+
+	return s.getUserByIDFunc(ctx, userID)
 }
 
 func (s stubQuerier) CreateSession(ctx context.Context, arg sqlc.CreateSessionParams) (sqlc.Session, error) {
@@ -46,4 +57,16 @@ func (s stubQuerier) GetSessionByID(ctx context.Context, sessionID uuid.UUID) (s
 	}
 
 	return s.getSessionByIDFunc(ctx, sessionID)
+}
+
+func (s stubQuerier) RevokeSession(ctx context.Context, arg sqlc.RevokeSessionParams) (int64, error) {
+	if s.revokeSessionFunc == nil {
+		return 0, fmt.Errorf("unexpected RevokeSession call")
+	}
+
+	return s.revokeSessionFunc(ctx, arg)
+}
+
+func (s stubQuerier) WithTx(_ *sql.Tx) *sqlc.Queries {
+	panic("not implemented")
 }

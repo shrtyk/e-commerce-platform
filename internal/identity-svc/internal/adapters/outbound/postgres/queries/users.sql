@@ -27,3 +27,18 @@ FROM
   users
 WHERE
   email = $1;
+
+-- name: GetUserByID :one
+SELECT
+  user_id,
+  email,
+  password_hash,
+  display_name,
+  role_code,
+  status,
+  created_at,
+  updated_at
+FROM
+  users
+WHERE
+  user_id = $1;

@@ -7,6 +7,7 @@ package sqlc
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -76,4 +77,27 @@ func (q *Queries) GetSessionByID(ctx context.Context, sessionID uuid.UUID) (Sess
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const revokeSession = `-- name: RevokeSession :execrows
+UPDATE sessions
+SET
+  revoked_at = $2,
+  updated_at = now()
+WHERE
+  session_id = $1
+  AND revoked_at IS NULL
+`
+
+type RevokeSessionParams struct {
+	SessionID uuid.UUID
+	RevokedAt sql.NullTime
+}
+
+func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeSession, arg.SessionID, arg.RevokedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

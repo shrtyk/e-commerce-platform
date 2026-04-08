@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shrtyk/e-commerce-platform/internal/common/tx"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports/outbound"
@@ -16,6 +17,7 @@ var (
 	ErrEmailAlreadyRegistered = errors.New("identity email already registered")
 	ErrInvalidRegisterInput   = errors.New("identity register input is invalid")
 	ErrInvalidCredentials     = errors.New("identity invalid credentials")
+	ErrInvalidRefreshToken    = errors.New("identity invalid refresh token")
 )
 
 type RegisterUserInput struct {
@@ -42,6 +44,12 @@ type LoginUserInput struct {
 }
 
 type LoginUserResult RegisterUserResult
+
+type RefreshTokenInput struct {
+	RefreshToken string
+}
+
+type RefreshTokenResult LoginUserResult
 
 type IdentityRepos struct {
 	Users    outbound.UserRepository
@@ -141,34 +149,125 @@ func (s *AuthService) LoginUser(
 		return LoginUserResult{}, ErrInvalidCredentials
 	}
 
-	user, err := s.repos.Users.GetByEmail(ctx, email)
-	if errors.Is(err, outbound.ErrUserNotFound) {
-		return LoginUserResult{}, ErrInvalidCredentials
-	}
-	if err != nil {
-		return LoginUserResult{}, fmt.Errorf("lookup user by email: %w", err)
-	}
+	var (
+		user         domain.User
+		accessToken  string
+		refreshToken string
+	)
 
-	verified, err := s.hasher.Verify(input.Password, user.PasswordHash)
-	if err != nil {
-		return LoginUserResult{}, fmt.Errorf("verify password: %w", err)
-	}
-	if !verified || user.Status != domain.UserStatusActive {
-		return LoginUserResult{}, ErrInvalidCredentials
-	}
+	err := s.txProvider.WithTransaction(ctx, nil, func(uow tx.UnitOfWork[IdentityRepos]) error {
+		repos := uow.Repos()
+		var err error
 
-	refreshToken, err := s.createSession(ctx, user.ID)
+		user, err = repos.Users.GetByEmail(ctx, email)
+		if errors.Is(err, outbound.ErrUserNotFound) {
+			return ErrInvalidCredentials
+		}
+		if err != nil {
+			return fmt.Errorf("lookup user by email: %w", err)
+		}
+
+		verified, err := s.hasher.Verify(input.Password, user.PasswordHash)
+		if err != nil {
+			return fmt.Errorf("verify password: %w", err)
+		}
+		if !verified || user.Status != domain.UserStatusActive {
+			return ErrInvalidCredentials
+		}
+
+		refreshToken, err = s.createSessionWithRepository(ctx, repos.Sessions, user.ID)
+		if err != nil {
+			return err
+		}
+
+		accessToken, err = s.tokens.IssueToken(user)
+		if err != nil {
+			return fmt.Errorf("issue access token: %w", err)
+		}
+
+		return nil
+	})
 	if err != nil {
 		return LoginUserResult{}, err
 	}
 
 	result := toLoginUserResult(user)
-	accessToken, err := s.tokens.IssueToken(user)
-	if err != nil {
-		return LoginUserResult{}, fmt.Errorf("issue access token: %w", err)
-	}
 	result.AccessToken = accessToken
 	result.RefreshToken = refreshToken
+
+	return result, nil
+}
+
+func (s *AuthService) RefreshToken(ctx context.Context, input RefreshTokenInput) (RefreshTokenResult, error) {
+	sessionID, secret, err := parseSessionToken(input.RefreshToken)
+	if err != nil {
+		return RefreshTokenResult{}, ErrInvalidRefreshToken
+	}
+
+	var (
+		accessToken     string
+		user            domain.User
+		newRefreshToken string
+	)
+
+	err = s.txProvider.WithTransaction(ctx, nil, func(uow tx.UnitOfWork[IdentityRepos]) error {
+		repos := uow.Repos()
+
+		session, err := repos.Sessions.GetByID(ctx, sessionID)
+		if errors.Is(err, outbound.ErrSessionNotFound) {
+			return ErrInvalidRefreshToken
+		}
+		if err != nil {
+			return fmt.Errorf("get session by id: %w", err)
+		}
+
+		now := time.Now().UTC()
+		if session.RevokedAt != nil || !session.ExpiresAt.After(now) || session.TokenHash != hashSessionSecret(secret) {
+			return ErrInvalidRefreshToken
+		}
+
+		if session.UserID == uuid.Nil {
+			return ErrInvalidRefreshToken
+		}
+
+		user, err = repos.Users.GetByID(ctx, session.UserID)
+		if errors.Is(err, outbound.ErrUserNotFound) {
+			return ErrInvalidRefreshToken
+		}
+		if err != nil {
+			return fmt.Errorf("get user by id: %w", err)
+		}
+		if user.Status != domain.UserStatusActive {
+			return ErrInvalidRefreshToken
+		}
+
+		if err := repos.Sessions.Revoke(ctx, sessionID, now); err != nil {
+			if errors.Is(err, outbound.ErrSessionNotFound) {
+				return ErrInvalidRefreshToken
+			}
+
+			return fmt.Errorf("revoke session: %w", err)
+		}
+
+		newRefreshToken, err = s.createSessionWithRepository(ctx, repos.Sessions, user.ID)
+		if err != nil {
+			return err
+		}
+
+		accessToken, err = s.tokens.IssueToken(user)
+		if err != nil {
+			return fmt.Errorf("issue access token: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return RefreshTokenResult{}, err
+	}
+
+	result := RefreshTokenResult(toLoginUserResult(user))
+	result.AccessToken = accessToken
+	result.RefreshToken = newRefreshToken
 
 	return result, nil
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/postgres/sqlc"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
@@ -47,20 +48,7 @@ func (r *UserRepository) Create(ctx context.Context, user domain.User) (domain.U
 		return domain.User{}, fmt.Errorf("create user: %w", err)
 	}
 
-	createdUser := domain.User{
-		ID:           result.UserID.String(),
-		Email:        result.Email,
-		PasswordHash: result.PasswordHash,
-		Role:         domain.UserRole(result.RoleCode),
-		Status:       domain.UserStatus(result.Status),
-		CreatedAt:    result.CreatedAt,
-		UpdatedAt:    result.UpdatedAt,
-	}
-	if result.DisplayName.Valid {
-		createdUser.DisplayName = result.DisplayName.String
-	}
-
-	return createdUser, nil
+	return mapUser(result), nil
 }
 
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (domain.User, error) {
@@ -73,8 +61,25 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (domain.U
 		return domain.User{}, fmt.Errorf("get user by email %q: %w", email, err)
 	}
 
+	return mapUser(result), nil
+}
+
+func (r *UserRepository) GetByID(ctx context.Context, userID uuid.UUID) (domain.User, error) {
+	result, err := r.queries.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.User{}, outbound.ErrUserNotFound
+		}
+
+		return domain.User{}, fmt.Errorf("get user by id %q: %w", userID.String(), err)
+	}
+
+	return mapUser(result), nil
+}
+
+func mapUser(result sqlc.User) domain.User {
 	user := domain.User{
-		ID:           result.UserID.String(),
+		ID:           result.UserID,
 		Email:        result.Email,
 		PasswordHash: result.PasswordHash,
 		Role:         domain.UserRole(result.RoleCode),
@@ -82,9 +87,10 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (domain.U
 		CreatedAt:    result.CreatedAt,
 		UpdatedAt:    result.UpdatedAt,
 	}
+
 	if result.DisplayName.Valid {
 		user.DisplayName = result.DisplayName.String
 	}
 
-	return user, nil
+	return user
 }

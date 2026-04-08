@@ -25,3 +25,12 @@ FROM
   sessions
 WHERE
   session_id = $1;
+
+-- name: RevokeSession :execrows
+UPDATE sessions
+SET
+  revoked_at = $2,
+  updated_at = now()
+WHERE
+  session_id = $1
+  AND revoked_at IS NULL;

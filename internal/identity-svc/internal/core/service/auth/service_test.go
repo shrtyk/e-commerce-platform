@@ -54,7 +54,7 @@ func TestRegisterUserCreatesUser(t *testing.T) {
 	repo.EXPECT().
 		Create(testifymock.Anything, expectedUser).
 		Return(domain.User{
-			ID:           userUUID.String(),
+			ID:           userUUID,
 			Email:        normalizedEmail,
 			PasswordHash: pwdHash,
 			DisplayName:  normalizedName,
@@ -64,19 +64,19 @@ func TestRegisterUserCreatesUser(t *testing.T) {
 	sessions.EXPECT().
 		Create(testifymock.Anything, testifymock.Anything).
 		RunAndReturn(func(_ context.Context, session domain.Session) (domain.Session, error) {
-			require.Equal(t, userUUID.String(), session.UserID)
+			require.Equal(t, userUUID, session.UserID)
 			require.NotEmpty(t, session.TokenHash)
 			require.WithinDuration(t, time.Now().UTC().Add(testSessionTTL), session.ExpiresAt, time.Second)
 
 			return domain.Session{
-				ID:        sessionID.String(),
+				ID:        sessionID,
 				UserID:    session.UserID,
 				TokenHash: session.TokenHash,
 				ExpiresAt: session.ExpiresAt,
 			}, nil
 		})
 	issuer.EXPECT().IssueToken(testifymock.MatchedBy(func(user domain.User) bool {
-		return user.ID == userUUID.String() && user.Email == normalizedEmail && user.Role == domain.UserRoleUser
+		return user.ID == userUUID && user.Email == normalizedEmail && user.Role == domain.UserRoleUser
 	})).Return(accessToken, nil)
 
 	result, err := auth.RegisterUser(context.Background(), RegisterUserInput{
@@ -191,7 +191,7 @@ func TestRegisterUserSessionError(t *testing.T) {
 	hasher.EXPECT().Hash(strongPassword).Return("hash", nil)
 	repo.EXPECT().
 		Create(testifymock.Anything, testifymock.Anything).
-		Return(domain.User{ID: userUUID.String(), Email: registeredEmail, Status: domain.UserStatusActive}, nil)
+		Return(domain.User{ID: userUUID, Email: registeredEmail, Status: domain.UserStatusActive}, nil)
 	sessions.EXPECT().
 		Create(testifymock.Anything, testifymock.Anything).
 		Return(domain.Session{}, errors.New("session store down"))
@@ -205,6 +205,57 @@ func TestRegisterUserSessionError(t *testing.T) {
 	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
 }
 
+func TestRegisterUserRejectsNilCreatedSessionID(t *testing.T) {
+	userUUID := uuid.New()
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	hasher.EXPECT().Hash(strongPassword).Return("hash", nil)
+	repo.EXPECT().
+		Create(testifymock.Anything, testifymock.Anything).
+		Return(domain.User{ID: userUUID, Email: registeredEmail, Status: domain.UserStatusActive}, nil)
+	sessions.EXPECT().
+		Create(testifymock.Anything, testifymock.Anything).
+		Return(domain.Session{ID: uuid.Nil, UserID: userUUID}, nil)
+
+	_, err := auth.RegisterUser(context.Background(), RegisterUserInput{
+		Email:    registeredEmail,
+		Password: strongPassword,
+	})
+
+	require.ErrorContains(t, err, "create session")
+	require.ErrorContains(t, err, "session id is nil")
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRegisterUserRejectsNilCreatedUserID(t *testing.T) {
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	hasher.EXPECT().Hash(strongPassword).Return("hash", nil)
+	repo.EXPECT().
+		Create(testifymock.Anything, testifymock.Anything).
+		Return(domain.User{ID: uuid.Nil, Email: registeredEmail, Status: domain.UserStatusActive}, nil)
+
+	_, err := auth.RegisterUser(context.Background(), RegisterUserInput{
+		Email:    registeredEmail,
+		Password: strongPassword,
+	})
+
+	require.ErrorContains(t, err, "create session")
+	require.ErrorContains(t, err, "user id is nil")
+	sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
 func TestRegisterUserAccessTokenError(t *testing.T) {
 	userUUID := uuid.New()
 	repo := outboundmocks.NewMockUserRepository(t)
@@ -215,8 +266,8 @@ func TestRegisterUserAccessTokenError(t *testing.T) {
 	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 
 	hasher.EXPECT().Hash(strongPassword).Return("hash", nil)
-	repo.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.User{ID: userUUID.String(), Email: registeredEmail, Status: domain.UserStatusActive}, nil)
-	sessions.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.Session{ID: uuid.NewString(), UserID: userUUID.String()}, nil)
+	repo.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.User{ID: userUUID, Email: registeredEmail, Status: domain.UserStatusActive}, nil)
+	sessions.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.Session{ID: uuid.New(), UserID: userUUID}, nil)
 	issuer.EXPECT().IssueToken(testifymock.Anything).Return("", errors.New("jwt down"))
 
 	_, err := auth.RegisterUser(context.Background(), RegisterUserInput{Email: registeredEmail, Password: strongPassword})
@@ -249,9 +300,10 @@ func TestLoginUserReturnsUser(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 	storedUser := domain.User{
-		ID:           userUUID.String(),
+		ID:           userUUID,
 		Email:        normalizedEmail,
 		PasswordHash: "stored-hash",
 		DisplayName:  "John Doe",
@@ -273,7 +325,7 @@ func TestLoginUserReturnsUser(t *testing.T) {
 			require.NotEmpty(t, session.TokenHash)
 			require.WithinDuration(t, time.Now().UTC().Add(testSessionTTL), session.ExpiresAt, time.Second)
 			return domain.Session{
-				ID:        sessionID.String(),
+				ID:        sessionID,
 				UserID:    session.UserID,
 				TokenHash: session.TokenHash,
 				ExpiresAt: session.ExpiresAt,
@@ -289,7 +341,7 @@ func TestLoginUserReturnsUser(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, storedUser.ID, result.ID)
+	require.Equal(t, storedUser.ID.String(), result.ID)
 	require.Equal(t, normalizedEmail, result.Email)
 	require.Equal(t, storedUser.DisplayName, result.DisplayName)
 	require.Equal(t, domain.UserRoleAdmin, result.Role)
@@ -312,7 +364,7 @@ func TestLoginUserRejectsInvalidCredentials(t *testing.T) {
 		{
 			name: "bad password",
 			user: domain.User{
-				ID:           uuid.NewString(),
+				ID:           uuid.New(),
 				Email:        registeredEmail,
 				PasswordHash: "stored-hash",
 				Status:       domain.UserStatusActive,
@@ -327,7 +379,8 @@ func TestLoginUserRejectsInvalidCredentials(t *testing.T) {
 			sessions := outboundmocks.NewMockSessionRepository(t)
 			hasher := outboundmocks.NewMockPasswordHasher(t)
 			issuer := outboundmocks.NewMockTokenIssuer(t)
-			auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
+			txProvider := newStubProvider(repo, sessions)
+			auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 
 			repo.EXPECT().
 				GetByEmail(testifymock.Anything, registeredEmail).
@@ -354,9 +407,10 @@ func TestLoginUserVerifyError(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 	storedUser := domain.User{
-		ID:           uuid.NewString(),
+		ID:           uuid.New(),
 		Email:        registeredEmail,
 		PasswordHash: "stored-hash",
 		Status:       domain.UserStatusActive,
@@ -384,9 +438,10 @@ func TestLoginUserSessionError(t *testing.T) {
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
 	storedUser := domain.User{
-		ID:           uuid.NewString(),
+		ID:           uuid.New(),
 		Email:        registeredEmail,
 		PasswordHash: "stored-hash",
 		Status:       domain.UserStatusActive,
@@ -411,22 +466,521 @@ func TestLoginUserSessionError(t *testing.T) {
 	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
 }
 
+func TestLoginUserRejectsNilStoredUserID(t *testing.T) {
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+	storedUser := domain.User{
+		ID:           uuid.Nil,
+		Email:        registeredEmail,
+		PasswordHash: "stored-hash",
+		Status:       domain.UserStatusActive,
+	}
+
+	repo.EXPECT().GetByEmail(testifymock.Anything, registeredEmail).Return(storedUser, nil)
+	hasher.EXPECT().Verify(strongPassword, storedUser.PasswordHash).Return(true, nil)
+
+	_, err := auth.LoginUser(context.Background(), LoginUserInput{Email: registeredEmail, Password: strongPassword})
+
+	require.ErrorContains(t, err, "create session")
+	require.ErrorContains(t, err, "user id is nil")
+	sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
 func TestLoginUserAccessTokenError(t *testing.T) {
 	repo := outboundmocks.NewMockUserRepository(t)
 	sessions := outboundmocks.NewMockSessionRepository(t)
 	hasher := outboundmocks.NewMockPasswordHasher(t)
 	issuer := outboundmocks.NewMockTokenIssuer(t)
-	auth := NewAuthService(repo, sessions, nil, hasher, issuer, testSessionTTL)
-	storedUser := domain.User{ID: uuid.NewString(), Email: registeredEmail, PasswordHash: "stored-hash", Status: domain.UserStatusActive}
+	txProvider := newRecordingProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+	storedUser := domain.User{ID: uuid.New(), Email: registeredEmail, PasswordHash: "stored-hash", Status: domain.UserStatusActive}
 
 	repo.EXPECT().GetByEmail(testifymock.Anything, registeredEmail).Return(storedUser, nil)
 	hasher.EXPECT().Verify(strongPassword, storedUser.PasswordHash).Return(true, nil)
-	sessions.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.Session{ID: uuid.NewString(), UserID: storedUser.ID}, nil)
+	sessions.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.Session{ID: uuid.New(), UserID: storedUser.ID}, nil)
 	issuer.EXPECT().IssueToken(testifymock.Anything).Return("", errors.New("jwt down"))
 
 	_, err := auth.LoginUser(context.Background(), LoginUserInput{Email: registeredEmail, Password: strongPassword})
 
 	require.ErrorContains(t, err, "issue access token")
+	require.False(t, txProvider.committed)
+	require.True(t, txProvider.rolledBack)
+}
+
+func TestRefreshTokenReturnsRotatedPair(t *testing.T) {
+	userID := uuid.New()
+	oldSessionID := uuid.New()
+	newSessionID := uuid.New()
+	secret := "secret-value"
+	accessToken := "new-access-token"
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	storedUser := domain.User{
+		ID:           userID,
+		Email:        registeredEmail,
+		PasswordHash: "stored-hash",
+		Role:         domain.UserRoleUser,
+		Status:       domain.UserStatusActive,
+	}
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, oldSessionID).
+		Return(domain.Session{
+			ID:        oldSessionID,
+			UserID:    userID,
+			TokenHash: hashSessionSecret(secret),
+			ExpiresAt: time.Now().UTC().Add(testSessionTTL),
+		}, nil)
+	repo.EXPECT().
+		GetByID(testifymock.Anything, userID).
+		Return(storedUser, nil)
+	sessions.EXPECT().
+		Revoke(testifymock.Anything, oldSessionID, testifymock.Anything).
+		Return(nil)
+	sessions.EXPECT().
+		Create(testifymock.Anything, testifymock.Anything).
+		RunAndReturn(func(_ context.Context, session domain.Session) (domain.Session, error) {
+			require.Equal(t, userID, session.UserID)
+			require.NotEmpty(t, session.TokenHash)
+			require.WithinDuration(t, time.Now().UTC().Add(testSessionTTL), session.ExpiresAt, time.Second)
+
+			return domain.Session{
+				ID:        newSessionID,
+				UserID:    session.UserID,
+				TokenHash: session.TokenHash,
+				ExpiresAt: session.ExpiresAt,
+			}, nil
+		})
+	issuer.EXPECT().IssueToken(storedUser).Return(accessToken, nil)
+
+	result, err := auth.RefreshToken(context.Background(), RefreshTokenInput{
+		RefreshToken: formatSessionToken(oldSessionID.String(), secret),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, accessToken, result.AccessToken)
+	require.True(t, strings.HasPrefix(result.RefreshToken, newSessionID.String()+"."))
+}
+
+func TestRefreshTokenRejectsInvalidToken(t *testing.T) {
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: "bad-token"})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	repo.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsExpiredSession(t *testing.T) {
+	userID := uuid.New()
+	sessionID := uuid.New()
+	secret := "secret-value"
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, sessionID).
+		Return(domain.Session{
+			ID:        sessionID,
+			UserID:    userID,
+			TokenHash: hashSessionSecret(secret),
+			ExpiresAt: time.Now().UTC().Add(-time.Minute),
+		}, nil)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(sessionID.String(), secret)})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	repo.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "Revoke", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsRevokedSession(t *testing.T) {
+	userID := uuid.New()
+	sessionID := uuid.New()
+	secret := "secret-value"
+	revokedAt := time.Now().UTC().Add(-time.Minute)
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, sessionID).
+		Return(domain.Session{
+			ID:        sessionID,
+			UserID:    userID,
+			TokenHash: hashSessionSecret(secret),
+			ExpiresAt: time.Now().UTC().Add(testSessionTTL),
+			RevokedAt: &revokedAt,
+		}, nil)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(sessionID.String(), secret)})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	repo.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "Revoke", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsHashMismatch(t *testing.T) {
+	userID := uuid.New()
+	sessionID := uuid.New()
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, sessionID).
+		Return(domain.Session{
+			ID:        sessionID,
+			UserID:    userID,
+			TokenHash: hashSessionSecret("different-secret"),
+			ExpiresAt: time.Now().UTC().Add(testSessionTTL),
+		}, nil)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(sessionID.String(), "secret-value")})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	repo.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "Revoke", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsSessionNotFoundOnLookup(t *testing.T) {
+	sessionID := uuid.New()
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, sessionID).
+		Return(domain.Session{}, outbound.ErrSessionNotFound)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(sessionID.String(), "secret-value")})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	repo.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "Revoke", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsUserNotFound(t *testing.T) {
+	userID := uuid.New()
+	sessionID := uuid.New()
+	secret := "secret-value"
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, sessionID).
+		Return(domain.Session{
+			ID:        sessionID,
+			UserID:    userID,
+			TokenHash: hashSessionSecret(secret),
+			ExpiresAt: time.Now().UTC().Add(testSessionTTL),
+		}, nil)
+	repo.EXPECT().
+		GetByID(testifymock.Anything, userID).
+		Return(domain.User{}, outbound.ErrUserNotFound)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(sessionID.String(), secret)})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	sessions.AssertNotCalled(t, "Revoke", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsSessionNotFoundOnRevoke(t *testing.T) {
+	userID := uuid.New()
+	sessionID := uuid.New()
+	secret := "secret-value"
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	storedUser := domain.User{
+		ID:           userID,
+		Email:        registeredEmail,
+		PasswordHash: "stored-hash",
+		Role:         domain.UserRoleUser,
+		Status:       domain.UserStatusActive,
+	}
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, sessionID).
+		Return(domain.Session{
+			ID:        sessionID,
+			UserID:    userID,
+			TokenHash: hashSessionSecret(secret),
+			ExpiresAt: time.Now().UTC().Add(testSessionTTL),
+		}, nil)
+	repo.EXPECT().
+		GetByID(testifymock.Anything, userID).
+		Return(storedUser, nil)
+	sessions.EXPECT().
+		Revoke(testifymock.Anything, sessionID, testifymock.Anything).
+		Return(outbound.ErrSessionNotFound)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(sessionID.String(), secret)})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsNilStoredUserID(t *testing.T) {
+	sessionID := uuid.New()
+	secret := "secret-value"
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, sessionID).
+		Return(domain.Session{
+			ID:        sessionID,
+			UserID:    uuid.Nil,
+			TokenHash: hashSessionSecret(secret),
+			ExpiresAt: time.Now().UTC().Add(testSessionTTL),
+		}, nil)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(sessionID.String(), secret)})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	repo.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "Revoke", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsNilResolvedUserIDForSessionCreation(t *testing.T) {
+	userID := uuid.New()
+	sessionID := uuid.New()
+	secret := "secret-value"
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, sessionID).
+		Return(domain.Session{
+			ID:        sessionID,
+			UserID:    userID,
+			TokenHash: hashSessionSecret(secret),
+			ExpiresAt: time.Now().UTC().Add(testSessionTTL),
+		}, nil)
+	repo.EXPECT().
+		GetByID(testifymock.Anything, userID).
+		Return(domain.User{ID: uuid.Nil, Email: registeredEmail, Status: domain.UserStatusActive}, nil)
+	sessions.EXPECT().
+		Revoke(testifymock.Anything, sessionID, testifymock.Anything).
+		Return(nil)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(sessionID.String(), secret)})
+
+	require.ErrorContains(t, err, "create session")
+	require.ErrorContains(t, err, "user id is nil")
+	sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenUsesTokenSessionIDForRevoke(t *testing.T) {
+	userID := uuid.New()
+	sessionID := uuid.New()
+	newSessionID := uuid.New()
+	storedSessionID := uuid.New()
+	secret := "secret-value"
+	accessToken := "new-access-token"
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	storedUser := domain.User{
+		ID:           userID,
+		Email:        registeredEmail,
+		PasswordHash: "stored-hash",
+		Role:         domain.UserRoleUser,
+		Status:       domain.UserStatusActive,
+	}
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, sessionID).
+		Return(domain.Session{
+			ID:        storedSessionID,
+			UserID:    userID,
+			TokenHash: hashSessionSecret(secret),
+			ExpiresAt: time.Now().UTC().Add(testSessionTTL),
+		}, nil)
+	repo.EXPECT().
+		GetByID(testifymock.Anything, userID).
+		Return(storedUser, nil)
+	sessions.EXPECT().
+		Revoke(testifymock.Anything, sessionID, testifymock.Anything).
+		Return(nil)
+	sessions.EXPECT().
+		Create(testifymock.Anything, testifymock.Anything).
+		Return(domain.Session{ID: newSessionID, UserID: userID}, nil)
+	issuer.EXPECT().IssueToken(storedUser).Return(accessToken, nil)
+
+	result, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(sessionID.String(), secret)})
+
+	require.NoError(t, err)
+	require.Equal(t, accessToken, result.AccessToken)
+	require.True(t, strings.HasPrefix(result.RefreshToken, newSessionID.String()+"."))
+}
+
+func TestRefreshTokenRejectsInvalidSessionID(t *testing.T) {
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken("not-a-uuid", "secret")})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	repo.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsNilSessionID(t *testing.T) {
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{
+		RefreshToken: formatSessionToken(uuid.Nil.String(), "secret"),
+	})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	repo.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "Revoke", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenRejectsAmbiguousFormat(t *testing.T) {
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: uuid.NewString() + ".secret.extra"})
+
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	repo.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	sessions.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenAccessTokenErrorRollsBack(t *testing.T) {
+	userID := uuid.New()
+	oldSessionID := uuid.New()
+	newSessionID := uuid.New()
+	secret := "secret-value"
+
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newRecordingProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+	storedUser := domain.User{
+		ID:           userID,
+		Email:        registeredEmail,
+		PasswordHash: "stored-hash",
+		Role:         domain.UserRoleUser,
+		Status:       domain.UserStatusActive,
+	}
+
+	sessions.EXPECT().
+		GetByID(testifymock.Anything, oldSessionID).
+		Return(domain.Session{
+			ID:        oldSessionID,
+			UserID:    userID,
+			TokenHash: hashSessionSecret(secret),
+			ExpiresAt: time.Now().UTC().Add(testSessionTTL),
+		}, nil)
+	repo.EXPECT().
+		GetByID(testifymock.Anything, userID).
+		Return(storedUser, nil)
+	sessions.EXPECT().
+		Revoke(testifymock.Anything, oldSessionID, testifymock.Anything).
+		Return(nil)
+	sessions.EXPECT().
+		Create(testifymock.Anything, testifymock.Anything).
+		Return(domain.Session{ID: newSessionID, UserID: userID}, nil)
+	issuer.EXPECT().IssueToken(storedUser).Return("", errors.New("jwt down"))
+
+	_, err := auth.RefreshToken(context.Background(), RefreshTokenInput{RefreshToken: formatSessionToken(oldSessionID.String(), secret)})
+
+	require.ErrorContains(t, err, "issue access token")
+	require.False(t, txProvider.committed)
+	require.True(t, txProvider.rolledBack)
 }
 
 // stubProvider implements tx.Provider[service.IdentityRepos] for tests.
@@ -436,8 +990,20 @@ type stubProvider struct {
 	called bool
 }
 
+type recordingProvider struct {
+	repos      IdentityRepos
+	committed  bool
+	rolledBack bool
+}
+
 func newStubProvider(users outbound.UserRepository, sessions outbound.SessionRepository) *stubProvider {
 	return &stubProvider{
+		repos: IdentityRepos{Users: users, Sessions: sessions},
+	}
+}
+
+func newRecordingProvider(users outbound.UserRepository, sessions outbound.SessionRepository) *recordingProvider {
+	return &recordingProvider{
 		repos: IdentityRepos{Users: users, Sessions: sessions},
 	}
 }
@@ -448,6 +1014,17 @@ func (p *stubProvider) WithTransaction(_ context.Context, txOpts *sql.TxOptions,
 		return p.err
 	}
 	return fn(&stubUnitOfWork{repos: p.repos})
+}
+
+func (p *recordingProvider) WithTransaction(_ context.Context, txOpts *sql.TxOptions, fn func(uow tx.UnitOfWork[IdentityRepos]) error) error {
+	err := fn(&stubUnitOfWork{repos: p.repos})
+	if err != nil {
+		p.rolledBack = true
+		return err
+	}
+
+	p.committed = true
+	return nil
 }
 
 type stubUnitOfWork struct {
