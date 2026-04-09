@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/jwt"
@@ -21,6 +23,16 @@ import (
 
 func main() {
 	cfg := config.MustLoad()
+
+	logger, err := logging.New(
+		logging.EnvFromCfg(cfg.Service.Environment),
+		logging.LogLevelFromCfg(cfg.LogLevel),
+	)
+	if err != nil {
+		panic(fmt.Errorf("create logger: %w", err))
+	}
+	slog.SetDefault(logger)
+
 	db := adapterpostgres.MustCreatePostgres(cfg.Postgres)
 	ctx, cancel := signal.NotifyContext(
 		context.Background(),
@@ -30,8 +42,8 @@ func main() {
 	)
 	defer cancel()
 
-	handler := adapterhttp.NewRouter()
-	app := identityapp.NewApplication(&cfg, handler, db)
+	handler := adapterhttp.NewRouter(logger, cfg.Service.Name)
+	app := identityapp.NewApplication(&cfg, handler, db, identityapp.WithLogger(logger))
 
 	txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) auth.IdentityRepos {
 		return auth.IdentityRepos{

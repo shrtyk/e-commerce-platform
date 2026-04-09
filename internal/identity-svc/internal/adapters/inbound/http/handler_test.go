@@ -1,6 +1,8 @@
 package http
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -34,7 +36,7 @@ func TestHandlerRoutes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewRouter()
+			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service")
 			req := httptest.NewRequest(tt.method, tt.target, nil)
 			res := httptest.NewRecorder()
 
