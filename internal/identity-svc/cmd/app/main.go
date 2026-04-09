@@ -42,9 +42,6 @@ func main() {
 	)
 	defer cancel()
 
-	handler := adapterhttp.NewRouter(logger, cfg.Service.Name)
-	app := identityapp.NewApplication(&cfg, handler, db, identityapp.WithLogger(logger))
-
 	txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) auth.IdentityRepos {
 		return auth.IdentityRepos{
 			Users:    repos.NewUserRepositoryFromTx(tx),
@@ -60,7 +57,9 @@ func main() {
 		jwt.NewTokenIssuer(cfg.Auth.AccessTokenIssuer, cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenTTL),
 		cfg.Auth.SessionTTL,
 	)
-	_ = authService
+
+	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, authService)
+	app := identityapp.NewApplication(&cfg, handler, db, identityapp.WithLogger(logger))
 
 	if err := app.Run(ctx); err != nil {
 		panic(fmt.Errorf("run app: %w", err))

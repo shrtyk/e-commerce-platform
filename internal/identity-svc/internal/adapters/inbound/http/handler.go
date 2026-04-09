@@ -1,16 +1,117 @@
 package http
 
 import (
+	"errors"
 	"net/http"
+
+	"github.com/go-chi/render"
+
+	commonerrors "github.com/shrtyk/e-commerce-platform/internal/common/errors"
+	httpcommon "github.com/shrtyk/e-commerce-platform/internal/common/http"
+	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http/dto"
+	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/service/auth"
 )
 
-type IdentityHandler struct{}
+type IdentityHandler struct {
+	dto.Unimplemented
 
-func NewIdentityHandler() *IdentityHandler {
-	return &IdentityHandler{}
+	authService *auth.AuthService
+}
+
+func NewIdentityHandler(authService *auth.AuthService) *IdentityHandler {
+	return &IdentityHandler{authService: authService}
 }
 
 func (h *IdentityHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+func (h *IdentityHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
+	var request dto.RegisterRequest
+	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	result, err := h.authService.RegisterUser(r.Context(), auth.RegisterUserInput{
+		Email:       string(request.Email),
+		Password:    request.Password,
+		DisplayName: request.DisplayName,
+	})
+	if err != nil {
+		h.writeError(w, r, mapAuthError(err))
+		return
+	}
+
+	render.Status(r, http.StatusCreated)
+	render.JSON(w, r, dto.AuthTokensResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+	})
+}
+
+func (h *IdentityHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
+	var request dto.LoginRequest
+	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	result, err := h.authService.LoginUser(r.Context(), auth.LoginUserInput{
+		Email:    string(request.Email),
+		Password: request.Password,
+	})
+	if err != nil {
+		h.writeError(w, r, mapAuthError(err))
+		return
+	}
+
+	render.Status(r, http.StatusOK)
+	render.JSON(w, r, dto.AuthTokensResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+	})
+}
+
+func (h *IdentityHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	var request dto.RefreshTokenRequest
+	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	result, err := h.authService.RefreshToken(r.Context(), auth.RefreshTokenInput{
+		RefreshToken: request.RefreshToken,
+	})
+	if err != nil {
+		h.writeError(w, r, mapAuthError(err))
+		return
+	}
+
+	render.Status(r, http.StatusOK)
+	render.JSON(w, r, dto.AuthTokensResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+	})
+}
+
+func (h *IdentityHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
+	httpErr := commonerrors.FromError(err)
+	commonerrors.WriteJSON(w, httpErr, httpcommon.RequestIDFromContext(r.Context()))
+}
+
+func mapAuthError(err error) error {
+	switch {
+	case errors.Is(err, auth.ErrInvalidRegisterInput):
+		return commonerrors.BadRequest("invalid_request", "invalid register input")
+	case errors.Is(err, auth.ErrEmailAlreadyRegistered):
+		return commonerrors.Conflict("email_already_registered", "email already registered")
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		return commonerrors.Unauthorized("invalid_credentials", "invalid credentials")
+	case errors.Is(err, auth.ErrInvalidRefreshToken):
+		return commonerrors.Unauthorized("invalid_refresh_token", "invalid refresh token")
+	default:
+		return commonerrors.InternalError("internal_error")
+	}
 }
