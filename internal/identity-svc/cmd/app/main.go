@@ -58,7 +58,12 @@ func main() {
 		cfg.Auth.SessionTTL,
 	)
 
-	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, authService)
+	handler := adapterhttp.NewRouter(
+		logger,
+		cfg.Service.Name,
+		authService,
+		jwt.NewTokenVerifier(cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenIssuer),
+	)
 	app := identityapp.NewApplication(&cfg, handler, db, identityapp.WithLogger(logger))
 
 	if err := app.Run(ctx); err != nil {

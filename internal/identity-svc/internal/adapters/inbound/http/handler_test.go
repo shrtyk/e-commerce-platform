@@ -93,7 +93,7 @@ func TestRegisterUser(t *testing.T) {
 			fixture := newAuthFixture(t)
 			tt.setup(fixture)
 
-			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service)
+			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, nil)
 			req := httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			res := httptest.NewRecorder()
@@ -173,7 +173,7 @@ func TestLoginUser(t *testing.T) {
 			fixture := newAuthFixture(t)
 			tt.setup(fixture)
 
-			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service)
+			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, nil)
 			req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			res := httptest.NewRecorder()
@@ -257,7 +257,7 @@ func TestRefreshToken(t *testing.T) {
 			fixture := newAuthFixture(t)
 			tt.setup(fixture)
 
-			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service)
+			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, nil)
 			req := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			res := httptest.NewRecorder()
@@ -272,7 +272,7 @@ func TestRefreshToken(t *testing.T) {
 
 func TestHandlerRoutes(t *testing.T) {
 	fixture := newAuthFixture(t)
-	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service)
+	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	res := httptest.NewRecorder()
 
