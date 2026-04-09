@@ -12,6 +12,7 @@ import (
 
 type stubQuerier struct {
 	createUserFunc     func(ctx context.Context, arg sqlc.CreateUserParams) (sqlc.User, error)
+	updateUserFunc     func(ctx context.Context, arg sqlc.UpdateUserParams) (sqlc.User, error)
 	getUserByEmailFunc func(ctx context.Context, email string) (sqlc.User, error)
 	getUserByIDFunc    func(ctx context.Context, userID uuid.UUID) (sqlc.User, error)
 	createSessionFunc  func(ctx context.Context, arg sqlc.CreateSessionParams) (sqlc.Session, error)
@@ -25,6 +26,14 @@ func (s stubQuerier) CreateUser(ctx context.Context, arg sqlc.CreateUserParams) 
 	}
 
 	return s.createUserFunc(ctx, arg)
+}
+
+func (s stubQuerier) UpdateUser(ctx context.Context, arg sqlc.UpdateUserParams) (sqlc.User, error) {
+	if s.updateUserFunc == nil {
+		return sqlc.User{}, fmt.Errorf("unexpected UpdateUser call")
+	}
+
+	return s.updateUserFunc(ctx, arg)
 }
 
 func (s stubQuerier) GetUserByEmail(ctx context.Context, email string) (sqlc.User, error) {

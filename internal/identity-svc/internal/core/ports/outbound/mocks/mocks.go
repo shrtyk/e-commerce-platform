@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
+	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports/outbound"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -696,6 +697,78 @@ func (_c *MockUserRepository_GetByID_Call) Return(user domain.User, err error) *
 }
 
 func (_c *MockUserRepository_GetByID_Call) RunAndReturn(run func(ctx context.Context, userID uuid.UUID) (domain.User, error)) *MockUserRepository_GetByID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Update provides a mock function for the type MockUserRepository
+func (_mock *MockUserRepository) Update(ctx context.Context, userID uuid.UUID, params outbound.UserUpdateParams) (domain.User, error) {
+	ret := _mock.Called(ctx, userID, params)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Update")
+	}
+
+	var r0 domain.User
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID, outbound.UserUpdateParams) (domain.User, error)); ok {
+		return returnFunc(ctx, userID, params)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID, outbound.UserUpdateParams) domain.User); ok {
+		r0 = returnFunc(ctx, userID, params)
+	} else {
+		r0 = ret.Get(0).(domain.User)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uuid.UUID, outbound.UserUpdateParams) error); ok {
+		r1 = returnFunc(ctx, userID, params)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockUserRepository_Update_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Update'
+type MockUserRepository_Update_Call struct {
+	*mock.Call
+}
+
+// Update is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uuid.UUID
+//   - params outbound.UserUpdateParams
+func (_e *MockUserRepository_Expecter) Update(ctx interface{}, userID interface{}, params interface{}) *MockUserRepository_Update_Call {
+	return &MockUserRepository_Update_Call{Call: _e.mock.On("Update", ctx, userID, params)}
+}
+
+func (_c *MockUserRepository_Update_Call) Run(run func(ctx context.Context, userID uuid.UUID, params outbound.UserUpdateParams)) *MockUserRepository_Update_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uuid.UUID
+		if args[1] != nil {
+			arg1 = args[1].(uuid.UUID)
+		}
+		var arg2 outbound.UserUpdateParams
+		if args[2] != nil {
+			arg2 = args[2].(outbound.UserUpdateParams)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockUserRepository_Update_Call) Return(user domain.User, err error) *MockUserRepository_Update_Call {
+	_c.Call.Return(user, err)
+	return _c
+}
+
+func (_c *MockUserRepository_Update_Call) RunAndReturn(run func(ctx context.Context, userID uuid.UUID, params outbound.UserUpdateParams) (domain.User, error)) *MockUserRepository_Update_Call {
 	_c.Call.Return(run)
 	return _c
 }

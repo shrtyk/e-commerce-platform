@@ -77,6 +77,25 @@ func (r *UserRepository) GetByID(ctx context.Context, userID uuid.UUID) (domain.
 	return mapUser(result), nil
 }
 
+func (r *UserRepository) Update(ctx context.Context, userID uuid.UUID, params outbound.UserUpdateParams) (domain.User, error) {
+	result, err := r.queries.UpdateUser(ctx, sqlc.UpdateUserParams{
+		UserID: userID,
+		DisplayName: sql.NullString{
+			String: params.DisplayName,
+			Valid:  params.DisplayName != "",
+		},
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.User{}, outbound.ErrUserNotFound
+		}
+
+		return domain.User{}, fmt.Errorf("update user: %w", err)
+	}
+
+	return mapUser(result), nil
+}
+
 func mapUser(result sqlc.User) domain.User {
 	user := domain.User{
 		ID:           result.UserID,

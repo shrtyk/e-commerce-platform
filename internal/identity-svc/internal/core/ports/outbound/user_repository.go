@@ -19,4 +19,9 @@ type UserRepository interface {
 	Create(ctx context.Context, user domain.User) (domain.User, error)
 	GetByEmail(ctx context.Context, email string) (domain.User, error)
 	GetByID(ctx context.Context, userID uuid.UUID) (domain.User, error)
+	Update(ctx context.Context, userID uuid.UUID, params UserUpdateParams) (domain.User, error)
+}
+
+type UserUpdateParams struct {
+	DisplayName string
 }

@@ -42,3 +42,21 @@ FROM
   users
 WHERE
   user_id = $1;
+
+-- name: UpdateUser :one
+UPDATE
+  users
+SET
+  display_name = $2,
+  updated_at = NOW()
+WHERE
+  user_id = $1
+RETURNING
+  user_id,
+  email,
+  password_hash,
+  display_name,
+  role_code,
+  status,
+  created_at,
+  updated_at;
