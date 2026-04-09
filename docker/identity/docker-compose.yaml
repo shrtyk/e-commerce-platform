@@ -1,14 +1,24 @@
 services:
   identity-postgres:
-    image: postgres:18-alpine
+    build:
+      context: ${PWD}
+      dockerfile: docker/identity/postgres/Dockerfile
     environment:
       POSTGRES_DB: ${IDENTITY_POSTGRES_DB:-identity}
       POSTGRES_USER: ${IDENTITY_POSTGRES_USER:-identity}
       POSTGRES_PASSWORD: ${IDENTITY_POSTGRES_PASSWORD:-identity}
+    command:
+      [
+        "postgres",
+        "-c",
+        "shared_preload_libraries=pg_cron",
+        "-c",
+        "cron.database_name=${IDENTITY_POSTGRES_DB:-identity}",
+      ]
     ports:
       - "${IDENTITY_POSTGRES_PORT:-5433}:5432"
     volumes:
-      - identity-postgres-data:/var/lib/postgresql/data
+      - identity-postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
