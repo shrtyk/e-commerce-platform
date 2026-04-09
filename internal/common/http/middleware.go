@@ -11,14 +11,23 @@ import (
 )
 
 type MiddlewaresProvider struct {
-	serviceName string
-	logger      *slog.Logger
+	serviceName   string
+	logger        *slog.Logger
+	tokenVerifier TokenVerifier
 }
 
 func NewMiddlewaresProvider(serviceName string, logger *slog.Logger) *MiddlewaresProvider {
 	return &MiddlewaresProvider{
 		serviceName: serviceName,
 		logger:      logger,
+	}
+}
+
+func NewMiddlewaresProviderWithAuth(serviceName string, logger *slog.Logger, tokenVerifier TokenVerifier) *MiddlewaresProvider {
+	return &MiddlewaresProvider{
+		serviceName:   serviceName,
+		logger:        logger,
+		tokenVerifier: tokenVerifier,
 	}
 }
 

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -243,4 +245,146 @@ func TestMiddlewareChain(t *testing.T) {
 	logRequestID, ok := entry["request_id"].(string)
 	require.True(t, ok)
 	require.Equal(t, requestID, logRequestID)
+}
+
+type tokenVerifierStub struct {
+	claims Claims
+	err    error
+}
+
+func (s tokenVerifierStub) Verify(_ string) (Claims, error) {
+	return s.claims, s.err
+}
+
+func TestAuthMiddleware(t *testing.T) {
+	validClaims := Claims{
+		UserID: uuid.New(),
+		Role:   "user",
+		Status: "active",
+	}
+
+	tests := []struct {
+		name          string
+		provider      *MiddlewaresProvider
+		requiredRoles []string
+		authHeader    string
+		wantStatus    int
+		wantNext      bool
+		assertContext func(t *testing.T, ctx context.Context)
+	}{
+		{
+			name:          "valid token with matching role",
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			requiredRoles: []string{"user", "admin"},
+			authHeader:    "Bearer valid-token",
+			wantStatus:    http.StatusOK,
+			wantNext:      true,
+			assertContext: func(t *testing.T, ctx context.Context) {
+				claims, ok := ClaimsFromContext(ctx)
+				require.True(t, ok)
+				require.Equal(t, validClaims, claims)
+			},
+		},
+		{
+			name:          "valid token with case insensitive bearer scheme",
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			requiredRoles: []string{"user", "admin"},
+			authHeader:    "bearer valid-token",
+			wantStatus:    http.StatusOK,
+			wantNext:      true,
+			assertContext: func(t *testing.T, ctx context.Context) {
+				claims, ok := ClaimsFromContext(ctx)
+				require.True(t, ok)
+				require.Equal(t, validClaims, claims)
+			},
+		},
+		{
+			name:          "missing authorization header",
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			requiredRoles: []string{"user"},
+			wantStatus:    http.StatusUnauthorized,
+			wantNext:      false,
+		},
+		{
+			name:          "malformed authorization header",
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			requiredRoles: []string{"user"},
+			authHeader:    "Bearer",
+			wantStatus:    http.StatusUnauthorized,
+			wantNext:      false,
+		},
+		{
+			name:          "invalid token",
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{err: errors.New("invalid token")}),
+			requiredRoles: []string{"user"},
+			authHeader:    "Bearer invalid-token",
+			wantStatus:    http.StatusUnauthorized,
+			wantNext:      false,
+		},
+		{
+			name:          "wrong role",
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: Claims{UserID: uuid.New(), Role: "guest", Status: "active"}}),
+			requiredRoles: []string{"user", "admin"},
+			authHeader:    "Bearer valid-token",
+			wantStatus:    http.StatusForbidden,
+			wantNext:      false,
+		},
+		{
+			name:          "no role required",
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			requiredRoles: nil,
+			authHeader:    "Bearer valid-token",
+			wantStatus:    http.StatusOK,
+			wantNext:      true,
+			assertContext: func(t *testing.T, ctx context.Context) {
+				claims, ok := ClaimsFromContext(ctx)
+				require.True(t, ok)
+				require.Equal(t, validClaims, claims)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedCtx context.Context
+			nextCalled := false
+
+			handler := tt.provider.Auth(tt.requiredRoles...)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nextCalled = true
+				capturedCtx = r.Context()
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			require.Equal(t, tt.wantStatus, rec.Code)
+			require.Equal(t, tt.wantNext, nextCalled)
+			if tt.assertContext != nil {
+				tt.assertContext(t, capturedCtx)
+			}
+		})
+	}
+}
+
+func TestWithClaims(t *testing.T) {
+	claims := Claims{UserID: uuid.New(), Role: "admin", Status: "active"}
+
+	ctx := WithClaims(context.Background(), claims)
+	actual, ok := ClaimsFromContext(ctx)
+
+	require.True(t, ok)
+	require.Equal(t, claims, actual)
+}
+
+func TestClaimsFromContextWithoutClaims(t *testing.T) {
+	claims, ok := ClaimsFromContext(context.Background())
+
+	require.False(t, ok)
+	require.Equal(t, Claims{}, claims)
 }
