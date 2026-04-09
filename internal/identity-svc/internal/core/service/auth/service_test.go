@@ -983,6 +983,210 @@ func TestRefreshTokenAccessTokenErrorRollsBack(t *testing.T) {
 	require.True(t, txProvider.rolledBack)
 }
 
+func TestGetMyProfile(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func(repo *outboundmocks.MockUserRepository, userID uuid.UUID)
+		expected    GetProfileResult
+		errIs       error
+		errContains string
+	}{
+		{
+			name: "success",
+			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
+				repo.EXPECT().
+					GetByID(testifymock.Anything, userID).
+					Return(domain.User{
+						ID:          userID,
+						Email:       registeredEmail,
+						DisplayName: "John Doe",
+						Role:        domain.UserRoleAdmin,
+						Status:      domain.UserStatusActive,
+					}, nil)
+			},
+			expected: GetProfileResult{
+				UserID:      "",
+				Email:       registeredEmail,
+				DisplayName: stringPtr("John Doe"),
+				Role:        domain.UserRoleAdmin,
+				Status:      domain.UserStatusActive,
+			},
+		},
+		{
+			name: "user not found",
+			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
+				repo.EXPECT().
+					GetByID(testifymock.Anything, userID).
+					Return(domain.User{}, outbound.ErrUserNotFound)
+			},
+			errIs: outbound.ErrUserNotFound,
+		},
+		{
+			name: "repo error",
+			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
+				repo.EXPECT().
+					GetByID(testifymock.Anything, userID).
+					Return(domain.User{}, errors.New("db down"))
+			},
+			errContains: "get user by id",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := uuid.New()
+			repo := outboundmocks.NewMockUserRepository(t)
+			sessions := outboundmocks.NewMockSessionRepository(t)
+			hasher := outboundmocks.NewMockPasswordHasher(t)
+			issuer := outboundmocks.NewMockTokenIssuer(t)
+			txProvider := newStubProvider(repo, sessions)
+			auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+			tt.setup(repo, userID)
+
+			result, err := auth.GetMyProfile(context.Background(), userID)
+
+			if tt.errIs != nil {
+				require.ErrorIs(t, err, tt.errIs)
+				require.Equal(t, GetProfileResult{}, result)
+				return
+			}
+
+			if tt.errContains != "" {
+				require.ErrorContains(t, err, tt.errContains)
+				require.Equal(t, GetProfileResult{}, result)
+				return
+			}
+
+			require.NoError(t, err)
+			tt.expected.UserID = userID.String()
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestUpdateMyProfile(t *testing.T) {
+	tests := []struct {
+		name              string
+		input             UpdateProfileInput
+		setup             func(repo *outboundmocks.MockUserRepository, userID uuid.UUID)
+		expected          UpdateProfileResult
+		expectedErrIs     error
+		expectedErrText   string
+		assertUpdateCalls bool
+	}{
+		{
+			name:  "success",
+			input: UpdateProfileInput{DisplayName: stringPtr("  John Updated  ")},
+			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
+				repo.EXPECT().
+					Update(testifymock.Anything, userID, outbound.UserUpdateParams{DisplayName: "  John Updated  "}).
+					Return(domain.User{
+						ID:          userID,
+						Email:       registeredEmail,
+						DisplayName: "  John Updated  ",
+						Role:        domain.UserRoleUser,
+						Status:      domain.UserStatusActive,
+					}, nil)
+			},
+			expected: UpdateProfileResult{
+				UserID:      "",
+				Email:       registeredEmail,
+				DisplayName: stringPtr("  John Updated  "),
+				Role:        domain.UserRoleUser,
+				Status:      domain.UserStatusActive,
+			},
+			assertUpdateCalls: true,
+		},
+		{
+			name:  "success nil displayName",
+			input: UpdateProfileInput{},
+			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
+				repo.EXPECT().
+					GetByID(testifymock.Anything, userID).
+					Return(domain.User{
+						ID:          userID,
+						Email:       registeredEmail,
+						DisplayName: "Existing Name",
+						Role:        domain.UserRoleUser,
+						Status:      domain.UserStatusActive,
+					}, nil)
+			},
+			expected: UpdateProfileResult{
+				UserID:      "",
+				Email:       registeredEmail,
+				DisplayName: stringPtr("Existing Name"),
+				Role:        domain.UserRoleUser,
+				Status:      domain.UserStatusActive,
+			},
+			assertUpdateCalls: false,
+		},
+		{
+			name:  "user not found",
+			input: UpdateProfileInput{DisplayName: stringPtr("John Updated")},
+			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
+				repo.EXPECT().
+					Update(testifymock.Anything, userID, outbound.UserUpdateParams{DisplayName: "John Updated"}).
+					Return(domain.User{}, outbound.ErrUserNotFound)
+			},
+			expectedErrIs:     outbound.ErrUserNotFound,
+			assertUpdateCalls: true,
+		},
+		{
+			name:  "repo error",
+			input: UpdateProfileInput{DisplayName: stringPtr("John Updated")},
+			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
+				repo.EXPECT().
+					Update(testifymock.Anything, userID, outbound.UserUpdateParams{DisplayName: "John Updated"}).
+					Return(domain.User{}, errors.New("db down"))
+			},
+			expectedErrText:   "update user by id",
+			assertUpdateCalls: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := uuid.New()
+			repo := outboundmocks.NewMockUserRepository(t)
+			sessions := outboundmocks.NewMockSessionRepository(t)
+			hasher := outboundmocks.NewMockPasswordHasher(t)
+			issuer := outboundmocks.NewMockTokenIssuer(t)
+			txProvider := newStubProvider(repo, sessions)
+			auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+			if tt.setup != nil {
+				tt.setup(repo, userID)
+			}
+
+			result, err := auth.UpdateMyProfile(context.Background(), userID, tt.input)
+
+			if tt.expectedErrIs != nil {
+				require.ErrorIs(t, err, tt.expectedErrIs)
+				require.Equal(t, UpdateProfileResult{}, result)
+				if tt.expectedErrText != "" {
+					require.ErrorContains(t, err, tt.expectedErrText)
+				}
+			} else if tt.expectedErrText != "" {
+				require.ErrorContains(t, err, tt.expectedErrText)
+				require.Equal(t, UpdateProfileResult{}, result)
+			} else {
+				require.NoError(t, err)
+				tt.expected.UserID = userID.String()
+				require.Equal(t, tt.expected, result)
+			}
+
+			if !tt.assertUpdateCalls {
+				repo.AssertNotCalled(t, "Update", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+			}
+		})
+	}
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
 // stubProvider implements tx.Provider[service.IdentityRepos] for tests.
 type stubProvider struct {
 	repos  IdentityRepos

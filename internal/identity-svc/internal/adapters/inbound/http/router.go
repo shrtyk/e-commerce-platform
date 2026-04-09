@@ -27,10 +27,29 @@ func NewRouter(
 
 	handler := NewIdentityHandler(authService)
 	r.Get("/healthz", handler.Healthz)
+	dto.HandlerFromMux(&publicHandler{handler: handler}, r)
 
-	// TODO: Apply auth middleware to profile routes when profile handlers are implemented.
-	// dto.HandlerFromMux registers handlers via chi, so r.Use() applies globally;
-	// profile-specific protection should be added as per-route middleware.
+	profileRouter := r.With(provider.Auth())
+	profileRouter.Get("/v1/profile/me", handler.GetMyProfile)
+	profileRouter.Patch("/v1/profile/me", handler.UpdateMyProfile)
 
-	return dto.HandlerFromMux(handler, r)
+	return r
+}
+
+type publicHandler struct {
+	dto.Unimplemented
+
+	handler *IdentityHandler
+}
+
+func (h *publicHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
+	h.handler.RegisterUser(w, r)
+}
+
+func (h *publicHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
+	h.handler.LoginUser(w, r)
+}
+
+func (h *publicHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	h.handler.RefreshToken(w, r)
 }

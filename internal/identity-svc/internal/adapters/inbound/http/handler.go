@@ -5,10 +5,12 @@ import (
 	"net/http"
 
 	"github.com/go-chi/render"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	commonerrors "github.com/shrtyk/e-commerce-platform/internal/common/errors"
 	httpcommon "github.com/shrtyk/e-commerce-platform/internal/common/http"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http/dto"
+	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports/outbound"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/service/auth"
 )
 
@@ -96,6 +98,60 @@ func (h *IdentityHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *IdentityHandler) GetMyProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpcommon.ClaimsFromContext(r.Context())
+	if !ok {
+		h.writeError(w, r, commonerrors.Unauthorized("unauthorized", "unauthorized"))
+		return
+	}
+
+	result, err := h.authService.GetMyProfile(r.Context(), claims.UserID)
+	if err != nil {
+		h.writeError(w, r, mapProfileError(err))
+		return
+	}
+
+	render.Status(r, http.StatusOK)
+	render.JSON(w, r, dto.UserProfile{
+		UserId:      result.UserID,
+		Email:       openapi_types.Email(result.Email),
+		DisplayName: result.DisplayName,
+		Role:        dto.UserProfileRole(result.Role),
+		Status:      dto.UserProfileStatus(result.Status),
+	})
+}
+
+func (h *IdentityHandler) UpdateMyProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpcommon.ClaimsFromContext(r.Context())
+	if !ok {
+		h.writeError(w, r, commonerrors.Unauthorized("unauthorized", "unauthorized"))
+		return
+	}
+
+	var request dto.UpdateProfileRequest
+	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	result, err := h.authService.UpdateMyProfile(r.Context(), claims.UserID, auth.UpdateProfileInput{
+		DisplayName: request.DisplayName,
+	})
+	if err != nil {
+		h.writeError(w, r, mapProfileError(err))
+		return
+	}
+
+	render.Status(r, http.StatusOK)
+	render.JSON(w, r, dto.UserProfile{
+		UserId:      result.UserID,
+		Email:       openapi_types.Email(result.Email),
+		DisplayName: result.DisplayName,
+		Role:        dto.UserProfileRole(result.Role),
+		Status:      dto.UserProfileStatus(result.Status),
+	})
+}
+
 func (h *IdentityHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	httpErr := commonerrors.FromError(err)
 	commonerrors.WriteJSON(w, httpErr, httpcommon.RequestIDFromContext(r.Context()))
@@ -111,6 +167,17 @@ func mapAuthError(err error) error {
 		return commonerrors.Unauthorized("invalid_credentials", "invalid credentials")
 	case errors.Is(err, auth.ErrInvalidRefreshToken):
 		return commonerrors.Unauthorized("invalid_refresh_token", "invalid refresh token")
+	default:
+		return commonerrors.InternalError("internal_error")
+	}
+}
+
+func mapProfileError(err error) error {
+	switch {
+	case errors.Is(err, auth.ErrProfileUpdateFailed):
+		return commonerrors.BadRequest("invalid_request", "invalid profile input")
+	case errors.Is(err, outbound.ErrUserNotFound):
+		return commonerrors.NotFound("user_not_found", "user not found")
 	default:
 		return commonerrors.InternalError("internal_error")
 	}
