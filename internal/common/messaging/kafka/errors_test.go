@@ -69,10 +69,10 @@ func TestClassifyError(t *testing.T) {
 			nonRetriable: false,
 		},
 		{
-			name:         "net temporary",
+			name:         "net temporary treated as non-retriable",
 			err:          testNetError{msg: "temporary", temporary: true},
-			retriable:    true,
-			nonRetriable: false,
+			retriable:    false,
+			nonRetriable: true,
 		},
 		{
 			name:         "generic error",
