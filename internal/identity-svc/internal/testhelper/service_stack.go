@@ -72,7 +72,7 @@ func NewTestStack(t *testing.T, db *sql.DB) *TestStack {
 	)
 
 	httpHandler := adapterhttp.NewRouter(logger, "identity-svc-test", authService, tokenVerifier)
-	grpcServer := adaptergrpc.NewServer(logger, "identity-svc-test", authService)
+	grpcServer := adaptergrpc.NewServer(logger, "identity-svc-test", authService, tokenVerifier)
 
 	listener := bufconn.Listen(bufconnBufferSize)
 	ready := make(chan struct{})

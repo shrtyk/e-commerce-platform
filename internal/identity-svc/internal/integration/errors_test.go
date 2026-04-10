@@ -106,10 +106,20 @@ func TestGRPCLoginInvalidCredentials(t *testing.T) {
 }
 
 func TestGRPCGetProfileNotFound(t *testing.T) {
+	testhelper.CleanupDB(t, testhelper.TestDB)
 	stack := newAuthStack(t)
 	grpcClient := identityv1.NewIdentityServiceClient(stack.GRPCConn)
 
-	_, err := grpcClient.GetProfile(context.Background(), &identityv1.GetProfileRequest{UserId: uuid.NewString()})
+	registerResponse, err := grpcClient.RegisterUser(context.Background(), &identityv1.RegisterUserRequest{
+		Email:    "grpc-get-profile-not-found@example.com",
+		Password: testhelper.TestPassword,
+	})
+	require.NoError(t, err)
+
+	_, err = grpcClient.GetProfile(
+		grpcAuthContext(t, registerResponse.GetAccessToken()),
+		&identityv1.GetProfileRequest{UserId: uuid.NewString()},
+	)
 	require.Error(t, err)
 	require.Equal(t, codes.NotFound, status.Code(err))
 }

@@ -58,14 +58,15 @@ func main() {
 		jwt.NewTokenIssuer(cfg.Auth.AccessTokenIssuer, cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenTTL),
 		cfg.Auth.SessionTTL,
 	)
+	tokenVerifier := jwt.NewTokenVerifier(cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenIssuer)
 
 	handler := adapterhttp.NewRouter(
 		logger,
 		cfg.Service.Name,
 		authService,
-		jwt.NewTokenVerifier(cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenIssuer),
+		tokenVerifier,
 	)
-	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, authService)
+	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, authService, tokenVerifier)
 
 	app := identityapp.NewApplication(&cfg, handler, grpcServer, db, identityapp.WithLogger(logger))
 

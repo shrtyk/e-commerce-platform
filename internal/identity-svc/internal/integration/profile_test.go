@@ -44,7 +44,10 @@ func TestGetMyProfileReturnsUserProfile(t *testing.T) {
 	require.Equal(t, "profile-read@example.com", string(httpProfile.Email))
 	require.Equal(t, "Profile Reader", valueOrEmpty(httpProfile.DisplayName))
 
-	grpcProfileResponse, err := grpcClient.GetProfile(context.Background(), &identityv1.GetProfileRequest{UserId: grpcRegisterResponse.GetProfile().GetUserId()})
+	grpcProfileResponse, err := grpcClient.GetProfile(
+		grpcAuthContext(t, grpcRegisterResponse.GetAccessToken()),
+		&identityv1.GetProfileRequest{UserId: grpcRegisterResponse.GetProfile().GetUserId()},
+	)
 	require.NoError(t, err)
 	require.Equal(t, httpProfile.UserId, grpcProfileResponse.GetProfile().GetUserId())
 	require.Equal(t, string(httpProfile.Email), grpcProfileResponse.GetProfile().GetEmail())
@@ -65,7 +68,10 @@ func TestUpdateMyProfileUpdatesDisplayName(t *testing.T) {
 	updatedProfile := updateMyProfileHTTP(t, stack.HTTPHandler, registerResponse.GetAccessToken(), strPtr("After Update"), http.StatusOK)
 	require.Equal(t, "After Update", valueOrEmpty(updatedProfile.DisplayName))
 
-	grpcProfileResponse, err := grpcClient.GetProfile(context.Background(), &identityv1.GetProfileRequest{UserId: registerResponse.GetProfile().GetUserId()})
+	grpcProfileResponse, err := grpcClient.GetProfile(
+		grpcAuthContext(t, registerResponse.GetAccessToken()),
+		&identityv1.GetProfileRequest{UserId: registerResponse.GetProfile().GetUserId()},
+	)
 	require.NoError(t, err)
 	require.Equal(t, "After Update", grpcProfileResponse.GetProfile().GetDisplayName())
 }
@@ -85,7 +91,10 @@ func TestUpdateMyProfileWithNilDisplayName(t *testing.T) {
 	updatedProfile := updateMyProfileHTTP(t, stack.HTTPHandler, registerResponse.GetAccessToken(), nil, http.StatusOK)
 	require.Equal(t, "Initial Name", valueOrEmpty(updatedProfile.DisplayName))
 
-	grpcProfileResponse, err := grpcClient.GetProfile(context.Background(), &identityv1.GetProfileRequest{UserId: registerResponse.GetProfile().GetUserId()})
+	grpcProfileResponse, err := grpcClient.GetProfile(
+		grpcAuthContext(t, registerResponse.GetAccessToken()),
+		&identityv1.GetProfileRequest{UserId: registerResponse.GetProfile().GetUserId()},
+	)
 	require.NoError(t, err)
 	require.Equal(t, "Initial Name", grpcProfileResponse.GetProfile().GetDisplayName())
 }

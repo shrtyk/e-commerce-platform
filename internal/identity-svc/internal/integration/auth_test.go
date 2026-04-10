@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/metadata"
 
 	identityv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/identity/v1"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http/dto"
@@ -229,4 +230,14 @@ func parseSessionID(t *testing.T, token string) uuid.UUID {
 
 func strPtr(value string) *string {
 	return &value
+}
+
+func grpcAuthContext(t *testing.T, accessToken string) context.Context {
+	t.Helper()
+	require.NotEmpty(t, accessToken)
+
+	return metadata.NewOutgoingContext(
+		context.Background(),
+		metadata.Pairs("authorization", "Bearer "+accessToken),
+	)
 }
