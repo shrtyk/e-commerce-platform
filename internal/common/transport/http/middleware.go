@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 )
 
 type MiddlewaresProvider struct {
@@ -39,7 +40,7 @@ func (p *MiddlewaresProvider) RequestID(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("X-Request-ID", id)
-		ctx := WithRequestID(r.Context(), id)
+		ctx := transport.WithRequestID(r.Context(), id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -54,7 +55,7 @@ func (p *MiddlewaresProvider) RequestLogger(next http.Handler) http.Handler {
 		duration := time.Since(start).Milliseconds()
 		requestID := w.Header().Get("X-Request-ID")
 		if requestID == "" {
-			requestID = RequestIDFromContext(r.Context())
+			requestID = transport.RequestIDFromContext(r.Context())
 		}
 
 		p.logger.Info("request",
@@ -74,7 +75,7 @@ func (p *MiddlewaresProvider) Recovery(next http.Handler) http.Handler {
 			if rec := recover(); rec != nil {
 				requestID := w.Header().Get("X-Request-ID")
 				if requestID == "" {
-					requestID = RequestIDFromContext(r.Context())
+					requestID = transport.RequestIDFromContext(r.Context())
 				}
 				p.logger.Error("panic recovered",
 					slog.Any("panic", rec),

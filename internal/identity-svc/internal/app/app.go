@@ -4,34 +4,45 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
+
+	"golang.org/x/sync/errgroup"
+	grpcpkg "google.golang.org/grpc"
 
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/config"
 )
 
 type Application struct {
-	Config   *config.Config
-	Database *sql.DB
-	Logger   *slog.Logger
-	Handler  http.Handler
+	Config     *config.Config
+	Database   *sql.DB
+	Logger     *slog.Logger
+	Handler    http.Handler
+	GRPCServer *grpcpkg.Server
 }
 
 type option func(*Application)
 
-var errConfigRequired = errors.New("app config is required")
+var (
+	errConfigRequired     = errors.New("app config is required")
+	errGRPCServerRequired = errors.New("app grpc server is required")
+)
 
 func NewApplication(
 	cfg *config.Config,
 	handler http.Handler,
+	grpcServer *grpcpkg.Server,
 	db *sql.DB,
 	opts ...option,
 ) *Application {
 	app := &Application{
-		Config:   cfg,
-		Database: db,
-		Handler:  handler,
+		Config:     cfg,
+		Database:   db,
+		Handler:    handler,
+		GRPCServer: grpcServer,
 	}
 
 	for _, opt := range opts {
@@ -60,11 +71,25 @@ func (a *Application) Run(ctx context.Context) error {
 		a.Handler = http.NotFoundHandler()
 	}
 
+	if a.GRPCServer == nil {
+		return errGRPCServerRequired
+	}
+
 	if a.Database != nil {
 		defer a.Database.Close()
 	}
 
-	return runHTTPServer(ctx, *a.Config, a.Handler)
+	g, runCtx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		return runHTTPServer(runCtx, *a.Config, a.Handler)
+	})
+
+	g.Go(func() error {
+		return runGRPCServer(runCtx, *a.Config, a.GRPCServer)
+	})
+
+	return g.Wait()
 }
 
 func runHTTPServer(
@@ -82,7 +107,7 @@ func runHTTPServer(
 	go func() {
 		err := srv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+			errCh <- fmt.Errorf("serve http: %w", err)
 			return
 		}
 
@@ -95,11 +120,51 @@ func runHTTPServer(
 		defer cancel()
 
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			return err
+			return fmt.Errorf("shutdown http: %w", err)
 		}
 
 		return nil
 	case err := <-errCh:
 		return err
+	}
+}
+
+func runGRPCServer(
+	ctx context.Context,
+	cfg config.Config,
+	server *grpcpkg.Server,
+) error {
+	listener, err := net.Listen("tcp", cfg.Service.GRPCAddr)
+	if err != nil {
+		return fmt.Errorf("listen grpc: %w", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		if serveErr := server.Serve(listener); serveErr != nil {
+			errCh <- fmt.Errorf("serve grpc: %w", serveErr)
+			return
+		}
+
+		errCh <- nil
+	}()
+
+	select {
+	case <-ctx.Done():
+		stopped := make(chan struct{})
+		go func() {
+			server.GracefulStop()
+			close(stopped)
+		}()
+
+		select {
+		case <-stopped:
+			return nil
+		case <-time.After(10 * time.Second):
+			server.Stop()
+			return nil
+		}
+	case serveErr := <-errCh:
+		return serveErr
 	}
 }

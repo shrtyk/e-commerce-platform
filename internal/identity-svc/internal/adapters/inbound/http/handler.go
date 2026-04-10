@@ -8,7 +8,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	commonerrors "github.com/shrtyk/e-commerce-platform/internal/common/errors"
-	httpcommon "github.com/shrtyk/e-commerce-platform/internal/common/http"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http/dto"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports/outbound"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/service/auth"
@@ -99,7 +99,7 @@ func (h *IdentityHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *IdentityHandler) GetMyProfile(w http.ResponseWriter, r *http.Request) {
-	claims, ok := httpcommon.ClaimsFromContext(r.Context())
+	claims, ok := transport.ClaimsFromContext(r.Context())
 	if !ok {
 		h.writeError(w, r, commonerrors.Unauthorized("unauthorized", "unauthorized"))
 		return
@@ -122,7 +122,7 @@ func (h *IdentityHandler) GetMyProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *IdentityHandler) UpdateMyProfile(w http.ResponseWriter, r *http.Request) {
-	claims, ok := httpcommon.ClaimsFromContext(r.Context())
+	claims, ok := transport.ClaimsFromContext(r.Context())
 	if !ok {
 		h.writeError(w, r, commonerrors.Unauthorized("unauthorized", "unauthorized"))
 		return
@@ -154,7 +154,7 @@ func (h *IdentityHandler) UpdateMyProfile(w http.ResponseWriter, r *http.Request
 
 func (h *IdentityHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	httpErr := commonerrors.FromError(err)
-	commonerrors.WriteJSON(w, httpErr, httpcommon.RequestIDFromContext(r.Context()))
+	commonerrors.WriteJSON(w, httpErr, transport.RequestIDFromContext(r.Context()))
 }
 
 func mapAuthError(err error) error {

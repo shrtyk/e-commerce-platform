@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	httpcommon "github.com/shrtyk/e-commerce-platform/internal/common/http"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
 )
 
@@ -27,7 +27,7 @@ func TestTokenVerifierVerify(t *testing.T) {
 	claims, err := verifier.Verify(tokenString)
 
 	require.NoError(t, err)
-	require.Equal(t, httpcommon.Claims{
+	require.Equal(t, transport.Claims{
 		UserID: user.ID,
 		Role:   string(user.Role),
 		Status: string(user.Status),

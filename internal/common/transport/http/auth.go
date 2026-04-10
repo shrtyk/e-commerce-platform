@@ -4,17 +4,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 )
 
-type Claims struct {
-	UserID uuid.UUID
-	Role   string
-	Status string
-}
-
 type TokenVerifier interface {
-	Verify(token string) (Claims, error)
+	Verify(token string) (transport.Claims, error)
 }
 
 func (p *MiddlewaresProvider) Auth(requiredRoles ...string) func(http.Handler) http.Handler {
@@ -51,7 +45,7 @@ func (p *MiddlewaresProvider) Auth(requiredRoles ...string) func(http.Handler) h
 				}
 			}
 
-			next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), claims)))
+			next.ServeHTTP(w, r.WithContext(transport.WithClaims(r.Context(), claims)))
 		})
 	}
 }

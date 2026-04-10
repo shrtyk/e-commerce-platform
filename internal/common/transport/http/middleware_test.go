@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,7 +57,7 @@ func TestRequestID(t *testing.T) {
 			var capturedID string
 			handler := provider.RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if tt.captureCtx {
-					capturedID = RequestIDFromContext(r.Context())
+					capturedID = transport.RequestIDFromContext(r.Context())
 				}
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -75,7 +76,7 @@ func TestRequestID(t *testing.T) {
 }
 
 func TestRequestIDFromContextReturnsEmptyForMissingID(t *testing.T) {
-	require.Empty(t, RequestIDFromContext(context.Background()))
+	require.Empty(t, transport.RequestIDFromContext(context.Background()))
 }
 
 func TestRequestLogger(t *testing.T) {
@@ -248,16 +249,16 @@ func TestMiddlewareChain(t *testing.T) {
 }
 
 type tokenVerifierStub struct {
-	claims Claims
+	claims transport.Claims
 	err    error
 }
 
-func (s tokenVerifierStub) Verify(_ string) (Claims, error) {
+func (s tokenVerifierStub) Verify(_ string) (transport.Claims, error) {
 	return s.claims, s.err
 }
 
 func TestAuthMiddleware(t *testing.T) {
-	validClaims := Claims{
+	validClaims := transport.Claims{
 		UserID: uuid.New(),
 		Role:   "user",
 		Status: "active",
@@ -280,7 +281,7 @@ func TestAuthMiddleware(t *testing.T) {
 			wantStatus:    http.StatusOK,
 			wantNext:      true,
 			assertContext: func(t *testing.T, ctx context.Context) {
-				claims, ok := ClaimsFromContext(ctx)
+				claims, ok := transport.ClaimsFromContext(ctx)
 				require.True(t, ok)
 				require.Equal(t, validClaims, claims)
 			},
@@ -293,7 +294,7 @@ func TestAuthMiddleware(t *testing.T) {
 			wantStatus:    http.StatusOK,
 			wantNext:      true,
 			assertContext: func(t *testing.T, ctx context.Context) {
-				claims, ok := ClaimsFromContext(ctx)
+				claims, ok := transport.ClaimsFromContext(ctx)
 				require.True(t, ok)
 				require.Equal(t, validClaims, claims)
 			},
@@ -323,7 +324,7 @@ func TestAuthMiddleware(t *testing.T) {
 		},
 		{
 			name:          "wrong role",
-			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: Claims{UserID: uuid.New(), Role: "guest", Status: "active"}}),
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: transport.Claims{UserID: uuid.New(), Role: "guest", Status: "active"}}),
 			requiredRoles: []string{"user", "admin"},
 			authHeader:    "Bearer valid-token",
 			wantStatus:    http.StatusForbidden,
@@ -337,7 +338,7 @@ func TestAuthMiddleware(t *testing.T) {
 			wantStatus:    http.StatusOK,
 			wantNext:      true,
 			assertContext: func(t *testing.T, ctx context.Context) {
-				claims, ok := ClaimsFromContext(ctx)
+				claims, ok := transport.ClaimsFromContext(ctx)
 				require.True(t, ok)
 				require.Equal(t, validClaims, claims)
 			},
@@ -373,18 +374,18 @@ func TestAuthMiddleware(t *testing.T) {
 }
 
 func TestWithClaims(t *testing.T) {
-	claims := Claims{UserID: uuid.New(), Role: "admin", Status: "active"}
+	claims := transport.Claims{UserID: uuid.New(), Role: "admin", Status: "active"}
 
-	ctx := WithClaims(context.Background(), claims)
-	actual, ok := ClaimsFromContext(ctx)
+	ctx := transport.WithClaims(context.Background(), claims)
+	actual, ok := transport.ClaimsFromContext(ctx)
 
 	require.True(t, ok)
 	require.Equal(t, claims, actual)
 }
 
 func TestClaimsFromContextWithoutClaims(t *testing.T) {
-	claims, ok := ClaimsFromContext(context.Background())
+	claims, ok := transport.ClaimsFromContext(context.Background())
 
 	require.False(t, ok)
-	require.Equal(t, Claims{}, claims)
+	require.Equal(t, transport.Claims{}, claims)
 }

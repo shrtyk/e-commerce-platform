@@ -6,7 +6,7 @@ import (
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	httpcommon "github.com/shrtyk/e-commerce-platform/internal/common/http"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 )
 
 type TokenVerifier struct {
@@ -24,7 +24,7 @@ func NewTokenVerifier(key, issuer string) *TokenVerifier {
 	return &TokenVerifier{key: []byte(key), issuer: issuer}
 }
 
-func (v *TokenVerifier) Verify(token string) (httpcommon.Claims, error) {
+func (v *TokenVerifier) Verify(token string) (transport.Claims, error) {
 	parsedToken, err := jwtv5.ParseWithClaims(token, &tokenVerifierClaims{}, func(parsedToken *jwtv5.Token) (any, error) {
 		if parsedToken.Method.Alg() != jwtv5.SigningMethodHS256.Alg() {
 			return nil, fmt.Errorf("unexpected signing method: %s", parsedToken.Method.Alg())
@@ -33,20 +33,20 @@ func (v *TokenVerifier) Verify(token string) (httpcommon.Claims, error) {
 		return v.key, nil
 	}, jwtv5.WithIssuer(v.issuer))
 	if err != nil {
-		return httpcommon.Claims{}, fmt.Errorf("parse token: %w", err)
+		return transport.Claims{}, fmt.Errorf("parse token: %w", err)
 	}
 
 	claims, ok := parsedToken.Claims.(*tokenVerifierClaims)
 	if !ok {
-		return httpcommon.Claims{}, fmt.Errorf("parse token: invalid claims type %T", parsedToken.Claims)
+		return transport.Claims{}, fmt.Errorf("parse token: invalid claims type %T", parsedToken.Claims)
 	}
 
 	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
-		return httpcommon.Claims{}, fmt.Errorf("parse subject: %w", err)
+		return transport.Claims{}, fmt.Errorf("parse subject: %w", err)
 	}
 
-	return httpcommon.Claims{
+	return transport.Claims{
 		UserID: userID,
 		Role:   claims.Role,
 		Status: claims.Status,

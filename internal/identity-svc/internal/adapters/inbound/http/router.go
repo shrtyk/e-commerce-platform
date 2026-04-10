@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	httpcommon "github.com/shrtyk/e-commerce-platform/internal/common/http"
+	httpcommon "github.com/shrtyk/e-commerce-platform/internal/common/transport/http"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http/dto"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/service/auth"
 )

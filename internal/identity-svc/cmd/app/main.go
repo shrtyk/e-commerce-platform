@@ -11,6 +11,7 @@ import (
 
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
+	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/grpc"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/jwt"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/password/bcrypt"
@@ -64,7 +65,9 @@ func main() {
 		authService,
 		jwt.NewTokenVerifier(cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenIssuer),
 	)
-	app := identityapp.NewApplication(&cfg, handler, db, identityapp.WithLogger(logger))
+	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, authService)
+
+	app := identityapp.NewApplication(&cfg, handler, grpcServer, db, identityapp.WithLogger(logger))
 
 	if err := app.Run(ctx); err != nil {
 		panic(fmt.Errorf("run app: %w", err))
