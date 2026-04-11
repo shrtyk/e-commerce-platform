@@ -107,7 +107,7 @@ func (a *Application) Run(ctx context.Context) error {
 
 	err := g.Wait()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.Config.Timeouts.Shutdown)
 	defer cancel()
 
 	if a.TracerProvider != nil {
@@ -141,7 +141,10 @@ func runHTTPServer(
 	srv := &http.Server{
 		Addr:              cfg.Service.HTTPAddr,
 		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadHeaderTimeout: cfg.HTTPTimeouts.ReadHeader,
+		ReadTimeout:       cfg.HTTPTimeouts.Read,
+		WriteTimeout:      cfg.HTTPTimeouts.Write,
+		IdleTimeout:       cfg.HTTPTimeouts.Idle,
 	}
 
 	errCh := make(chan error, 1)
@@ -157,7 +160,7 @@ func runHTTPServer(
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Timeouts.Shutdown)
 		defer cancel()
 
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -201,7 +204,7 @@ func runGRPCServer(
 		select {
 		case <-stopped:
 			return nil
-		case <-time.After(10 * time.Second):
+		case <-time.After(cfg.Timeouts.Shutdown):
 			server.Stop()
 			return nil
 		}

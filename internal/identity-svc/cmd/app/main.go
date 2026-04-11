@@ -44,7 +44,7 @@ func main() {
 	otel.SetMeterProvider(meterProvider)
 	tracer := tracerProvider.Tracer(cfg.Service.Name)
 
-	db := adapterpostgres.MustCreatePostgres(cfg.Postgres)
+	db := adapterpostgres.MustCreatePostgres(cfg.Postgres, cfg.Timeouts)
 	ctx, cancel := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,

@@ -9,13 +9,31 @@ import (
 )
 
 type Config struct {
-	Service        Service  `env-prefix:"SERVICE_"`
-	Postgres       Postgres `env-prefix:"POSTGRES_"`
+	Service        Service      `env-prefix:"SERVICE_"`
+	Postgres       Postgres     `env-prefix:"POSTGRES_"`
+	Timeouts       Timeouts     `env-prefix:"TIMEOUT_"`
+	HTTPTimeouts   HTTPTimeouts `env-prefix:"HTTP_"`
 	Redis          Redis
 	Kafka          Kafka
 	SchemaRegistry SchemaRegistry
 	OTel           OTel
 	LogLevel       string `env:"LOG_LEVEL" env-default:"info"`
+}
+
+type Timeouts struct {
+	Startup     time.Duration `env:"STARTUP" env-default:"5s"`
+	Shutdown    time.Duration `env:"SHUTDOWN" env-default:"10s"`
+	Query       time.Duration `env:"QUERY" env-default:"15s"`
+	Transaction time.Duration `env:"TRANSACTION" env-default:"30s"`
+	Publish     time.Duration `env:"PUBLISH" env-default:"10s"`
+	Client      time.Duration `env:"CLIENT" env-default:"15s"`
+}
+
+type HTTPTimeouts struct {
+	ReadHeader time.Duration `env:"READ_HEADER" env-default:"5s"`
+	Read       time.Duration `env:"READ" env-default:"30s"`
+	Write      time.Duration `env:"WRITE" env-default:"30s"`
+	Idle       time.Duration `env:"IDLE" env-default:"120s"`
 }
 
 type Service struct {
