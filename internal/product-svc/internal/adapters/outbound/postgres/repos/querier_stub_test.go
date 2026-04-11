@@ -1,0 +1,99 @@
+package repos
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/google/uuid"
+
+	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/outbound/postgres/sqlc"
+)
+
+type stubQuerier struct {
+	getProductByIDFunc  func(ctx context.Context, productID uuid.UUID) (sqlc.GetProductByIDRow, error)
+	getProductBySKUFunc func(ctx context.Context, sku string) (sqlc.GetProductBySKURow, error)
+	listProductsFunc    func(ctx context.Context, arg sqlc.ListProductsParams) ([]sqlc.ListProductsRow, error)
+	createProductFunc   func(ctx context.Context, arg sqlc.CreateProductParams) (sqlc.CreateProductRow, error)
+	createStockFunc     func(ctx context.Context, arg sqlc.CreateStockRecordParams) (sqlc.StockRecord, error)
+	getStockFunc        func(ctx context.Context, productID uuid.UUID) (sqlc.StockRecord, error)
+	updateStockFunc     func(ctx context.Context, arg sqlc.UpdateStockRecordParams) (sqlc.StockRecord, error)
+	updateProductFunc   func(ctx context.Context, arg sqlc.UpdateProductParams) (sqlc.UpdateProductRow, error)
+	deleteProductFunc   func(ctx context.Context, productID uuid.UUID) (sqlc.Product, error)
+}
+
+func (s stubQuerier) GetProductByID(ctx context.Context, productID uuid.UUID) (sqlc.GetProductByIDRow, error) {
+	if s.getProductByIDFunc == nil {
+		return sqlc.GetProductByIDRow{}, fmt.Errorf("unexpected GetProductByID call")
+	}
+
+	return s.getProductByIDFunc(ctx, productID)
+}
+
+func (s stubQuerier) GetProductBySKU(ctx context.Context, sku string) (sqlc.GetProductBySKURow, error) {
+	if s.getProductBySKUFunc == nil {
+		return sqlc.GetProductBySKURow{}, fmt.Errorf("unexpected GetProductBySKU call")
+	}
+
+	return s.getProductBySKUFunc(ctx, sku)
+}
+
+func (s stubQuerier) ListProducts(ctx context.Context, arg sqlc.ListProductsParams) ([]sqlc.ListProductsRow, error) {
+	if s.listProductsFunc == nil {
+		return nil, fmt.Errorf("unexpected ListProducts call")
+	}
+
+	return s.listProductsFunc(ctx, arg)
+}
+
+func (s stubQuerier) CreateProduct(ctx context.Context, arg sqlc.CreateProductParams) (sqlc.CreateProductRow, error) {
+	if s.createProductFunc == nil {
+		return sqlc.CreateProductRow{}, fmt.Errorf("unexpected CreateProduct call")
+	}
+
+	return s.createProductFunc(ctx, arg)
+}
+
+func (s stubQuerier) CreateStockRecord(ctx context.Context, arg sqlc.CreateStockRecordParams) (sqlc.StockRecord, error) {
+	if s.createStockFunc == nil {
+		return sqlc.StockRecord{}, fmt.Errorf("unexpected CreateStockRecord call")
+	}
+
+	return s.createStockFunc(ctx, arg)
+}
+
+func (s stubQuerier) GetStockRecordByProductID(ctx context.Context, productID uuid.UUID) (sqlc.StockRecord, error) {
+	if s.getStockFunc == nil {
+		return sqlc.StockRecord{}, fmt.Errorf("unexpected GetStockRecordByProductID call")
+	}
+
+	return s.getStockFunc(ctx, productID)
+}
+
+func (s stubQuerier) UpdateStockRecord(ctx context.Context, arg sqlc.UpdateStockRecordParams) (sqlc.StockRecord, error) {
+	if s.updateStockFunc == nil {
+		return sqlc.StockRecord{}, fmt.Errorf("unexpected UpdateStockRecord call")
+	}
+
+	return s.updateStockFunc(ctx, arg)
+}
+
+func (s stubQuerier) UpdateProduct(ctx context.Context, arg sqlc.UpdateProductParams) (sqlc.UpdateProductRow, error) {
+	if s.updateProductFunc == nil {
+		return sqlc.UpdateProductRow{}, fmt.Errorf("unexpected UpdateProduct call")
+	}
+
+	return s.updateProductFunc(ctx, arg)
+}
+
+func (s stubQuerier) DeleteProduct(ctx context.Context, productID uuid.UUID) (sqlc.Product, error) {
+	if s.deleteProductFunc == nil {
+		return sqlc.Product{}, fmt.Errorf("unexpected DeleteProduct call")
+	}
+
+	return s.deleteProductFunc(ctx, productID)
+}
+
+func (s stubQuerier) WithTx(_ *sql.Tx) *sqlc.Queries {
+	panic("not implemented")
+}
