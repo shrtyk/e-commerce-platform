@@ -14,6 +14,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func TestRequestID(t *testing.T) {
@@ -53,7 +58,7 @@ func TestRequestID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := NewMiddlewaresProvider("test-service", slog.Default())
+			provider := NewMiddlewaresProvider("test-service", slog.Default(), noop.NewTracerProvider().Tracer("test"))
 			var capturedID string
 			handler := provider.RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if tt.captureCtx {
@@ -116,7 +121,7 @@ func TestRequestLogger(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewJSONHandler(&buf, nil))
-			provider := NewMiddlewaresProvider("test-service", logger)
+			provider := NewMiddlewaresProvider("test-service", logger, noop.NewTracerProvider().Tracer("test"))
 
 			var handler http.Handler
 			if tt.name == "includes request id when chained" {
@@ -192,7 +197,7 @@ func TestRecovery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewJSONHandler(&buf, nil))
-			provider := NewMiddlewaresProvider("test-service", logger)
+			provider := NewMiddlewaresProvider("test-service", logger, noop.NewTracerProvider().Tracer("test"))
 
 			var handler http.Handler
 			if tt.name == "includes request id when chained" {
@@ -222,7 +227,7 @@ func TestRecovery(t *testing.T) {
 func TestMiddlewareChain(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	provider := NewMiddlewaresProvider("test-service", logger)
+	provider := NewMiddlewaresProvider("test-service", logger, noop.NewTracerProvider().Tracer("test"))
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -275,7 +280,7 @@ func TestAuthMiddleware(t *testing.T) {
 	}{
 		{
 			name:          "valid token with matching role",
-			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}, noop.NewTracerProvider().Tracer("test")),
 			requiredRoles: []string{"user", "admin"},
 			authHeader:    "Bearer valid-token",
 			wantStatus:    http.StatusOK,
@@ -288,7 +293,7 @@ func TestAuthMiddleware(t *testing.T) {
 		},
 		{
 			name:          "valid token with case insensitive bearer scheme",
-			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}, noop.NewTracerProvider().Tracer("test")),
 			requiredRoles: []string{"user", "admin"},
 			authHeader:    "bearer valid-token",
 			wantStatus:    http.StatusOK,
@@ -301,14 +306,14 @@ func TestAuthMiddleware(t *testing.T) {
 		},
 		{
 			name:          "missing authorization header",
-			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}, noop.NewTracerProvider().Tracer("test")),
 			requiredRoles: []string{"user"},
 			wantStatus:    http.StatusUnauthorized,
 			wantNext:      false,
 		},
 		{
 			name:          "malformed authorization header",
-			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}, noop.NewTracerProvider().Tracer("test")),
 			requiredRoles: []string{"user"},
 			authHeader:    "Bearer",
 			wantStatus:    http.StatusUnauthorized,
@@ -316,7 +321,7 @@ func TestAuthMiddleware(t *testing.T) {
 		},
 		{
 			name:          "invalid token",
-			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{err: errors.New("invalid token")}),
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{err: errors.New("invalid token")}, noop.NewTracerProvider().Tracer("test")),
 			requiredRoles: []string{"user"},
 			authHeader:    "Bearer invalid-token",
 			wantStatus:    http.StatusUnauthorized,
@@ -324,7 +329,7 @@ func TestAuthMiddleware(t *testing.T) {
 		},
 		{
 			name:          "wrong role",
-			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: transport.Claims{UserID: uuid.New(), Role: "guest", Status: "active"}}),
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: transport.Claims{UserID: uuid.New(), Role: "guest", Status: "active"}}, noop.NewTracerProvider().Tracer("test")),
 			requiredRoles: []string{"user", "admin"},
 			authHeader:    "Bearer valid-token",
 			wantStatus:    http.StatusForbidden,
@@ -332,7 +337,7 @@ func TestAuthMiddleware(t *testing.T) {
 		},
 		{
 			name:          "no role required",
-			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}),
+			provider:      NewMiddlewaresProviderWithAuth("test-service", slog.Default(), tokenVerifierStub{claims: validClaims}, noop.NewTracerProvider().Tracer("test")),
 			requiredRoles: nil,
 			authHeader:    "Bearer valid-token",
 			wantStatus:    http.StatusOK,
@@ -388,4 +393,52 @@ func TestClaimsFromContextWithoutClaims(t *testing.T) {
 
 	require.False(t, ok)
 	require.Equal(t, transport.Claims{}, claims)
+}
+
+func TestTracing(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+	}{
+		{
+			name:       "creates span and sets trace header",
+			statusCode: http.StatusAccepted,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spanRecorder := tracetest.NewSpanRecorder()
+			tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+			tracer := tracerProvider.Tracer("test-http-tracer")
+
+			provider := NewMiddlewaresProviderWithTracer("test-service", slog.Default(), tracer)
+			handler := provider.Tracing(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				span := trace.SpanFromContext(r.Context())
+				require.True(t, span.SpanContext().IsValid())
+				w.WriteHeader(tt.statusCode)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "/trace", nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			require.Equal(t, tt.statusCode, rec.Code)
+
+			traceIDHeader := rec.Header().Get("X-Trace-ID")
+			require.NotEmpty(t, traceIDHeader)
+
+			spans := spanRecorder.Ended()
+			require.Len(t, spans, 1)
+
+			span := spans[0]
+			require.Equal(t, "GET /trace", span.Name())
+			require.Equal(t, traceIDHeader, span.SpanContext().TraceID().String())
+			require.Contains(t, spanAttributes(span), attribute.Int("http.status_code", tt.statusCode))
+		})
+	}
+}
+
+func spanAttributes(span sdktrace.ReadOnlySpan) []attribute.KeyValue {
+	return span.Attributes()
 }

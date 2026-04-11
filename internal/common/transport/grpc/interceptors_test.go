@@ -12,6 +12,10 @@ import (
 
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 	grpcpkg "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -74,7 +78,8 @@ func TestUnaryLogging(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewJSONHandler(&buf, nil))
-			interceptor := UnaryLogging(logger, "identity-svc")
+			provider := NewInterceptorsProvider("identity-svc", logger)
+			interceptor := provider.UnaryLogging()
 
 			ctx := context.Background()
 			if tt.setRequestID {
@@ -111,7 +116,8 @@ func TestUnaryLogging(t *testing.T) {
 func TestUnaryRecoveryReturnsInternalOnPanic(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	interceptor := UnaryRecovery(logger)
+	provider := NewInterceptorsProvider("identity-svc", logger)
+	interceptor := provider.UnaryRecovery()
 
 	ctx := transport.WithRequestID(context.Background(), "req-panic")
 	info := &grpcpkg.UnaryServerInfo{FullMethod: "/identity.v1.AuthService/Login"}
@@ -129,7 +135,8 @@ func TestUnaryRecoveryReturnsInternalOnPanic(t *testing.T) {
 func TestUnaryRecoveryLogsStackTrace(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	interceptor := UnaryRecovery(logger)
+	provider := NewInterceptorsProvider("identity-svc", logger)
+	interceptor := provider.UnaryRecovery()
 
 	ctx := transport.WithRequestID(context.Background(), "req-stack")
 	info := &grpcpkg.UnaryServerInfo{FullMethod: "/identity.v1.AuthService/Login"}
@@ -155,7 +162,8 @@ func TestUnaryRecoveryLogsStackTrace(t *testing.T) {
 
 func TestUnaryRecoveryPassesThroughHandlerResponse(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
-	interceptor := UnaryRecovery(logger)
+	provider := NewInterceptorsProvider("identity-svc", logger)
+	interceptor := provider.UnaryRecovery()
 
 	ctx := context.Background()
 	info := &grpcpkg.UnaryServerInfo{FullMethod: "/identity.v1.AuthService/Login"}
@@ -167,4 +175,55 @@ func TestUnaryRecoveryPassesThroughHandlerResponse(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, wantResp, resp)
+}
+
+func TestUnaryTracing(t *testing.T) {
+	tests := []struct {
+		name      string
+		handler   grpcpkg.UnaryHandler
+		wantError bool
+	}{
+		{
+			name: "creates span and propagates context",
+			handler: func(ctx context.Context, req interface{}) (interface{}, error) {
+				span := trace.SpanFromContext(ctx)
+				require.True(t, span.SpanContext().IsValid())
+				return "ok", nil
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spanRecorder := tracetest.NewSpanRecorder()
+			tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+			tracer := tracerProvider.Tracer("test-grpc-tracer")
+
+			provider := NewInterceptorsProviderWithTracer("identity-svc", slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), tracer)
+			interceptor := provider.UnaryTracing()
+			info := &grpcpkg.UnaryServerInfo{FullMethod: "/identity.v1.AuthService/Login"}
+
+			resp, err := interceptor(context.Background(), "request", info, tt.handler)
+			if tt.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "ok", resp)
+			}
+
+			spans := spanRecorder.Ended()
+			require.Len(t, spans, 1)
+
+			span := spans[0]
+			require.Equal(t, "/identity.v1.AuthService/Login", span.Name())
+			require.Contains(t, spanAttributes(span), attribute.String("rpc.system", "grpc"))
+			require.Contains(t, spanAttributes(span), attribute.String("rpc.service", "identity.v1.AuthService"))
+			require.Contains(t, spanAttributes(span), attribute.String("rpc.method", "Login"))
+		})
+	}
+}
+
+func spanAttributes(span sdktrace.ReadOnlySpan) []attribute.KeyValue {
+	return span.Attributes()
 }

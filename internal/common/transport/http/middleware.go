@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 )
 
@@ -15,20 +19,27 @@ type MiddlewaresProvider struct {
 	serviceName   string
 	logger        *slog.Logger
 	tokenVerifier TokenVerifier
+	tracer        trace.Tracer
 }
 
-func NewMiddlewaresProvider(serviceName string, logger *slog.Logger) *MiddlewaresProvider {
+func NewMiddlewaresProviderWithTracer(serviceName string, logger *slog.Logger, tracer trace.Tracer) *MiddlewaresProvider {
 	return &MiddlewaresProvider{
 		serviceName: serviceName,
 		logger:      logger,
+		tracer:      tracer,
 	}
 }
 
-func NewMiddlewaresProviderWithAuth(serviceName string, logger *slog.Logger, tokenVerifier TokenVerifier) *MiddlewaresProvider {
+func NewMiddlewaresProvider(serviceName string, logger *slog.Logger, tracer trace.Tracer) *MiddlewaresProvider {
+	return NewMiddlewaresProviderWithTracer(serviceName, logger, tracer)
+}
+
+func NewMiddlewaresProviderWithAuth(serviceName string, logger *slog.Logger, tokenVerifier TokenVerifier, tracer trace.Tracer) *MiddlewaresProvider {
 	return &MiddlewaresProvider{
 		serviceName:   serviceName,
 		logger:        logger,
 		tokenVerifier: tokenVerifier,
+		tracer:        tracer,
 	}
 }
 
@@ -87,6 +98,30 @@ func (p *MiddlewaresProvider) Recovery(next http.Handler) http.Handler {
 			}
 		}()
 		next.ServeHTTP(w, r)
+	})
+}
+
+func (p *MiddlewaresProvider) Tracing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spanName := fmt.Sprintf("%s %s", r.Method, r.URL.Path)
+		ctx, span := p.tracer.Start(r.Context(), spanName, trace.WithSpanKind(trace.SpanKindServer))
+		defer span.End()
+
+		traceID := span.SpanContext().TraceID().String()
+		if traceID != "00000000000000000000000000000000" {
+			w.Header().Set("X-Trace-ID", traceID)
+		}
+
+		ww := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(ww, r.WithContext(ctx))
+
+		span.SetAttributes(attribute.Int("http.status_code", ww.statusCode))
+		if ww.statusCode >= http.StatusInternalServerError {
+			span.SetStatus(codes.Error, http.StatusText(ww.statusCode))
+			return
+		}
+
+		span.SetStatus(codes.Ok, http.StatusText(ww.statusCode))
 	})
 }
 

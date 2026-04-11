@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	testifymock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace/noop"
 	grpcpkg "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -148,7 +149,7 @@ func TestServerAuthInterceptor(t *testing.T) {
 						return claims.UserID == userID && claims.Role == "user" && claims.Status == "active"
 					}),
 					userID,
-					testifymock.MatchedBy(func(params interface{}) bool {
+					testifymock.MatchedBy(func(params any) bool {
 						updateParams, ok := params.(outbound.UserUpdateParams)
 						if !ok {
 							return false
@@ -232,7 +233,7 @@ func newGRPCHarness(t *testing.T) *grpcHarness {
 	authService := auth.NewAuthService(users, sessions, txProvider, hasher, tokens, testSessionTTL)
 
 	verifier := &testTokenVerifier{}
-	server := NewServer(logger, "identity-svc-test", authService, verifier)
+	server := NewServer(logger, "identity-svc-test", authService, verifier, noop.NewTracerProvider().Tracer("identity-svc-test"))
 
 	listener := bufconn.Listen(1024 * 1024)
 	serveDone := make(chan struct{})

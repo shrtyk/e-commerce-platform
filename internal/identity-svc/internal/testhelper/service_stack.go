@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace/noop"
 	grpcpkg "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -71,8 +72,9 @@ func NewTestStack(t *testing.T, db *sql.DB) *TestStack {
 		SessionTTL,
 	)
 
-	httpHandler := adapterhttp.NewRouter(logger, "identity-svc-test", authService, tokenVerifier)
-	grpcServer := adaptergrpc.NewServer(logger, "identity-svc-test", authService, tokenVerifier)
+	tracer := noop.NewTracerProvider().Tracer("identity-svc-test")
+	httpHandler := adapterhttp.NewRouter(logger, "identity-svc-test", authService, tokenVerifier, tracer)
+	grpcServer := adaptergrpc.NewServer(logger, "identity-svc-test", authService, tokenVerifier, tracer)
 
 	listener := bufconn.Listen(bufconnBufferSize)
 	ready := make(chan struct{})

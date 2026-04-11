@@ -9,7 +9,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"go.opentelemetry.io/otel"
+
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
+	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/grpc"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http"
@@ -33,6 +36,13 @@ func main() {
 		panic(fmt.Errorf("create logger: %w", err))
 	}
 	slog.SetDefault(logger)
+	observability.InitPropagator()
+
+	tracerProvider := observability.MustCreateTracerProvider(cfg.OTel, cfg.Service.Name)
+	meterProvider := observability.MustCreateMeterProvider(cfg.OTel, cfg.Service.Name)
+	otel.SetTracerProvider(tracerProvider)
+	otel.SetMeterProvider(meterProvider)
+	tracer := tracerProvider.Tracer(cfg.Service.Name)
 
 	db := adapterpostgres.MustCreatePostgres(cfg.Postgres)
 	ctx, cancel := signal.NotifyContext(
@@ -65,10 +75,19 @@ func main() {
 		cfg.Service.Name,
 		authService,
 		tokenVerifier,
+		tracer,
 	)
-	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, authService, tokenVerifier)
+	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, authService, tokenVerifier, tracer)
 
-	app := identityapp.NewApplication(&cfg, handler, grpcServer, db, identityapp.WithLogger(logger))
+	app := identityapp.NewApplication(
+		&cfg,
+		handler,
+		grpcServer,
+		db,
+		identityapp.WithLogger(logger),
+		identityapp.WithTracerProvider(tracerProvider),
+		identityapp.WithMeterProvider(meterProvider),
+	)
 
 	if err := app.Run(ctx); err != nil {
 		panic(fmt.Errorf("run app: %w", err))

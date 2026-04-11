@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"golang.org/x/sync/errgroup"
 	grpcpkg "google.golang.org/grpc"
 
@@ -17,11 +19,13 @@ import (
 )
 
 type Application struct {
-	Config     *config.Config
-	Database   *sql.DB
-	Logger     *slog.Logger
-	Handler    http.Handler
-	GRPCServer *grpcpkg.Server
+	Config         *config.Config
+	Database       *sql.DB
+	Logger         *slog.Logger
+	Handler        http.Handler
+	GRPCServer     *grpcpkg.Server
+	TracerProvider *sdktrace.TracerProvider
+	MeterProvider  *metric.MeterProvider
 }
 
 type option func(*Application)
@@ -62,6 +66,18 @@ func WithLogger(logger *slog.Logger) option {
 	}
 }
 
+func WithTracerProvider(provider *sdktrace.TracerProvider) option {
+	return func(a *Application) {
+		a.TracerProvider = provider
+	}
+}
+
+func WithMeterProvider(provider *metric.MeterProvider) option {
+	return func(a *Application) {
+		a.MeterProvider = provider
+	}
+}
+
 func (a *Application) Run(ctx context.Context) error {
 	if a.Config == nil || a.Config.Service.Name == "" {
 		return errConfigRequired
@@ -89,7 +105,32 @@ func (a *Application) Run(ctx context.Context) error {
 		return runGRPCServer(runCtx, *a.Config, a.GRPCServer)
 	})
 
-	return g.Wait()
+	err := g.Wait()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if a.TracerProvider != nil {
+		if shutdownErr := a.TracerProvider.Shutdown(shutdownCtx); shutdownErr != nil {
+			if err != nil {
+				return errors.Join(err, fmt.Errorf("shutdown tracer provider: %w", shutdownErr))
+			}
+
+			return fmt.Errorf("shutdown tracer provider: %w", shutdownErr)
+		}
+	}
+
+	if a.MeterProvider != nil {
+		if shutdownErr := a.MeterProvider.Shutdown(shutdownCtx); shutdownErr != nil {
+			if err != nil {
+				return errors.Join(err, fmt.Errorf("shutdown meter provider: %w", shutdownErr))
+			}
+
+			return fmt.Errorf("shutdown meter provider: %w", shutdownErr)
+		}
+	}
+
+	return err
 }
 
 func runHTTPServer(

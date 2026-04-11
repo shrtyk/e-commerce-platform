@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"go.opentelemetry.io/otel/trace"
 	grpcpkg "google.golang.org/grpc"
 
 	commonauth "github.com/shrtyk/e-commerce-platform/internal/common/auth"
@@ -25,11 +26,15 @@ func NewServer(
 	serviceName string,
 	authService *auth.AuthService,
 	tokenVerifier httpcommon.TokenVerifier,
+	tracer trace.Tracer,
 ) *grpcpkg.Server {
+	interceptorsProvider := grpccommon.NewInterceptorsProviderWithTracer(serviceName, logger, tracer)
+
 	server := grpcpkg.NewServer(
 		grpcpkg.ChainUnaryInterceptor(
-			grpccommon.UnaryLogging(logger, serviceName),
-			grpccommon.UnaryRecovery(logger),
+			interceptorsProvider.UnaryTracing(),
+			interceptorsProvider.UnaryLogging(),
+			interceptorsProvider.UnaryRecovery(),
 			commonauth.UnaryAuthInterceptor(
 				newGRPCTokenVerifier(tokenVerifier),
 				func(ctx context.Context, claims commonauth.Claims) context.Context {

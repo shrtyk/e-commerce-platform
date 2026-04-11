@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel/trace"
+
 	httpcommon "github.com/shrtyk/e-commerce-platform/internal/common/transport/http"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http/dto"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/service/auth"
@@ -15,12 +17,14 @@ func NewRouter(
 	serviceName string,
 	authService *auth.AuthService,
 	tokenVerifier httpcommon.TokenVerifier,
+	tracer trace.Tracer,
 ) http.Handler {
 	r := chi.NewRouter()
 
-	provider := httpcommon.NewMiddlewaresProviderWithAuth(serviceName, logger, tokenVerifier)
+	provider := httpcommon.NewMiddlewaresProviderWithAuth(serviceName, logger, tokenVerifier, tracer)
 	r.Use(
 		provider.RequestID,
+		provider.Tracing,
 		provider.RequestLogger,
 		provider.Recovery,
 	)

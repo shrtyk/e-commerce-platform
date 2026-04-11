@@ -1007,7 +1007,7 @@ func TestGetMyProfile(t *testing.T) {
 			expected: GetProfileResult{
 				UserID:      "",
 				Email:       registeredEmail,
-				DisplayName: stringPtr("John Doe"),
+				DisplayName: new("John Doe"),
 				Role:        domain.UserRoleAdmin,
 				Status:      domain.UserStatusActive,
 			},
@@ -1077,7 +1077,7 @@ func TestUpdateMyProfile(t *testing.T) {
 	}{
 		{
 			name:  "success",
-			input: UpdateProfileInput{DisplayName: stringPtr("  John Updated  ")},
+			input: UpdateProfileInput{DisplayName: new("  John Updated  ")},
 			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
 				repo.EXPECT().
 					Update(testifymock.Anything, userID, outbound.UserUpdateParams{DisplayName: "  John Updated  "}).
@@ -1092,7 +1092,7 @@ func TestUpdateMyProfile(t *testing.T) {
 			expected: UpdateProfileResult{
 				UserID:      "",
 				Email:       registeredEmail,
-				DisplayName: stringPtr("  John Updated  "),
+				DisplayName: new("  John Updated  "),
 				Role:        domain.UserRoleUser,
 				Status:      domain.UserStatusActive,
 			},
@@ -1115,7 +1115,7 @@ func TestUpdateMyProfile(t *testing.T) {
 			expected: UpdateProfileResult{
 				UserID:      "",
 				Email:       registeredEmail,
-				DisplayName: stringPtr("Existing Name"),
+				DisplayName: new("Existing Name"),
 				Role:        domain.UserRoleUser,
 				Status:      domain.UserStatusActive,
 			},
@@ -1123,7 +1123,7 @@ func TestUpdateMyProfile(t *testing.T) {
 		},
 		{
 			name:  "user not found",
-			input: UpdateProfileInput{DisplayName: stringPtr("John Updated")},
+			input: UpdateProfileInput{DisplayName: new("John Updated")},
 			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
 				repo.EXPECT().
 					Update(testifymock.Anything, userID, outbound.UserUpdateParams{DisplayName: "John Updated"}).
@@ -1134,7 +1134,7 @@ func TestUpdateMyProfile(t *testing.T) {
 		},
 		{
 			name:  "repo error",
-			input: UpdateProfileInput{DisplayName: stringPtr("John Updated")},
+			input: UpdateProfileInput{DisplayName: new("John Updated")},
 			setup: func(repo *outboundmocks.MockUserRepository, userID uuid.UUID) {
 				repo.EXPECT().
 					Update(testifymock.Anything, userID, outbound.UserUpdateParams{DisplayName: "John Updated"}).
@@ -1183,8 +1183,9 @@ func TestUpdateMyProfile(t *testing.T) {
 	}
 }
 
+//go:fix inline
 func stringPtr(value string) *string {
-	return &value
+	return new(value)
 }
 
 // stubProvider implements tx.Provider[service.IdentityRepos] for tests.
