@@ -7,20 +7,26 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
+	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/sr"
 	"go.opentelemetry.io/otel"
 
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
+	commonkafka "github.com/shrtyk/e-commerce-platform/internal/common/messaging/kafka"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/inbound/grpc"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/inbound/http"
+	adapterevents "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/outbound/events"
+	adapterkafka "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/outbound/kafka"
 	adapterpostgres "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/outbound/postgres"
+	adapteroutbox "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/outbound/postgres/outbox"
 	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/outbound/postgres/repos"
 	productapp "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/app"
 	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/config"
-	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/core/service/catalog"
 )
 
@@ -44,20 +50,47 @@ func main() {
 	tracer := tracerProvider.Tracer(cfg.Service.Name)
 
 	db := adapterpostgres.MustCreatePostgres(cfg.Postgres, cfg.Timeouts)
+	kafkaBrokers := strings.Split(cfg.Kafka.Brokers, ",")
+	kafkaClient, err := commonkafka.NewClient(kgo.SeedBrokers(kafkaBrokers...))
+	if err != nil {
+		panic(fmt.Errorf("create kafka client: %w", err))
+	}
+	defer kafkaClient.Close()
+
+	schemaRegistryClient, err := sr.NewClient(sr.URLs(cfg.SchemaRegistry.URL))
+	if err != nil {
+		panic(fmt.Errorf("create schema registry client: %w", err))
+	}
 
 	productsRepo := repos.NewProductRepository(db)
 	stocksRepo := repos.NewStockRepository(db)
-	publisher := noopEventPublisher{}
+	outboxRepo := adapteroutbox.NewRepository(db)
+	outboxEventPublisher := adapterevents.MustCreateOutboxEventPublisher(outboxRepo)
+
+	relayPublisher, err := adapterkafka.NewPublisher(kafkaClient, schemaRegistryClient)
+	if err != nil {
+		panic(fmt.Errorf("create relay kafka publisher: %w", err))
+	}
+
+	relayWorker, err := adapterkafka.NewRelayWorker(outboxRepo, relayPublisher, adapterkafka.RelayConfig{
+		BatchSize:        cfg.Relay.BatchSize,
+		Interval:         cfg.Relay.Interval,
+		RetryBaseBackoff: cfg.Relay.RetryBaseBackoff,
+		RetryMaxBackoff:  cfg.Relay.RetryMaxBackoff,
+	})
+	if err != nil {
+		panic(fmt.Errorf("create outbox relay worker: %w", err))
+	}
 
 	txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) catalog.CatalogRepos {
 		return catalog.CatalogRepos{
 			Products:  repos.NewProductRepositoryFromTx(tx),
 			Stocks:    repos.NewStockRepositoryFromTx(tx),
-			Publisher: publisher,
+			Publisher: adapterevents.MustCreateOutboxEventPublisher(adapteroutbox.NewRepositoryFromTx(tx)),
 		}
 	})
 
-	catalogService := catalog.NewCatalogService(productsRepo, stocksRepo, publisher, txProvider)
+	catalogService := catalog.NewCatalogService(productsRepo, stocksRepo, outboxEventPublisher, txProvider, cfg.Service.Name)
 	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, catalogService, tracer)
 	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, catalogService, tracer)
 
@@ -69,6 +102,7 @@ func main() {
 		productapp.WithLogger(logger),
 		productapp.WithTracerProvider(tracerProvider),
 		productapp.WithMeterProvider(meterProvider),
+		productapp.WithBackgroundWorker(relayWorker),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
@@ -77,10 +111,4 @@ func main() {
 	if err := app.Run(ctx); err != nil {
 		panic(fmt.Errorf("run app: %w", err))
 	}
-}
-
-type noopEventPublisher struct{}
-
-func (noopEventPublisher) Publish(context.Context, domain.DomainEvent) error {
-	return nil
 }

@@ -24,8 +24,13 @@ type Application struct {
 	Logger         *slog.Logger
 	Handler        http.Handler
 	GRPCServer     *grpcpkg.Server
+	Workers        []worker
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *metric.MeterProvider
+}
+
+type worker interface {
+	Run(ctx context.Context) error
 }
 
 type option func(*Application)
@@ -78,6 +83,16 @@ func WithMeterProvider(provider *metric.MeterProvider) option {
 	}
 }
 
+func WithBackgroundWorker(backgroundWorker worker) option {
+	return func(a *Application) {
+		if backgroundWorker == nil {
+			return
+		}
+
+		a.Workers = append(a.Workers, backgroundWorker)
+	}
+}
+
 func (a *Application) Run(ctx context.Context) error {
 	if a.Config == nil || a.Config.Service.Name == "" {
 		return errConfigRequired
@@ -113,7 +128,7 @@ func (a *Application) Run(ctx context.Context) error {
 	defer cancelRun()
 
 	g := &errgroup.Group{}
-	serveErrCh := make(chan error, 2)
+	serveErrCh := make(chan error, len(a.Workers)+2)
 
 	g.Go(func() error {
 		err := serveHTTPServer(httpServer)
@@ -132,6 +147,25 @@ func (a *Application) Run(ctx context.Context) error {
 
 		return err
 	})
+
+	for i, backgroundWorker := range a.Workers {
+		idx := i
+		workerInstance := backgroundWorker
+
+		g.Go(func() error {
+			if runErr := workerInstance.Run(runCtx); runErr != nil {
+				if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+					return nil
+				}
+
+				wrapped := fmt.Errorf("run background worker %d: %w", idx, runErr)
+				serveErrCh <- wrapped
+				return wrapped
+			}
+
+			return nil
+		})
+	}
 
 	waitErrCh := make(chan error, 1)
 	go func() {

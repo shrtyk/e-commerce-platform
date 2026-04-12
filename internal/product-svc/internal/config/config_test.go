@@ -29,6 +29,10 @@ func TestMustLoad(t *testing.T) {
 		require.False(t, cfg.Redis.Enabled)
 		require.Equal(t, ":9090", cfg.Service.GRPCAddr)
 		require.Equal(t, 10*time.Second, cfg.Timeouts.Shutdown)
+		require.Equal(t, 100, cfg.Relay.BatchSize)
+		require.Equal(t, 500*time.Millisecond, cfg.Relay.Interval)
+		require.Equal(t, time.Second, cfg.Relay.RetryBaseBackoff)
+		require.Equal(t, 30*time.Second, cfg.Relay.RetryMaxBackoff)
 	})
 
 	t.Run("panics when required field is missing", func(t *testing.T) {
@@ -47,6 +51,31 @@ func TestMustLoad(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				stderr, runErr := runHelperProcess(t, tt.key)
+
+				require.Error(t, runErr)
+				require.Contains(t, stderr, tt.wantInErr)
+			})
+		}
+	})
+
+	t.Run("panics when relay config invalid", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			key       string
+			value     string
+			extra     []string
+			wantInErr string
+		}{
+			{name: "relay batch size zero", key: "OUTBOX_RELAY_BATCH_SIZE", value: "0", wantInErr: "Relay.BatchSize"},
+			{name: "relay interval zero", key: "OUTBOX_RELAY_INTERVAL", value: "0s", wantInErr: "Relay.Interval"},
+			{name: "relay base backoff zero", key: "OUTBOX_RELAY_RETRY_BASE_BACKOFF", value: "0s", wantInErr: "Relay.RetryBaseBackoff"},
+			{name: "relay max backoff zero", key: "OUTBOX_RELAY_RETRY_MAX_BACKOFF", value: "0s", wantInErr: "Relay.RetryMaxBackoff"},
+			{name: "relay base above max", key: "OUTBOX_RELAY_RETRY_BASE_BACKOFF", value: "31s", extra: []string{"OUTBOX_RELAY_RETRY_MAX_BACKOFF=30s"}, wantInErr: "less than or equal"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				stderr, runErr := runHelperProcessWithOverride(t, tt.key, tt.value, tt.extra...)
 
 				require.Error(t, runErr)
 				require.Contains(t, stderr, tt.wantInErr)
@@ -104,6 +133,37 @@ func runHelperProcess(t *testing.T, missingKey string) (string, error) {
 	}
 
 	cmd.Env = filtered
+
+	output, err := cmd.CombinedOutput()
+
+	return string(output), err
+}
+
+func runHelperProcessWithOverride(t *testing.T, key, value string, extra ...string) (string, error) {
+	t.Helper()
+
+	args := []string{"-test.run", "TestConfigMustLoadHelperProcess"}
+	cmd := exec.Command(os.Args[0], args...)
+
+	env := []string{
+		helperProcessEnv + "=1",
+		"SERVICE_NAME=product-svc",
+		"POSTGRES_HOST=postgres",
+		"POSTGRES_DB=product",
+		"POSTGRES_USER=product",
+		"POSTGRES_PASSWORD=secret",
+		"KAFKA_BROKERS=kafka:9092",
+		"SCHEMA_REGISTRY_URL=http://schema-registry:8081",
+		"OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317",
+	}
+
+	if key != "" {
+		env = append(env, key+"="+value)
+	}
+
+	env = append(env, extra...)
+
+	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
 
