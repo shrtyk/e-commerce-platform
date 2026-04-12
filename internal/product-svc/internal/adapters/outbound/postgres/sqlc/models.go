@@ -6,6 +6,7 @@ package sqlc
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,26 @@ type Currency struct {
 	Name     string
 	Symbol   sql.NullString
 	Decimals int32
+}
+
+type OutboxRecord struct {
+	ID            uuid.UUID
+	EventID       string
+	EventName     string
+	AggregateType string
+	AggregateID   string
+	Topic         string
+	Key           []byte
+	Payload       []byte
+	Headers       json.RawMessage
+	Attempt       int32
+	Status        string
+	LastError     string
+	NextAttemptAt sql.NullTime
+	LockedAt      sql.NullTime
+	PublishedAt   sql.NullTime
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type Product struct {

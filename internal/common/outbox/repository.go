@@ -35,12 +35,17 @@ func (p ClaimPendingParams) Validate() error {
 
 type MarkPublishedParams struct {
 	ID          uuid.UUID
+	ClaimToken  time.Time
 	PublishedAt time.Time
 }
 
 func (p MarkPublishedParams) Validate() error {
 	if p.ID == uuid.Nil {
 		return fmt.Errorf("id is required: %w", ErrInvalidMarkPublishedParams)
+	}
+
+	if p.ClaimToken.IsZero() {
+		return fmt.Errorf("claim token is required: %w", ErrInvalidMarkPublishedParams)
 	}
 
 	if p.PublishedAt.IsZero() {
@@ -52,6 +57,7 @@ func (p MarkPublishedParams) Validate() error {
 
 type MarkFailedParams struct {
 	ID            uuid.UUID
+	ClaimToken    time.Time
 	Attempt       int
 	NextAttemptAt time.Time
 	LastError     string
@@ -60,6 +66,10 @@ type MarkFailedParams struct {
 func (p MarkFailedParams) Validate() error {
 	if p.ID == uuid.Nil {
 		return fmt.Errorf("id is required: %w", ErrInvalidMarkFailedParams)
+	}
+
+	if p.ClaimToken.IsZero() {
+		return fmt.Errorf("claim token is required: %w", ErrInvalidMarkFailedParams)
 	}
 
 	if p.Attempt < 1 {

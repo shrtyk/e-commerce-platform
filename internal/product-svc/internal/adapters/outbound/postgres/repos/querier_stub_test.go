@@ -20,6 +20,10 @@ type stubQuerier struct {
 	updateStockFunc     func(ctx context.Context, arg sqlc.UpdateStockRecordParams) (sqlc.StockRecord, error)
 	updateProductFunc   func(ctx context.Context, arg sqlc.UpdateProductParams) (sqlc.UpdateProductRow, error)
 	deleteProductFunc   func(ctx context.Context, productID uuid.UUID) (sqlc.Product, error)
+	appendOutboxFunc    func(ctx context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error)
+	claimOutboxFunc     func(ctx context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
+	markFailedFunc      func(ctx context.Context, arg sqlc.MarkOutboxRecordFailedParams) (int64, error)
+	markPublishedFunc   func(ctx context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error)
 }
 
 func (s stubQuerier) GetProductByID(ctx context.Context, productID uuid.UUID) (sqlc.GetProductByIDRow, error) {
@@ -92,6 +96,38 @@ func (s stubQuerier) DeleteProduct(ctx context.Context, productID uuid.UUID) (sq
 	}
 
 	return s.deleteProductFunc(ctx, productID)
+}
+
+func (s stubQuerier) AppendOutboxRecord(ctx context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error) {
+	if s.appendOutboxFunc == nil {
+		return sqlc.OutboxRecord{}, fmt.Errorf("unexpected AppendOutboxRecord call")
+	}
+
+	return s.appendOutboxFunc(ctx, arg)
+}
+
+func (s stubQuerier) ClaimPendingOutboxRecords(ctx context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
+	if s.claimOutboxFunc == nil {
+		return nil, fmt.Errorf("unexpected ClaimPendingOutboxRecords call")
+	}
+
+	return s.claimOutboxFunc(ctx, arg)
+}
+
+func (s stubQuerier) MarkOutboxRecordFailed(ctx context.Context, arg sqlc.MarkOutboxRecordFailedParams) (int64, error) {
+	if s.markFailedFunc == nil {
+		return 0, fmt.Errorf("unexpected MarkOutboxRecordFailed call")
+	}
+
+	return s.markFailedFunc(ctx, arg)
+}
+
+func (s stubQuerier) MarkOutboxRecordPublished(ctx context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error) {
+	if s.markPublishedFunc == nil {
+		return 0, fmt.Errorf("unexpected MarkOutboxRecordPublished call")
+	}
+
+	return s.markPublishedFunc(ctx, arg)
 }
 
 func (s stubQuerier) WithTx(_ *sql.Tx) *sqlc.Queries {
