@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	producerName            = "product-svc"
 	productEventsTopic      = "catalog.product.events"
 	productCreatedEventName = "catalog.product.created"
 	productAggregateType    = "product"
@@ -37,6 +36,7 @@ type CatalogRepos struct {
 type CatalogService struct {
 	repos      CatalogRepos
 	txProvider tx.Provider[CatalogRepos]
+	producer   string
 }
 
 func NewCatalogService(
@@ -44,7 +44,13 @@ func NewCatalogService(
 	stocks outbound.StockRepository,
 	publisher outbound.EventPublisher,
 	txProvider tx.Provider[CatalogRepos],
+	producer string,
 ) *CatalogService {
+	resolvedProducer := strings.TrimSpace(producer)
+	if resolvedProducer == "" {
+		resolvedProducer = "product-svc"
+	}
+
 	return &CatalogService{
 		repos: CatalogRepos{
 			Products:  products,
@@ -52,6 +58,7 @@ func NewCatalogService(
 			Publisher: publisher,
 		},
 		txProvider: txProvider,
+		producer:   resolvedProducer,
 	}
 }
 
@@ -126,8 +133,7 @@ func (s *CatalogService) CreateProduct(ctx context.Context, input CreateProductI
 			return fmt.Errorf("create stock record: %w", err)
 		}
 
-		event := newProductCreatedEvent(createdProduct)
-
+		event := newProductCreatedEvent(createdProduct, s.producer)
 		if err := repos.Publisher.Publish(ctx, event); err != nil {
 			return fmt.Errorf("publish product created event: %w", err)
 		}
@@ -397,34 +403,32 @@ func isValidProductStatus(status domain.ProductStatus) bool {
 	}
 }
 
-func newProductCreatedEvent(product domain.Product) domain.DomainEvent {
+func newProductCreatedEvent(product domain.Product, producer string) domain.DomainEvent {
 	eventID := uuid.NewString()
+	occurredAt := time.Now().UTC()
 
 	return domain.DomainEvent{
 		EventID:       eventID,
 		EventName:     productCreatedEventName,
+		Producer:      producer,
+		OccurredAt:    occurredAt,
+		CorrelationID: eventID,
+		CausationID:   eventID,
+		SchemaVersion: eventSchemaVersion,
 		AggregateType: productAggregateType,
 		AggregateID:   product.ID.String(),
 		Topic:         productEventsTopic,
 		Key:           product.ID.String(),
-		Payload: map[string]any{
-			"metadata": map[string]any{
-				"event_id":       eventID,
-				"event_name":     productCreatedEventName,
-				"producer":       producerName,
-				"occurred_at":    time.Now().UTC(),
-				"schema_version": eventSchemaVersion,
-			},
-			"product_id":  product.ID.String(),
-			"sku":         product.SKU,
-			"name":        product.Name,
-			"status":      string(product.Status),
-			"price":       map[string]any{"amount": product.Price, "currency": product.Currency},
-			"category_id": categoryIDString(product.CategoryID),
+		Payload: domain.ProductCreatedPayload{
+			ProductID:  product.ID.String(),
+			SKU:        product.SKU,
+			Name:       product.Name,
+			Status:     product.Status,
+			Price:      product.Price,
+			Currency:   product.Currency,
+			CategoryID: categoryIDString(product.CategoryID),
 		},
-		Headers: map[string]string{
-			"event_name": productCreatedEventName,
-		},
+		Headers: map[string]string{},
 	}
 }
 

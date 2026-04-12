@@ -8,5 +8,6 @@ import (
 
 //mockery:generate: true
 type EventPublisher interface {
+	// Publish sends domain event to outbound transport.
 	Publish(ctx context.Context, event domain.DomainEvent) error
 }

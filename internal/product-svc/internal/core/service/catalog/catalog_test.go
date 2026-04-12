@@ -118,7 +118,7 @@ func TestCreateProduct(t *testing.T) {
 			stocks := outboundmocks.NewMockStockRepository(t)
 			publisher := outboundmocks.NewMockEventPublisher(t)
 			provider := newStubProvider(products, stocks, publisher)
-			svc := NewCatalogService(products, stocks, publisher, provider)
+			svc := NewCatalogService(products, stocks, publisher, provider, "product-svc")
 
 			if tt.setupMocks != nil {
 				tt.setupMocks(products, stocks, publisher)
@@ -199,7 +199,7 @@ func TestGetProduct(t *testing.T) {
 			products := outboundmocks.NewMockProductRepository(t)
 			stocks := outboundmocks.NewMockStockRepository(t)
 			publisher := outboundmocks.NewMockEventPublisher(t)
-			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher))
+			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), "product-svc")
 
 			if tt.setupMocks != nil {
 				tt.setupMocks(products, stocks)
@@ -261,7 +261,7 @@ func TestListProducts(t *testing.T) {
 			repo := outboundmocks.NewMockProductRepository(t)
 			stocks := outboundmocks.NewMockStockRepository(t)
 			publisher := outboundmocks.NewMockEventPublisher(t)
-			svc := NewCatalogService(repo, stocks, publisher, newStubProvider(repo, stocks, publisher))
+			svc := NewCatalogService(repo, stocks, publisher, newStubProvider(repo, stocks, publisher), "product-svc")
 
 			tt.setupMocks(repo)
 
@@ -335,7 +335,7 @@ func TestUpdateProduct(t *testing.T) {
 			products := outboundmocks.NewMockProductRepository(t)
 			stocks := outboundmocks.NewMockStockRepository(t)
 			publisher := outboundmocks.NewMockEventPublisher(t)
-			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher))
+			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), "product-svc")
 
 			if tt.setupMocks != nil {
 				tt.setupMocks(products, stocks)
@@ -415,7 +415,7 @@ func TestReserveStock(t *testing.T) {
 			products := outboundmocks.NewMockProductRepository(t)
 			stocks := outboundmocks.NewMockStockRepository(t)
 			publisher := outboundmocks.NewMockEventPublisher(t)
-			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher))
+			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), "product-svc")
 
 			if tt.setupMocks != nil {
 				tt.setupMocks(stocks)
@@ -450,7 +450,7 @@ func TestCreateProductStatusUnknownDefaultsToDraft(t *testing.T) {
 	products := outboundmocks.NewMockProductRepository(t)
 	stocks := outboundmocks.NewMockStockRepository(t)
 	publisher := outboundmocks.NewMockEventPublisher(t)
-	svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher))
+	svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), "product-svc")
 
 	products.EXPECT().
 		Create(testifymock.Anything, testifymock.MatchedBy(func(product domain.Product) bool {
@@ -479,6 +479,57 @@ func TestCreateProductStatusUnknownDefaultsToDraft(t *testing.T) {
 	require.Equal(t, domain.ProductStatusDraft, result.Product.Status)
 }
 
+func TestCreateProductProducerPropagationAndDefaultFallback(t *testing.T) {
+	currencyID := uuid.New()
+
+	tests := []struct {
+		name             string
+		configured       string
+		expectedProducer string
+	}{
+		{name: "explicit producer propagated", configured: "catalog-runtime", expectedProducer: "catalog-runtime"},
+		{name: "empty producer falls back to default", configured: "   ", expectedProducer: "product-svc"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			productID := uuid.New()
+
+			products := outboundmocks.NewMockProductRepository(t)
+			stocks := outboundmocks.NewMockStockRepository(t)
+			publisher := outboundmocks.NewMockEventPublisher(t)
+			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), tt.configured)
+
+			products.EXPECT().
+				Create(testifymock.Anything, testifymock.Anything).
+				Return(domain.Product{ID: productID, SKU: "SKU-1", Name: "Product", Price: 100, CurrencyID: currencyID, Status: domain.ProductStatusDraft}, nil)
+
+			stocks.EXPECT().
+				Create(testifymock.Anything, testifymock.Anything).
+				Return(domain.StockRecord{StockRecordID: uuid.New(), ProductID: productID, Quantity: 1, Reserved: 0, Available: 1}, nil)
+
+			publisher.EXPECT().
+				Publish(testifymock.Anything, testifymock.MatchedBy(func(event domain.DomainEvent) bool {
+					return event.Producer == tt.expectedProducer && event.EventName == "catalog.product.created"
+				})).
+				Return(nil)
+
+			_, err := svc.CreateProduct(context.Background(), CreateProductInput{
+				Product: domain.Product{
+					SKU:        "SKU-1",
+					Name:       "Product",
+					Price:      100,
+					CurrencyID: currencyID,
+					Status:     domain.ProductStatusDraft,
+				},
+				InitialQuantity: 1,
+			})
+
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestCreateProductTxProviderError(t *testing.T) {
 	products := outboundmocks.NewMockProductRepository(t)
 	stocks := outboundmocks.NewMockStockRepository(t)
@@ -487,7 +538,7 @@ func TestCreateProductTxProviderError(t *testing.T) {
 	txErr := errors.New("tx unavailable")
 	provider.err = txErr
 
-	svc := NewCatalogService(products, stocks, publisher, provider)
+	svc := NewCatalogService(products, stocks, publisher, provider, "product-svc")
 
 	_, err := svc.CreateProduct(context.Background(), CreateProductInput{
 		Product: domain.Product{
@@ -557,7 +608,7 @@ func TestReleaseStock(t *testing.T) {
 			products := outboundmocks.NewMockProductRepository(t)
 			stocks := outboundmocks.NewMockStockRepository(t)
 			publisher := outboundmocks.NewMockEventPublisher(t)
-			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher))
+			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), "product-svc")
 
 			if tt.setupMocks != nil {
 				tt.setupMocks(stocks)
