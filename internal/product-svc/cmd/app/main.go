@@ -2,20 +2,26 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"go.opentelemetry.io/otel"
-	"google.golang.org/grpc"
 
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
+	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
+	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/inbound/grpc"
+	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/inbound/http"
 	adapterpostgres "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/outbound/postgres"
+	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/outbound/postgres/repos"
 	productapp "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/app"
 	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/config"
+	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/core/domain"
+	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/core/service/catalog"
 )
 
 func main() {
@@ -35,10 +41,25 @@ func main() {
 	meterProvider := observability.MustCreateMeterProvider(cfg.OTel, cfg.Service.Name)
 	otel.SetTracerProvider(tracerProvider)
 	otel.SetMeterProvider(meterProvider)
+	tracer := tracerProvider.Tracer(cfg.Service.Name)
 
 	db := adapterpostgres.MustCreatePostgres(cfg.Postgres, cfg.Timeouts)
-	handler := http.NotFoundHandler()
-	grpcServer := grpc.NewServer()
+
+	productsRepo := repos.NewProductRepository(db)
+	stocksRepo := repos.NewStockRepository(db)
+	publisher := noopEventPublisher{}
+
+	txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) catalog.CatalogRepos {
+		return catalog.CatalogRepos{
+			Products:  repos.NewProductRepositoryFromTx(tx),
+			Stocks:    repos.NewStockRepositoryFromTx(tx),
+			Publisher: publisher,
+		}
+	})
+
+	catalogService := catalog.NewCatalogService(productsRepo, stocksRepo, publisher, txProvider)
+	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, catalogService, tracer)
+	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, catalogService, tracer)
 
 	app := productapp.NewApplication(
 		&cfg,
@@ -54,6 +75,12 @@ func main() {
 	defer cancel()
 
 	if err := app.Run(ctx); err != nil {
-		panic(err)
+		panic(fmt.Errorf("run app: %w", err))
 	}
+}
+
+type noopEventPublisher struct{}
+
+func (noopEventPublisher) Publish(context.Context, domain.DomainEvent) error {
+	return nil
 }
