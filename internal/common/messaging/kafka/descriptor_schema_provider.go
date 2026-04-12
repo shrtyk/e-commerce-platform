@@ -93,8 +93,47 @@ func (p *DescriptorSchemaProvider) SchemaFor(message proto.Message) (SchemaDefin
 		Schema:       schemaText,
 		References:   references,
 		Dependencies: schemaDependencies,
-		Index:        []int{0},
+		Index:        messageIndex(rootFile, messageDescriptor),
 	}, nil
+}
+
+func messageIndex(file protoreflect.FileDescriptor, target protoreflect.MessageDescriptor) []int {
+	if file == nil || target == nil {
+		return nil
+	}
+
+	messages := file.Messages()
+	path := make([]int, 0, 4)
+	for i := 0; i < messages.Len(); i++ {
+		path = append(path, i)
+		if index := nestedMessageIndex(messages.Get(i), target, path); index != nil {
+			return index
+		}
+		path = path[:len(path)-1]
+	}
+
+	return nil
+}
+
+func nestedMessageIndex(
+	current protoreflect.MessageDescriptor,
+	target protoreflect.MessageDescriptor,
+	path []int,
+) []int {
+	if current.FullName() == target.FullName() {
+		return append([]int(nil), path...)
+	}
+
+	nested := current.Messages()
+	for i := 0; i < nested.Len(); i++ {
+		path = append(path, i)
+		if index := nestedMessageIndex(nested.Get(i), target, path); index != nil {
+			return index
+		}
+		path = path[:len(path)-1]
+	}
+
+	return nil
 }
 
 func collectNonWellKnownDependencies(

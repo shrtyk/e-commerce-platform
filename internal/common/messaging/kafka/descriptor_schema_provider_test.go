@@ -6,6 +6,9 @@ import (
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/sr"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 func TestDescriptorSchemaProviderSchemaFor(t *testing.T) {
@@ -79,6 +82,87 @@ func TestDescriptorSchemaProviderSchemaFor(t *testing.T) {
 		require.ErrorContains(t, err, "message is nil")
 		require.Equal(t, SchemaDefinition{}, schema)
 	})
+}
+
+func TestMessageIndex(t *testing.T) {
+	file := mustBuildMessageIndexTestFile(t)
+
+	tests := []struct {
+		name   string
+		target func(file protoreflect.FileDescriptor) protoreflect.MessageDescriptor
+		want   []int
+	}{
+		{
+			name: "top-level first",
+			target: func(file protoreflect.FileDescriptor) protoreflect.MessageDescriptor {
+				return file.Messages().Get(0)
+			},
+			want: []int{0},
+		},
+		{
+			name: "top-level second",
+			target: func(file protoreflect.FileDescriptor) protoreflect.MessageDescriptor {
+				return file.Messages().Get(1)
+			},
+			want: []int{1},
+		},
+		{
+			name: "nested one level deep",
+			target: func(file protoreflect.FileDescriptor) protoreflect.MessageDescriptor {
+				return file.Messages().Get(2).Messages().Get(1)
+			},
+			want: []int{2, 1},
+		},
+		{
+			name: "deeply nested",
+			target: func(file protoreflect.FileDescriptor) protoreflect.MessageDescriptor {
+				return file.Messages().Get(2).Messages().Get(0).Messages().Get(0)
+			},
+			want: []int{2, 0, 0},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := messageIndex(file, tt.target(file))
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func mustBuildMessageIndexTestFile(t *testing.T) protoreflect.FileDescriptor {
+	t.Helper()
+
+	fileProto := &descriptorpb.FileDescriptorProto{
+		Syntax:  strPtr("proto3"),
+		Name:    strPtr("test/message_index.proto"),
+		Package: strPtr("test.v1"),
+		MessageType: []*descriptorpb.DescriptorProto{
+			{Name: strPtr("TopLevelFirst")},
+			{Name: strPtr("TopLevelSecond")},
+			{
+				Name: strPtr("Outer"),
+				NestedType: []*descriptorpb.DescriptorProto{
+					{
+						Name: strPtr("Inner"),
+						NestedType: []*descriptorpb.DescriptorProto{
+							{Name: strPtr("Deep")},
+						},
+					},
+					{Name: strPtr("Sibling")},
+				},
+			},
+		},
+	}
+
+	file, err := protodesc.NewFile(fileProto, nil)
+	require.NoError(t, err)
+
+	return file
+}
+
+func strPtr(value string) *string {
+	return &value
 }
 
 func referencesSubjects(references []sr.SchemaReference) []string {
