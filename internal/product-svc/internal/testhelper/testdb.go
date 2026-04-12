@@ -18,18 +18,20 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-var sharedDB *sql.DB
+var TestDB *sql.DB
 var sharedContainer *tcpostgres.PostgresContainer
 var sharedMu sync.Mutex
 var sharedOnce sync.Once
 var sharedInitErr error
 
 func StartSharedTestDB(t *testing.T) *sql.DB {
-	t.Helper()
+	if t != nil {
+		t.Helper()
+	}
 
 	sharedMu.Lock()
-	if sharedDB != nil {
-		db := sharedDB
+	if TestDB != nil {
+		db := TestDB
 		sharedMu.Unlock()
 		return db
 	}
@@ -54,13 +56,15 @@ func StartSharedTestDB(t *testing.T) *sql.DB {
 		sharedOnce = sync.Once{}
 		sharedMu.Unlock()
 
-		require.NoError(t, initErr)
+		ensureNoError(t, initErr, "start shared test database")
 	}
 
 	sharedMu.Lock()
-	db := sharedDB
+	db := TestDB
 	sharedMu.Unlock()
-	require.NotNil(t, db)
+	if db == nil {
+		ensureNoError(t, fmt.Errorf("shared test database is nil"), "resolve shared test database")
+	}
 
 	return db
 }
@@ -71,7 +75,7 @@ func initSharedTestDB() (err error) {
 
 	container, err := tcpostgres.Run(
 		ctx,
-		"postgres:16-alpine",
+		"postgres:18",
 		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
 		tcpostgres.WithDatabase("product_test"),
 		tcpostgres.WithUsername("postgres"),
@@ -133,7 +137,7 @@ func initSharedTestDB() (err error) {
 	}
 
 	sharedMu.Lock()
-	sharedDB = db
+	TestDB = db
 	sharedContainer = container
 	sharedMu.Unlock()
 
@@ -142,9 +146,9 @@ func initSharedTestDB() (err error) {
 
 func StopSharedTestDB() {
 	sharedMu.Lock()
-	db := sharedDB
+	db := TestDB
 	container := sharedContainer
-	sharedDB = nil
+	TestDB = nil
 	sharedContainer = nil
 	sharedInitErr = nil
 	sharedOnce = sync.Once{}
@@ -167,10 +171,12 @@ func StopSharedTestDB() {
 }
 
 func RunMigrations(t *testing.T, db *sql.DB) {
-	t.Helper()
+	if t != nil {
+		t.Helper()
+	}
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.Up(db, migrationsDir()))
+	ensureNoError(t, goose.SetDialect("postgres"), "set goose postgres dialect")
+	ensureNoError(t, goose.Up(db, migrationsDir()), "run test migrations")
 }
 
 func CleanupDB(t *testing.T, db *sql.DB) {
@@ -183,4 +189,17 @@ func CleanupDB(t *testing.T, db *sql.DB) {
 func migrationsDir() string {
 	_, file, _, _ := runtime.Caller(0)
 	return filepath.Join(filepath.Dir(file), "../adapters/outbound/postgres/migrations")
+}
+
+func ensureNoError(t *testing.T, err error, action string) {
+	if err == nil {
+		return
+	}
+
+	if t != nil {
+		require.NoError(t, err)
+		return
+	}
+
+	panic(fmt.Errorf("%s: %w", action, err))
 }
