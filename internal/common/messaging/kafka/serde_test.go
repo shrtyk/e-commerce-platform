@@ -14,6 +14,21 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
+type createSchemaCall struct {
+	subject string
+	schema  sr.Schema
+}
+
+type recordingSchemaRegistry struct {
+	calls []createSchemaCall
+}
+
+func (r *recordingSchemaRegistry) CreateSchema(_ context.Context, subject string, schema sr.Schema) (sr.SubjectSchema, error) {
+	r.calls = append(r.calls, createSchemaCall{subject: subject, schema: schema})
+
+	return sr.SubjectSchema{ID: len(r.calls), Version: len(r.calls)}, nil
+}
+
 type testSchemaProvider struct {
 	schemas map[protoreflect.FullName]SchemaDefinition
 }
@@ -123,4 +138,73 @@ func TestProtoSerdeEncodeNilReceiver(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, IsNonRetriable(err))
 	require.ErrorContains(t, err, "proto serde is nil")
+}
+
+func TestProtoSerdeRegisterTypeFailsOnUnresolvedDependencyGraphOrOrder(t *testing.T) {
+	message := &catalogv1.ProductCreated{}
+	messageName := message.ProtoReflect().Descriptor().FullName()
+
+	tests := []struct {
+		name            string
+		schemaDef       SchemaDefinition
+		wantErrContains string
+	}{
+		{
+			name: "root reference missing in resolved dependency versions",
+			schemaDef: SchemaDefinition{
+				Schema: `syntax = "proto3"; message ProductCreated { string product_id = 1; }`,
+				References: []sr.SchemaReference{{
+					Name:    "ecommerce/shared/v1/money.proto",
+					Subject: "ecommerce.shared.v1.Money",
+				}},
+				Index: []int{0},
+			},
+			wantErrContains: "unresolved root reference ecommerce.shared.v1.Money: dependency graph/order mismatch",
+		},
+		{
+			name: "dependency order mismatch",
+			schemaDef: SchemaDefinition{
+				Schema: `syntax = "proto3"; message ProductCreated { string product_id = 1; }`,
+				References: []sr.SchemaReference{{
+					Name:    "ecommerce/order/v1/order_item.proto",
+					Subject: "ecommerce.order.v1.OrderItem",
+				}},
+				Dependencies: []SchemaDependency{
+					{
+						Subject: "ecommerce.order.v1.OrderItem",
+						Schema:  `syntax = "proto3"; message OrderItem { string sku = 1; }`,
+						References: []sr.SchemaReference{{
+							Name:    "ecommerce/shared/v1/money.proto",
+							Subject: "ecommerce.shared.v1.Money",
+						}},
+					},
+					{
+						Subject: "ecommerce.shared.v1.Money",
+						Schema:  `syntax = "proto3"; message Money { int64 units = 1; }`,
+					},
+				},
+				Index: []int{0},
+			},
+			wantErrContains: "dependency reference ecommerce.shared.v1.Money for ecommerce.order.v1.OrderItem is not registered",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := &recordingSchemaRegistry{}
+			provider := testSchemaProvider{
+				schemas: map[protoreflect.FullName]SchemaDefinition{
+					messageName: tt.schemaDef,
+				},
+			}
+
+			serde := NewProtoSerde(registry, provider)
+
+			err := serde.RegisterType(context.Background(), "catalog.product.events", message)
+			require.Error(t, err)
+			require.True(t, IsNonRetriable(err))
+			require.ErrorContains(t, err, tt.wantErrContains)
+			require.Empty(t, registry.calls)
+		})
+	}
 }

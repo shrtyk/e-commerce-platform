@@ -12,9 +12,16 @@ import (
 )
 
 type SchemaDefinition struct {
+	Schema       string
+	References   []sr.SchemaReference
+	Dependencies []SchemaDependency
+	Index        []int
+}
+
+type SchemaDependency struct {
+	Subject    string
 	Schema     string
 	References []sr.SchemaReference
-	Index      []int
 }
 
 type SchemaProvider interface {
@@ -86,10 +93,15 @@ func (s *ProtoSerde) RegisterType(ctx context.Context, topic string, prototype p
 		return wrapNonRetriable(fmt.Errorf("empty schema for %s", fullName), "register type")
 	}
 
+	resolvedReferences, err := s.registerDependencies(ctx, schemaDef)
+	if err != nil {
+		return err
+	}
+
 	subjectSchema, err := s.registry.CreateSchema(ctx, subject, sr.Schema{
 		Schema:     schemaDef.Schema,
 		Type:       sr.TypeProtobuf,
-		References: schemaDef.References,
+		References: resolvedReferences,
 	})
 	if err != nil {
 		classified := ClassifyError(err)
@@ -149,6 +161,79 @@ func (s *ProtoSerde) RegisterType(ctx context.Context, topic string, prototype p
 	s.mu.Unlock()
 
 	return nil
+}
+
+func (s *ProtoSerde) registerDependencies(ctx context.Context, schemaDef SchemaDefinition) ([]sr.SchemaReference, error) {
+	if len(schemaDef.References) == 0 {
+		return nil, nil
+	}
+
+	resolvedVersions := make(map[string]int, len(schemaDef.Dependencies))
+	for _, dependency := range schemaDef.Dependencies {
+		if dependency.Subject == "" {
+			return nil, wrapNonRetriable(errors.New("dependency subject is empty"), "register type")
+		}
+
+		if _, exists := resolvedVersions[dependency.Subject]; exists {
+			continue
+		}
+
+		if dependency.Schema == "" {
+			return nil, wrapNonRetriable(fmt.Errorf("empty dependency schema for %s", dependency.Subject), "register type")
+		}
+
+		resolvedDependencyReferences := make([]sr.SchemaReference, 0, len(dependency.References))
+		for _, reference := range dependency.References {
+			version, ok := resolvedVersions[reference.Subject]
+			if !ok {
+				return nil, wrapNonRetriable(
+					fmt.Errorf("dependency reference %s for %s is not registered", reference.Subject, dependency.Subject),
+					"register type",
+				)
+			}
+
+			resolvedDependencyReferences = append(resolvedDependencyReferences, sr.SchemaReference{
+				Name:    reference.Name,
+				Subject: reference.Subject,
+				Version: version,
+			})
+		}
+
+		subjectSchema, err := s.registry.CreateSchema(ctx, dependency.Subject, sr.Schema{
+			Schema:     dependency.Schema,
+			Type:       sr.TypeProtobuf,
+			References: resolvedDependencyReferences,
+		})
+		if err != nil {
+			classified := ClassifyError(err)
+			if IsRetriable(classified) {
+				return nil, wrapRetriable(fmt.Errorf("create schema %s: %w", dependency.Subject, err), "register type")
+			}
+
+			return nil, wrapNonRetriable(fmt.Errorf("create schema %s: %w", dependency.Subject, err), "register type")
+		}
+
+		resolvedVersions[dependency.Subject] = subjectSchema.Version
+	}
+
+	resolvedRootReferences := make([]sr.SchemaReference, 0, len(schemaDef.References))
+	for _, reference := range schemaDef.References {
+		version, ok := resolvedVersions[reference.Subject]
+		if !ok {
+			return nil, wrapNonRetriable(
+				fmt.Errorf("unresolved root reference %s: dependency graph/order mismatch", reference.Subject),
+				"register type",
+			)
+		}
+
+		resolvedRootReferences = append(resolvedRootReferences, sr.SchemaReference{
+			Name:    reference.Name,
+			Subject: reference.Subject,
+			Version: version,
+		})
+	}
+
+	return resolvedRootReferences, nil
 }
 
 func (s *ProtoSerde) Encode(ctx context.Context, topic string, message proto.Message) ([]byte, string, error) {
