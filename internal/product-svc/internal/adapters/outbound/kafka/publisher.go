@@ -6,15 +6,13 @@ import (
 	"maps"
 	"strings"
 
-	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
-	commonkafka "github.com/shrtyk/e-commerce-platform/internal/common/messaging/kafka"
-	commonoutbox "github.com/shrtyk/e-commerce-platform/internal/common/outbox"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sr"
 	"google.golang.org/protobuf/proto"
-)
 
-const productCreatedRecordName = "ecommerce.catalog.v1.ProductCreated"
+	commonkafka "github.com/shrtyk/e-commerce-platform/internal/common/messaging/kafka"
+	commonoutbox "github.com/shrtyk/e-commerce-platform/internal/common/outbox"
+)
 
 type syncProducer interface {
 	ProduceSync(ctx context.Context, records ...*kgo.Record) kgo.ProduceResults
@@ -26,9 +24,10 @@ type schemaRegistry interface {
 
 type Publisher struct {
 	producer *commonkafka.Producer
+	registry *commonkafka.TypeRegistry
 }
 
-func NewPublisher(client syncProducer, schemaRegistryClient schemaRegistry) (*Publisher, error) {
+func NewPublisher(client syncProducer, schemaRegistryClient schemaRegistry, registry *commonkafka.TypeRegistry) (*Publisher, error) {
 	if client == nil {
 		return nil, fmt.Errorf("kafka producer is nil")
 	}
@@ -37,13 +36,17 @@ func NewPublisher(client syncProducer, schemaRegistryClient schemaRegistry) (*Pu
 		return nil, fmt.Errorf("schema registry client is nil")
 	}
 
+	if registry == nil {
+		return nil, fmt.Errorf("type registry is nil")
+	}
+
 	serde := commonkafka.NewProtoSerde(schemaRegistryClient, commonkafka.NewDescriptorSchemaProvider())
 	producer, err := commonkafka.NewProducer(client, serde, commonkafka.DefaultRetryPolicy())
 	if err != nil {
 		return nil, fmt.Errorf("create common kafka producer: %w", err)
 	}
 
-	return &Publisher{producer: producer}, nil
+	return &Publisher{producer: producer, registry: registry}, nil
 }
 
 func (p *Publisher) Publish(ctx context.Context, record commonoutbox.Record) error {
@@ -68,13 +71,18 @@ func (p *Publisher) Publish(ctx context.Context, record commonoutbox.Record) err
 }
 
 func (p *Publisher) decodeOutboxRecord(record commonoutbox.Record) (proto.Message, commonkafka.EventMetadata, map[string]string, error) {
-	if p == nil || p.producer == nil {
+	if p == nil || p.producer == nil || p.registry == nil {
 		return nil, commonkafka.EventMetadata{}, nil, fmt.Errorf("publisher is nil")
 	}
 
 	recordName := strings.TrimSpace(record.Headers[commonkafka.HeaderRecordName])
-	if recordName == "" {
-		recordName = productCreatedRecordName
+	message, err := p.registry.NewMessage(recordName)
+	if err != nil {
+		return nil, commonkafka.EventMetadata{}, nil, fmt.Errorf("resolve message type %q: %w", recordName, err)
+	}
+
+	if err := proto.Unmarshal(record.Payload, message); err != nil {
+		return nil, commonkafka.EventMetadata{}, nil, fmt.Errorf("unmarshal payload for %s: %w", recordName, err)
 	}
 
 	metadata := commonkafka.MetadataFromHeaders(record.Headers)
@@ -87,29 +95,7 @@ func (p *Publisher) decodeOutboxRecord(record commonoutbox.Record) (proto.Messag
 
 	headers := cloneHeaders(record.Headers)
 
-	switch recordName {
-	case productCreatedRecordName:
-		var message catalogv1.ProductCreated
-		if err := proto.Unmarshal(record.Payload, &message); err != nil {
-			return nil, commonkafka.EventMetadata{}, nil, fmt.Errorf("unmarshal product created payload: %w", err)
-		}
-
-		messageMetadata := message.GetMetadata()
-		if messageMetadata != nil {
-			metadata = commonkafka.MetadataFromProto(messageMetadata)
-		}
-
-		if metadata.EventID == "" {
-			metadata.EventID = record.EventID
-		}
-		if metadata.EventName == "" {
-			metadata.EventName = record.EventName
-		}
-
-		return &message, metadata, headers, nil
-	default:
-		return nil, commonkafka.EventMetadata{}, nil, fmt.Errorf("unsupported record name: %s", recordName)
-	}
+	return message, metadata, headers, nil
 }
 
 func cloneHeaders(headers map[string]string) map[string]string {

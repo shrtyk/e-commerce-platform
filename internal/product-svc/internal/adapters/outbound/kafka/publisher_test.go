@@ -6,15 +6,18 @@ import (
 	"testing"
 	"time"
 
-	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
-	commonkafka "github.com/shrtyk/e-commerce-platform/internal/common/messaging/kafka"
-	commonoutbox "github.com/shrtyk/e-commerce-platform/internal/common/outbox"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sr"
 	"github.com/twmb/franz-go/pkg/sr/srfake"
 	"google.golang.org/protobuf/proto"
+
+	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
+	commonkafka "github.com/shrtyk/e-commerce-platform/internal/common/messaging/kafka"
+	commonoutbox "github.com/shrtyk/e-commerce-platform/internal/common/outbox"
 )
+
+const testProductCreatedRecordName = "ecommerce.catalog.v1.ProductCreated"
 
 type relayProducerStub struct {
 	produceSyncFunc func(ctx context.Context, records ...*kgo.Record) kgo.ProduceResults
@@ -35,15 +38,24 @@ func TestNewPublisher(t *testing.T) {
 	registryClient, err := sr.NewClient(sr.URLs(registry.URL()))
 	require.NoError(t, err)
 
-	_, err = NewPublisher(nil, registryClient)
+	_, err = NewPublisher(nil, registryClient, commonkafka.NewTypeRegistry())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "kafka producer is nil")
 
-	_, err = NewPublisher(&relayProducerStub{}, nil)
+	typeRegistry := commonkafka.NewTypeRegistry()
+
+	_, err = NewPublisher(&relayProducerStub{}, nil, typeRegistry)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "schema registry client is nil")
 
-	publisher, err := NewPublisher(&relayProducerStub{}, registryClient)
+	_, err = NewPublisher(&relayProducerStub{}, registryClient, nil)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "type registry is nil")
+
+	err = typeRegistry.RegisterMessages(&catalogv1.ProductCreated{})
+	require.NoError(t, err)
+
+	publisher, err := NewPublisher(&relayProducerStub{}, registryClient, typeRegistry)
 	require.NoError(t, err)
 	require.NotNil(t, publisher)
 }
@@ -77,7 +89,7 @@ func TestPublisherPublish(t *testing.T) {
 		commonkafka.HeaderCorrelationID: "corr-1",
 		commonkafka.HeaderCausationID:   "cause-1",
 		commonkafka.HeaderSchemaVersion: "1",
-		commonkafka.HeaderRecordName:    productCreatedRecordName,
+		commonkafka.HeaderRecordName:    testProductCreatedRecordName,
 	}
 
 	tests := []struct {
@@ -107,7 +119,7 @@ func TestPublisherPublish(t *testing.T) {
 				require.Equal(t, "corr-1", headers[commonkafka.HeaderCorrelationID])
 				require.Equal(t, "cause-1", headers[commonkafka.HeaderCausationID])
 				require.Equal(t, "1", headers[commonkafka.HeaderSchemaVersion])
-				require.Equal(t, productCreatedRecordName, headers[commonkafka.HeaderRecordName])
+				require.Equal(t, testProductCreatedRecordName, headers[commonkafka.HeaderRecordName])
 
 				registry := srfake.New()
 				t.Cleanup(registry.Close)
@@ -160,7 +172,7 @@ func TestPublisherPublish(t *testing.T) {
 					commonkafka.HeaderRecordName: "ecommerce.catalog.v1.Unknown",
 				},
 			},
-			errContains: "unsupported record name",
+			errContains: "resolve message type",
 		},
 		{
 			name: "kafka error",
@@ -183,12 +195,16 @@ func TestPublisherPublish(t *testing.T) {
 			registryClient, err := sr.NewClient(sr.URLs(registry.URL()))
 			require.NoError(t, err)
 
+			typeRegistry := commonkafka.NewTypeRegistry()
+			err = typeRegistry.RegisterMessages(&catalogv1.ProductCreated{})
+			require.NoError(t, err)
+
 			var produced *kgo.Record
 			publisher, err := NewPublisher(&relayProducerStub{produceSyncFunc: func(_ context.Context, records ...*kgo.Record) kgo.ProduceResults {
 				require.Len(t, records, 1)
 				produced = records[0]
 				return kgo.ProduceResults{{Record: records[0], Err: tt.produceErr}}
-			}}, registryClient)
+			}}, registryClient, typeRegistry)
 			require.NoError(t, err)
 
 			err = publisher.Publish(context.Background(), tt.record)

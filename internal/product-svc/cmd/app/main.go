@@ -14,6 +14,7 @@ import (
 	"github.com/twmb/franz-go/pkg/sr"
 	"go.opentelemetry.io/otel"
 
+	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	commonkafka "github.com/shrtyk/e-commerce-platform/internal/common/messaging/kafka"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
@@ -66,8 +67,13 @@ func main() {
 	stocksRepo := repos.NewStockRepository(db)
 	outboxRepo := adapteroutbox.NewRepository(db)
 	outboxEventPublisher := adapterevents.MustCreateOutboxEventPublisher(outboxRepo)
+	typeRegistry := commonkafka.NewTypeRegistry()
+	err = typeRegistry.RegisterMessages(&catalogv1.ProductCreated{})
+	if err != nil {
+		panic(fmt.Errorf("register kafka type: %w", err))
+	}
 
-	relayPublisher, err := adapterkafka.NewPublisher(kafkaClient, schemaRegistryClient)
+	relayPublisher, err := adapterkafka.NewPublisher(kafkaClient, schemaRegistryClient, typeRegistry)
 	if err != nil {
 		panic(fmt.Errorf("create relay kafka publisher: %w", err))
 	}
