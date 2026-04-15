@@ -155,6 +155,186 @@ func TestAddCartItemProductSnapshotNotFound(t *testing.T) {
 	require.Equal(t, domain.Cart{}, got)
 }
 
+func TestAddCartItemFallbackToCatalogOnSnapshotMiss(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	cartID := uuid.New()
+	productID := uuid.New()
+
+	carts := &stubCartRepository{
+		getActiveByUserIDFn: func(_ context.Context, _ uuid.UUID) (domain.Cart, error) {
+			return domain.Cart{ID: cartID, UserID: userID, Status: domain.CartStatusActive, Currency: "USD"}, nil
+		},
+	}
+
+	items := &stubCartItemRepository{
+		insertFn: func(_ context.Context, params outbound.CartItemInsertParams) (domain.CartItem, error) {
+			require.Equal(t, "SKU-1", params.SKU)
+			require.Equal(t, "Product 1", params.ProductName)
+			require.Equal(t, int64(1200), params.UnitPrice)
+			require.Equal(t, "USD", params.Currency)
+			return domain.CartItem{}, nil
+		},
+		listByCartIDFn: func(_ context.Context, _ uuid.UUID) ([]domain.CartItem, error) {
+			now := time.Now().UTC()
+			item, err := domain.NewCartItem("SKU-1", "Product 1", 1, 1200, "USD", now, now)
+			require.NoError(t, err)
+
+			return []domain.CartItem{item}, nil
+		},
+	}
+
+	snapshotRepo := &stubProductSnapshotRepository{
+		getBySKUFn: func(_ context.Context, _ string) (domain.ProductSnapshot, error) {
+			return domain.ProductSnapshot{}, outbound.ErrProductSnapshotNotFound
+		},
+		upsertFn: func(_ context.Context, snapshot domain.ProductSnapshot) (domain.ProductSnapshot, error) {
+			require.NotNil(t, snapshot.ProductID)
+			require.Equal(t, productID, *snapshot.ProductID)
+			return snapshot, nil
+		},
+	}
+
+	catalogReader := &stubCatalogReader{
+		getProductBySKUFn: func(_ context.Context, sku string) (outbound.CatalogProduct, error) {
+			require.Equal(t, "SKU-1", sku)
+			return outbound.CatalogProduct{
+				ProductID:   productID.String(),
+				SKU:         "SKU-1",
+				Name:        "Product 1",
+				Price:       1200,
+				Currency:    "USD",
+				IsPublished: true,
+			}, nil
+		},
+	}
+
+	svc := NewCartServiceWithCatalog(carts, items, snapshotRepo, catalogReader)
+
+	got, err := svc.AddCartItem(context.Background(), AddCartItemInput{UserID: userID, SKU: "SKU-1", Quantity: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(1200), got.TotalAmount)
+	require.Equal(t, 1, catalogReader.getProductBySKUCalls)
+	require.Equal(t, 1, snapshotRepo.upsertCalls)
+}
+
+func TestAddCartItemFallbackNotFoundMapsToMissingProduct(t *testing.T) {
+	t.Parallel()
+
+	snapshotRepo := &stubProductSnapshotRepository{
+		getBySKUFn: func(_ context.Context, _ string) (domain.ProductSnapshot, error) {
+			return domain.ProductSnapshot{}, outbound.ErrProductSnapshotNotFound
+		},
+	}
+
+	catalogReader := &stubCatalogReader{
+		getProductBySKUFn: func(_ context.Context, _ string) (outbound.CatalogProduct, error) {
+			return outbound.CatalogProduct{}, outbound.ErrProductNotFound
+		},
+	}
+
+	svc := NewCartServiceWithCatalog(&stubCartRepository{}, &stubCartItemRepository{}, snapshotRepo, catalogReader)
+
+	got, err := svc.AddCartItem(context.Background(), AddCartItemInput{UserID: uuid.New(), SKU: "SKU-404", Quantity: 1})
+	require.ErrorIs(t, err, ErrProductSnapshotNotFound)
+	require.Equal(t, domain.Cart{}, got)
+	require.Equal(t, 1, catalogReader.getProductBySKUCalls)
+	require.Equal(t, 0, snapshotRepo.upsertCalls)
+}
+
+func TestAddCartItemFallbackSnapshotUpsertFailure(t *testing.T) {
+	t.Parallel()
+
+	upsertErr := errors.New("write failed")
+
+	snapshotRepo := &stubProductSnapshotRepository{
+		getBySKUFn: func(_ context.Context, _ string) (domain.ProductSnapshot, error) {
+			return domain.ProductSnapshot{}, outbound.ErrProductSnapshotNotFound
+		},
+		upsertFn: func(_ context.Context, _ domain.ProductSnapshot) (domain.ProductSnapshot, error) {
+			return domain.ProductSnapshot{}, upsertErr
+		},
+	}
+
+	catalogReader := &stubCatalogReader{
+		getProductBySKUFn: func(_ context.Context, _ string) (outbound.CatalogProduct, error) {
+			return outbound.CatalogProduct{ProductID: uuid.NewString(), SKU: "SKU-1", Name: "Product 1", Price: 100, Currency: "USD", IsPublished: true}, nil
+		},
+	}
+
+	svc := NewCartServiceWithCatalog(&stubCartRepository{}, &stubCartItemRepository{}, snapshotRepo, catalogReader)
+
+	got, err := svc.AddCartItem(context.Background(), AddCartItemInput{UserID: uuid.New(), SKU: "SKU-1", Quantity: 1})
+	require.ErrorContains(t, err, "upsert product snapshot")
+	require.ErrorIs(t, err, upsertErr)
+	require.Equal(t, domain.Cart{}, got)
+	require.Equal(t, 1, catalogReader.getProductBySKUCalls)
+	require.Equal(t, 1, snapshotRepo.upsertCalls)
+}
+
+func TestAddCartItemFallbackRejectsNonPublishedProduct(t *testing.T) {
+	t.Parallel()
+
+	snapshotRepo := &stubProductSnapshotRepository{
+		getBySKUFn: func(_ context.Context, _ string) (domain.ProductSnapshot, error) {
+			return domain.ProductSnapshot{}, outbound.ErrProductSnapshotNotFound
+		},
+	}
+
+	catalogReader := &stubCatalogReader{
+		getProductBySKUFn: func(_ context.Context, _ string) (outbound.CatalogProduct, error) {
+			return outbound.CatalogProduct{
+				ProductID:   uuid.NewString(),
+				SKU:         "SKU-1",
+				Name:        "Product 1",
+				Price:       100,
+				Currency:    "USD",
+				IsPublished: false,
+			}, nil
+		},
+	}
+
+	svc := NewCartServiceWithCatalog(&stubCartRepository{}, &stubCartItemRepository{}, snapshotRepo, catalogReader)
+
+	got, err := svc.AddCartItem(context.Background(), AddCartItemInput{UserID: uuid.New(), SKU: "SKU-1", Quantity: 1})
+	require.ErrorIs(t, err, ErrProductSnapshotNotFound)
+	require.Equal(t, domain.Cart{}, got)
+	require.Equal(t, 1, catalogReader.getProductBySKUCalls)
+	require.Equal(t, 0, snapshotRepo.upsertCalls)
+}
+
+func TestAddCartItemFallbackRejectsNilProductID(t *testing.T) {
+	t.Parallel()
+
+	snapshotRepo := &stubProductSnapshotRepository{
+		getBySKUFn: func(_ context.Context, _ string) (domain.ProductSnapshot, error) {
+			return domain.ProductSnapshot{}, outbound.ErrProductSnapshotNotFound
+		},
+	}
+
+	catalogReader := &stubCatalogReader{
+		getProductBySKUFn: func(_ context.Context, _ string) (outbound.CatalogProduct, error) {
+			return outbound.CatalogProduct{
+				ProductID:   uuid.Nil.String(),
+				SKU:         "SKU-1",
+				Name:        "Product 1",
+				Price:       100,
+				Currency:    "USD",
+				IsPublished: true,
+			}, nil
+		},
+	}
+
+	svc := NewCartServiceWithCatalog(&stubCartRepository{}, &stubCartItemRepository{}, snapshotRepo, catalogReader)
+
+	got, err := svc.AddCartItem(context.Background(), AddCartItemInput{UserID: uuid.New(), SKU: "SKU-1", Quantity: 1})
+	require.ErrorIs(t, err, ErrInvalidCatalogProductID)
+	require.Equal(t, domain.Cart{}, got)
+	require.Equal(t, 1, catalogReader.getProductBySKUCalls)
+	require.Equal(t, 0, snapshotRepo.upsertCalls)
+}
+
 func TestAddCartItemInputAndErrorBranches(t *testing.T) {
 	t.Parallel()
 
@@ -703,6 +883,8 @@ func (s *stubCartItemRepository) Delete(ctx context.Context, cartID uuid.UUID, s
 type stubProductSnapshotRepository struct {
 	getBySKUFn func(ctx context.Context, sku string) (domain.ProductSnapshot, error)
 	upsertFn   func(ctx context.Context, snapshot domain.ProductSnapshot) (domain.ProductSnapshot, error)
+
+	upsertCalls int
 }
 
 func (s *stubProductSnapshotRepository) GetBySKU(ctx context.Context, sku string) (domain.ProductSnapshot, error) {
@@ -718,5 +900,22 @@ func (s *stubProductSnapshotRepository) Upsert(ctx context.Context, snapshot dom
 		return domain.ProductSnapshot{}, errors.New("unexpected Upsert call")
 	}
 
+	s.upsertCalls++
+
 	return s.upsertFn(ctx, snapshot)
+}
+
+type stubCatalogReader struct {
+	getProductBySKUFn    func(ctx context.Context, sku string) (outbound.CatalogProduct, error)
+	getProductBySKUCalls int
+}
+
+func (s *stubCatalogReader) GetProductBySKU(ctx context.Context, sku string) (outbound.CatalogProduct, error) {
+	if s.getProductBySKUFn == nil {
+		return outbound.CatalogProduct{}, errors.New("unexpected GetProductBySKU call")
+	}
+
+	s.getProductBySKUCalls++
+
+	return s.getProductBySKUFn(ctx, sku)
 }
