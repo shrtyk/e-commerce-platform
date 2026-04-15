@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -74,11 +75,14 @@ func (s *CartService) AddCartItem(ctx context.Context, input AddCartItemInput) (
 
 	snapshot, err := s.snapshots.GetBySKU(ctx, sku)
 	if err != nil {
-		if errors.Is(err, outbound.ErrProductSnapshotNotFound) {
-			return domain.Cart{}, ErrProductSnapshotNotFound
+		if !errors.Is(err, outbound.ErrProductSnapshotNotFound) {
+			return domain.Cart{}, fmt.Errorf("get product snapshot by sku: %w", err)
 		}
 
-		return domain.Cart{}, fmt.Errorf("get product snapshot by sku: %w", err)
+		snapshot, err = s.resolveProductSnapshotBySKU(ctx, sku)
+		if err != nil {
+			return domain.Cart{}, err
+		}
 	}
 
 	cart, err := s.ensureActiveCart(ctx, input.UserID, snapshot.Currency)
@@ -110,6 +114,61 @@ func (s *CartService) AddCartItem(ctx context.Context, input AddCartItemInput) (
 	}
 
 	return s.loadCartWithItems(ctx, cart)
+}
+
+func (s *CartService) resolveProductSnapshotBySKU(ctx context.Context, sku string) (domain.ProductSnapshot, error) {
+	if s.catalog == nil {
+		return domain.ProductSnapshot{}, ErrProductSnapshotNotFound
+	}
+
+	product, err := s.catalog.GetProductBySKU(ctx, sku)
+	if err != nil {
+		if errors.Is(err, outbound.ErrProductNotFound) {
+			return domain.ProductSnapshot{}, ErrProductSnapshotNotFound
+		}
+
+		return domain.ProductSnapshot{}, fmt.Errorf("get product by sku from catalog: %w", err)
+	}
+
+	if !product.IsPublished {
+		return domain.ProductSnapshot{}, ErrProductSnapshotNotFound
+	}
+
+	productID, err := toProductSnapshotProductID(product.ProductID)
+	if err != nil {
+		return domain.ProductSnapshot{}, fmt.Errorf("parse catalog product id: %w", err)
+	}
+
+	now := time.Now().UTC()
+	snapshot, err := domain.NewProductSnapshot(product.SKU, productID, product.Name, product.Price, product.Currency, now, now)
+	if err != nil {
+		return domain.ProductSnapshot{}, fmt.Errorf("create product snapshot: %w", err)
+	}
+
+	upserted, err := s.snapshots.Upsert(ctx, snapshot)
+	if err != nil {
+		return domain.ProductSnapshot{}, fmt.Errorf("upsert product snapshot: %w", err)
+	}
+
+	return upserted, nil
+}
+
+func toProductSnapshotProductID(raw string) (*uuid.UUID, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	parsedID, err := uuid.Parse(trimmed)
+	if err != nil {
+		return nil, err
+	}
+
+	if parsedID == uuid.Nil {
+		return nil, ErrInvalidCatalogProductID
+	}
+
+	return &parsedID, nil
 }
 
 func (s *CartService) UpdateCartItem(ctx context.Context, input UpdateCartItemInput) (domain.Cart, error) {

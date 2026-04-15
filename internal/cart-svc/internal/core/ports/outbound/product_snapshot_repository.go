@@ -13,6 +13,20 @@ var (
 	ErrProductNotFound         = errors.New("product not found")
 )
 
+type CatalogProduct struct {
+	ProductID   string
+	SKU         string
+	Name        string
+	Price       int64
+	Currency    string
+	IsPublished bool
+}
+
+//mockery:generate: true
+type CatalogReader interface {
+	GetProductBySKU(ctx context.Context, sku string) (CatalogProduct, error)
+}
+
 //mockery:generate: true
 type ProductSnapshotRepository interface {
 	GetBySKU(ctx context.Context, sku string) (domain.ProductSnapshot, error)
