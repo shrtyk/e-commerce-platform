@@ -24,7 +24,7 @@ message GetActiveCartResponse {
 
 message AddCartItemRequest {
   string user_id = 1;
-  string product_id = 2;
+  string sku = 2;
   int64 quantity = 3;
 }
 
@@ -34,7 +34,7 @@ message AddCartItemResponse {
 
 message UpdateCartItemRequest {
   string user_id = 1;
-  string cart_item_id = 2;
+  string sku = 2;
   int64 quantity = 3;
 }
 
@@ -44,7 +44,7 @@ message UpdateCartItemResponse {
 
 message RemoveCartItemRequest {
   string user_id = 1;
-  string cart_item_id = 2;
+  string sku = 2;
 }
 
 message RemoveCartItemResponse {

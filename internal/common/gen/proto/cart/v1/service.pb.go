@@ -112,7 +112,7 @@ func (x *GetActiveCartResponse) GetCart() *Cart {
 type AddCartItemRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	ProductId     string                 `protobuf:"bytes,2,opt,name=product_id,json=productId,proto3" json:"product_id,omitempty"`
+	Sku           string                 `protobuf:"bytes,2,opt,name=sku,proto3" json:"sku,omitempty"`
 	Quantity      int64                  `protobuf:"varint,3,opt,name=quantity,proto3" json:"quantity,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -155,9 +155,9 @@ func (x *AddCartItemRequest) GetUserId() string {
 	return ""
 }
 
-func (x *AddCartItemRequest) GetProductId() string {
+func (x *AddCartItemRequest) GetSku() string {
 	if x != nil {
-		return x.ProductId
+		return x.Sku
 	}
 	return ""
 }
@@ -216,7 +216,7 @@ func (x *AddCartItemResponse) GetCart() *Cart {
 type UpdateCartItemRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	CartItemId    string                 `protobuf:"bytes,2,opt,name=cart_item_id,json=cartItemId,proto3" json:"cart_item_id,omitempty"`
+	Sku           string                 `protobuf:"bytes,2,opt,name=sku,proto3" json:"sku,omitempty"`
 	Quantity      int64                  `protobuf:"varint,3,opt,name=quantity,proto3" json:"quantity,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -259,9 +259,9 @@ func (x *UpdateCartItemRequest) GetUserId() string {
 	return ""
 }
 
-func (x *UpdateCartItemRequest) GetCartItemId() string {
+func (x *UpdateCartItemRequest) GetSku() string {
 	if x != nil {
-		return x.CartItemId
+		return x.Sku
 	}
 	return ""
 }
@@ -320,7 +320,7 @@ func (x *UpdateCartItemResponse) GetCart() *Cart {
 type RemoveCartItemRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	CartItemId    string                 `protobuf:"bytes,2,opt,name=cart_item_id,json=cartItemId,proto3" json:"cart_item_id,omitempty"`
+	Sku           string                 `protobuf:"bytes,2,opt,name=sku,proto3" json:"sku,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -362,9 +362,9 @@ func (x *RemoveCartItemRequest) GetUserId() string {
 	return ""
 }
 
-func (x *RemoveCartItemRequest) GetCartItemId() string {
+func (x *RemoveCartItemRequest) GetSku() string {
 	if x != nil {
-		return x.CartItemId
+		return x.Sku
 	}
 	return ""
 }
@@ -509,25 +509,22 @@ const file_cart_v1_service_proto_rawDesc = "" +
 	"\x14GetActiveCartRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\"D\n" +
 	"\x15GetActiveCartResponse\x12+\n" +
-	"\x04cart\x18\x01 \x01(\v2\x17.ecommerce.cart.v1.CartR\x04cart\"h\n" +
+	"\x04cart\x18\x01 \x01(\v2\x17.ecommerce.cart.v1.CartR\x04cart\"[\n" +
 	"\x12AddCartItemRequest\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1d\n" +
-	"\n" +
-	"product_id\x18\x02 \x01(\tR\tproductId\x12\x1a\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x10\n" +
+	"\x03sku\x18\x02 \x01(\tR\x03sku\x12\x1a\n" +
 	"\bquantity\x18\x03 \x01(\x03R\bquantity\"B\n" +
 	"\x13AddCartItemResponse\x12+\n" +
-	"\x04cart\x18\x01 \x01(\v2\x17.ecommerce.cart.v1.CartR\x04cart\"n\n" +
+	"\x04cart\x18\x01 \x01(\v2\x17.ecommerce.cart.v1.CartR\x04cart\"^\n" +
 	"\x15UpdateCartItemRequest\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\tR\x06userId\x12 \n" +
-	"\fcart_item_id\x18\x02 \x01(\tR\n" +
-	"cartItemId\x12\x1a\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x10\n" +
+	"\x03sku\x18\x02 \x01(\tR\x03sku\x12\x1a\n" +
 	"\bquantity\x18\x03 \x01(\x03R\bquantity\"E\n" +
 	"\x16UpdateCartItemResponse\x12+\n" +
-	"\x04cart\x18\x01 \x01(\v2\x17.ecommerce.cart.v1.CartR\x04cart\"R\n" +
+	"\x04cart\x18\x01 \x01(\v2\x17.ecommerce.cart.v1.CartR\x04cart\"B\n" +
 	"\x15RemoveCartItemRequest\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\tR\x06userId\x12 \n" +
-	"\fcart_item_id\x18\x02 \x01(\tR\n" +
-	"cartItemId\"E\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x10\n" +
+	"\x03sku\x18\x02 \x01(\tR\x03sku\"E\n" +
 	"\x16RemoveCartItemResponse\x12+\n" +
 	"\x04cart\x18\x01 \x01(\v2\x17.ecommerce.cart.v1.CartR\x04cart\"5\n" +
 	"\x1aGetCheckoutSnapshotRequest\x12\x17\n" +

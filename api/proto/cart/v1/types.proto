@@ -14,8 +14,8 @@ enum CartStatus {
 }
 
 message CartItem {
-  string cart_item_id = 1;
-  string product_id = 2;
+  reserved 1, 2;
+  reserved "cart_item_id", "product_id";
   string sku = 3;
   string name = 4;
   int64 quantity = 5;

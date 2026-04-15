@@ -76,8 +76,6 @@ func (CartStatus) EnumDescriptor() ([]byte, []int) {
 
 type CartItem struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	CartItemId    string                 `protobuf:"bytes,1,opt,name=cart_item_id,json=cartItemId,proto3" json:"cart_item_id,omitempty"`
-	ProductId     string                 `protobuf:"bytes,2,opt,name=product_id,json=productId,proto3" json:"product_id,omitempty"`
 	Sku           string                 `protobuf:"bytes,3,opt,name=sku,proto3" json:"sku,omitempty"`
 	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
 	Quantity      int64                  `protobuf:"varint,5,opt,name=quantity,proto3" json:"quantity,omitempty"`
@@ -115,20 +113,6 @@ func (x *CartItem) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CartItem.ProtoReflect.Descriptor instead.
 func (*CartItem) Descriptor() ([]byte, []int) {
 	return file_cart_v1_types_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *CartItem) GetCartItemId() string {
-	if x != nil {
-		return x.CartItemId
-	}
-	return ""
-}
-
-func (x *CartItem) GetProductId() string {
-	if x != nil {
-		return x.ProductId
-	}
-	return ""
 }
 
 func (x *CartItem) GetSku() string {
@@ -322,19 +306,16 @@ var File_cart_v1_types_proto protoreflect.FileDescriptor
 
 const file_cart_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x13cart/v1/types.proto\x12\x11ecommerce.cart.v1\x1a\x15common/v1/money.proto\"\x83\x02\n" +
-	"\bCartItem\x12 \n" +
-	"\fcart_item_id\x18\x01 \x01(\tR\n" +
-	"cartItemId\x12\x1d\n" +
-	"\n" +
-	"product_id\x18\x02 \x01(\tR\tproductId\x12\x10\n" +
+	"\x13cart/v1/types.proto\x12\x11ecommerce.cart.v1\x1a\x15common/v1/money.proto\"\xe8\x01\n" +
+	"\bCartItem\x12\x10\n" +
 	"\x03sku\x18\x03 \x01(\tR\x03sku\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x1a\n" +
 	"\bquantity\x18\x05 \x01(\x03R\bquantity\x129\n" +
 	"\n" +
 	"unit_price\x18\x06 \x01(\v2\x1a.ecommerce.common.v1.MoneyR\tunitPrice\x129\n" +
 	"\n" +
-	"line_total\x18\a \x01(\v2\x1a.ecommerce.common.v1.MoneyR\tlineTotal\"\xfd\x01\n" +
+	"line_total\x18\a \x01(\v2\x1a.ecommerce.common.v1.MoneyR\tlineTotalJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\fcart_item_idR\n" +
+	"product_id\"\xfd\x01\n" +
 	"\x04Cart\x12\x17\n" +
 	"\acart_id\x18\x01 \x01(\tR\x06cartId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x125\n" +
