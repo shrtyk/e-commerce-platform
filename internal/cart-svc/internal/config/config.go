@@ -7,6 +7,11 @@ import (
 
 type Config struct {
 	commoncfg.Config
+	Catalog Catalog
+}
+
+type Catalog struct {
+	GRPCAddr string `env:"CATALOG_GRPC_ADDR" env-default:"product-svc:9090"`
 }
 
 func MustLoad() Config {

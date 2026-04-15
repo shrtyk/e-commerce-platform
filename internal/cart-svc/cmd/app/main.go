@@ -10,6 +10,8 @@ import (
 
 	redislib "github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel"
+	grpcpkg "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/inbound/grpc"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/inbound/http"
@@ -41,6 +43,14 @@ func main() {
 	tracer := tracerProvider.Tracer(cfg.Service.Name)
 
 	db := adapterpostgres.MustCreatePostgres(cfg.Postgres, cfg.Timeouts)
+	catalogConn, err := grpcpkg.NewClient(
+		cfg.Catalog.GRPCAddr,
+		grpcpkg.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		panic(fmt.Errorf("create catalog grpc client: %w", err))
+	}
+
 	var redisClient *redislib.Client
 	if cfg.Redis.Enabled {
 		redisClient = adapterredis.MustCreateRedis(cfg.Redis, cfg.Timeouts)
@@ -55,6 +65,7 @@ func main() {
 		grpcServer,
 		db,
 		redisClient,
+		cartapp.WithCatalogConn(catalogConn),
 		cartapp.WithLogger(logger),
 		cartapp.WithTracerProvider(tracerProvider),
 		cartapp.WithMeterProvider(meterProvider),

@@ -12,11 +12,13 @@ import (
 func TestMustLoad(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("REDIS_ADDR", "cart-redis:6379")
+	t.Setenv("CATALOG_GRPC_ADDR", "catalog:9090")
 
 	cfg := config.MustLoad()
 	require.Equal(t, "cart", cfg.Service.Name)
 	require.True(t, cfg.Redis.Enabled)
 	require.Equal(t, "cart-redis:6379", cfg.Redis.Addr)
+	require.Equal(t, "catalog:9090", cfg.Catalog.GRPCAddr)
 }
 
 func TestMustLoadPanicsWhenRequiredEnvMissing(t *testing.T) {
@@ -35,6 +37,14 @@ func TestMustLoadRedisDisabledWhenAddrEmpty(t *testing.T) {
 	cfg := config.MustLoad()
 	require.False(t, cfg.Redis.Enabled)
 	require.Equal(t, "", cfg.Redis.Addr)
+}
+
+func TestMustLoadCatalogGRPCDefault(t *testing.T) {
+	setRequiredEnv(t)
+	require.NoError(t, os.Unsetenv("CATALOG_GRPC_ADDR"))
+
+	cfg := config.MustLoad()
+	require.Equal(t, "product-svc:9090", cfg.Catalog.GRPCAddr)
 }
 
 func setRequiredEnv(t *testing.T) {
