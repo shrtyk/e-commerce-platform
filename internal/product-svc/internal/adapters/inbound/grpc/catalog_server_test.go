@@ -273,6 +273,8 @@ func TestReleaseStock(t *testing.T) {
 type stubCatalogService struct {
 	getProductResult catalog.GetProductResult
 	getProductErr    error
+	getBySKUResult   catalog.GetProductResult
+	getBySKUErr      error
 
 	listCategoryID     string
 	listProductsResult []domain.Product
@@ -285,6 +287,10 @@ type stubCatalogService struct {
 
 func (s *stubCatalogService) GetProduct(_ context.Context, _ uuid.UUID) (catalog.GetProductResult, error) {
 	return s.getProductResult, s.getProductErr
+}
+
+func (s *stubCatalogService) GetProductBySKU(_ context.Context, _ string) (catalog.GetProductResult, error) {
+	return s.getBySKUResult, s.getBySKUErr
 }
 
 func (s *stubCatalogService) ListProducts(_ context.Context, params outbound.ProductListParams) ([]domain.Product, error) {
@@ -305,4 +311,65 @@ func (s *stubCatalogService) ReserveStock(_ context.Context, input catalog.Reser
 func TestMapServiceErrorDefault(t *testing.T) {
 	err := mapServiceError(errors.New("boom"))
 	require.Equal(t, codes.Internal, status.Code(err))
+}
+
+func TestGetProductBySKU(t *testing.T) {
+	productID := uuid.New()
+
+	tests := []struct {
+		name         string
+		request      *catalogv1.GetProductBySKURequest
+		setup        func(*stubCatalogService)
+		expectedCode codes.Code
+		assert       func(*testing.T, *catalogv1.GetProductBySKUResponse)
+	}{
+		{
+			name:    "success",
+			request: &catalogv1.GetProductBySKURequest{Sku: "SKU-1"},
+			setup: func(svc *stubCatalogService) {
+				svc.getBySKUResult = catalog.GetProductResult{Product: domain.Product{ID: productID, SKU: "SKU-1", Name: "Coffee", Price: 500, Currency: "USD", Status: domain.ProductStatusPublished}}
+			},
+			expectedCode: codes.OK,
+			assert: func(t *testing.T, response *catalogv1.GetProductBySKUResponse) {
+				require.Equal(t, "SKU-1", response.GetProduct().GetSku())
+				require.Equal(t, productID.String(), response.GetProduct().GetProductId())
+			},
+		},
+		{
+			name:         "invalid sku",
+			request:      &catalogv1.GetProductBySKURequest{Sku: "   "},
+			expectedCode: codes.InvalidArgument,
+		},
+		{
+			name:    "not found",
+			request: &catalogv1.GetProductBySKURequest{Sku: "SKU-404"},
+			setup: func(svc *stubCatalogService) {
+				svc.getBySKUErr = outbound.ErrProductNotFound
+			},
+			expectedCode: codes.NotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &stubCatalogService{}
+			if tt.setup != nil {
+				tt.setup(svc)
+			}
+
+			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			response, err := server.GetProductBySKU(context.Background(), tt.request)
+			require.Equal(t, tt.expectedCode, status.Code(err))
+
+			if tt.expectedCode != codes.OK {
+				require.Nil(t, response)
+				return
+			}
+
+			require.NotNil(t, response)
+			if tt.assert != nil {
+				tt.assert(t, response)
+			}
+		})
+	}
 }

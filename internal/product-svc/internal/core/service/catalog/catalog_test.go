@@ -228,6 +228,103 @@ func TestGetProduct(t *testing.T) {
 	}
 }
 
+func TestGetProductBySKU(t *testing.T) {
+	productID := uuid.New()
+	product := domain.Product{ID: productID, SKU: "SKU-1", Name: "Product", Status: domain.ProductStatusPublished}
+	stock := domain.StockRecord{StockRecordID: uuid.New(), ProductID: productID, Quantity: 10, Reserved: 2, Available: 8}
+
+	tests := []struct {
+		name          string
+		sku           string
+		setupMocks    func(*outboundmocks.MockProductRepository, *outboundmocks.MockStockRepository)
+		assertNoCalls func(t *testing.T, products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository)
+		errIs         error
+		errContains   string
+	}{
+		{
+			name: "success",
+			sku:  "SKU-1",
+			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository) {
+				products.EXPECT().GetBySKU(testifymock.Anything, "SKU-1").Return(product, nil)
+				stocks.EXPECT().GetByProductID(testifymock.Anything, productID).Return(stock, nil)
+			},
+		},
+		{
+			name:  "blank sku",
+			sku:   "   ",
+			errIs: outbound.ErrProductNotFound,
+			assertNoCalls: func(t *testing.T, products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository) {
+				products.AssertNotCalled(t, "GetBySKU", testifymock.Anything, testifymock.Anything)
+				stocks.AssertNotCalled(t, "GetByProductID", testifymock.Anything, testifymock.Anything)
+			},
+		},
+		{
+			name: "product not found",
+			sku:  "SKU-404",
+			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository) {
+				products.EXPECT().GetBySKU(testifymock.Anything, "SKU-404").Return(domain.Product{}, outbound.ErrProductNotFound)
+			},
+			assertNoCalls: func(t *testing.T, _ *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository) {
+				stocks.AssertNotCalled(t, "GetByProductID", testifymock.Anything, testifymock.Anything)
+			},
+			errIs: outbound.ErrProductNotFound,
+		},
+		{
+			name: "non published product",
+			sku:  "SKU-DRAFT",
+			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository) {
+				products.EXPECT().GetBySKU(testifymock.Anything, "SKU-DRAFT").Return(domain.Product{ID: productID, SKU: "SKU-DRAFT", Status: domain.ProductStatusDraft}, nil)
+			},
+			assertNoCalls: func(t *testing.T, _ *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository) {
+				stocks.AssertNotCalled(t, "GetByProductID", testifymock.Anything, testifymock.Anything)
+			},
+			errIs: outbound.ErrProductNotFound,
+		},
+		{
+			name: "stock repo error",
+			sku:  "SKU-1",
+			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository) {
+				products.EXPECT().GetBySKU(testifymock.Anything, "SKU-1").Return(product, nil)
+				stocks.EXPECT().GetByProductID(testifymock.Anything, productID).Return(domain.StockRecord{}, errors.New("db down"))
+			},
+			errContains: "get stock by product id",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			products := outboundmocks.NewMockProductRepository(t)
+			stocks := outboundmocks.NewMockStockRepository(t)
+			publisher := outboundmocks.NewMockEventPublisher(t)
+			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), "product-svc")
+
+			if tt.setupMocks != nil {
+				tt.setupMocks(products, stocks)
+			}
+
+			result, err := svc.GetProductBySKU(context.Background(), tt.sku)
+			if tt.errIs != nil || tt.errContains != "" {
+				require.Error(t, err)
+				if tt.assertNoCalls != nil {
+					tt.assertNoCalls(t, products, stocks)
+				}
+				if tt.errIs != nil {
+					require.ErrorIs(t, err, tt.errIs)
+				}
+				if tt.errContains != "" {
+					require.ErrorContains(t, err, tt.errContains)
+				}
+				require.Zero(t, result)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, productID, result.Product.ID)
+			require.Equal(t, int32(8), result.Stock.Available)
+		})
+	}
+}
+
 func TestListProducts(t *testing.T) {
 	products := []domain.Product{{ID: uuid.New(), SKU: "SKU-1"}, {ID: uuid.New(), SKU: "SKU-2"}}
 

@@ -17,6 +17,7 @@ import (
 
 type catalogService interface {
 	GetProduct(ctx context.Context, productID uuid.UUID) (catalog.GetProductResult, error)
+	GetProductBySKU(ctx context.Context, sku string) (catalog.GetProductResult, error)
 	ListProducts(ctx context.Context, params outbound.ProductListParams) ([]domain.Product, error)
 	ReserveStock(ctx context.Context, input catalog.ReserveStockInput) (catalog.ReserveStockResult, error)
 }
@@ -48,6 +49,20 @@ func (s *CatalogServer) GetProduct(ctx context.Context, req *catalogv1.GetProduc
 	}
 
 	return &catalogv1.GetProductResponse{Product: toProtoProduct(result.Product)}, nil
+}
+
+func (s *CatalogServer) GetProductBySKU(ctx context.Context, req *catalogv1.GetProductBySKURequest) (*catalogv1.GetProductBySKUResponse, error) {
+	sku, err := toSKU(req.GetSku())
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.service.GetProductBySKU(ctx, sku)
+	if err != nil {
+		return nil, mapServiceError(err)
+	}
+
+	return &catalogv1.GetProductBySKUResponse{Product: toProtoProduct(result.Product)}, nil
 }
 
 func (s *CatalogServer) ListPublishedProducts(ctx context.Context, req *catalogv1.ListPublishedProductsRequest) (*catalogv1.ListPublishedProductsResponse, error) {

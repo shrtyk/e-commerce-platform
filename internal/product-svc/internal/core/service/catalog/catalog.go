@@ -175,6 +175,37 @@ func (s *CatalogService) GetProduct(ctx context.Context, productID uuid.UUID) (G
 	return GetProductResult{Product: product, Stock: stock}, nil
 }
 
+func (s *CatalogService) GetProductBySKU(ctx context.Context, sku string) (GetProductResult, error) {
+	trimmedSKU := strings.TrimSpace(sku)
+	if trimmedSKU == "" {
+		return GetProductResult{}, outbound.ErrProductNotFound
+	}
+
+	product, err := s.repos.Products.GetBySKU(ctx, trimmedSKU)
+	if err != nil {
+		if errors.Is(err, outbound.ErrProductNotFound) {
+			return GetProductResult{}, outbound.ErrProductNotFound
+		}
+
+		return GetProductResult{}, fmt.Errorf("get product by sku: %w", err)
+	}
+
+	if product.Status != domain.ProductStatusPublished {
+		return GetProductResult{}, outbound.ErrProductNotFound
+	}
+
+	stock, err := s.repos.Stocks.GetByProductID(ctx, product.ID)
+	if err != nil {
+		if errors.Is(err, outbound.ErrStockRecordNotFound) {
+			return GetProductResult{}, outbound.ErrStockRecordNotFound
+		}
+
+		return GetProductResult{}, fmt.Errorf("get stock by product id: %w", err)
+	}
+
+	return GetProductResult{Product: product, Stock: stock}, nil
+}
+
 func (s *CatalogService) ListProducts(ctx context.Context, params outbound.ProductListParams) ([]domain.Product, error) {
 	products, err := s.repos.Products.List(ctx, params)
 	if err != nil {

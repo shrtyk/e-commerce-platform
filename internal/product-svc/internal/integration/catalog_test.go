@@ -81,6 +81,34 @@ func TestGetProductRejectsBadUUID(t *testing.T) {
 	require.Equal(t, "invalid_request", httpErr.Code)
 }
 
+func TestGetProductBySKUReturnsProduct(t *testing.T) {
+	testhelper.CleanupDB(t, testhelper.TestDB)
+	stack := newCatalogStack(t)
+
+	created := createProductViaService(t, stack, domain.ProductStatusPublished, 5)
+
+	grpcClient := catalogv1.NewCatalogServiceClient(stack.GRPCConn)
+	grpcResponse, err := grpcClient.GetProductBySKU(context.Background(), &catalogv1.GetProductBySKURequest{Sku: created.Product.SKU})
+	require.NoError(t, err)
+	require.NotNil(t, grpcResponse.GetProduct())
+	require.Equal(t, created.Product.ID.String(), grpcResponse.GetProduct().GetProductId())
+	require.Equal(t, created.Product.SKU, grpcResponse.GetProduct().GetSku())
+
+	serviceRead, svcErr := stack.CatalogService.GetProductBySKU(context.Background(), created.Product.SKU)
+	require.NoError(t, svcErr)
+	require.Equal(t, created.Product.ID, serviceRead.Product.ID)
+}
+
+func TestGetProductBySKUReturnsNotFound(t *testing.T) {
+	testhelper.CleanupDB(t, testhelper.TestDB)
+	stack := newCatalogStack(t)
+
+	grpcClient := catalogv1.NewCatalogServiceClient(stack.GRPCConn)
+	_, err := grpcClient.GetProductBySKU(context.Background(), &catalogv1.GetProductBySKURequest{Sku: "SKU-404"})
+	require.Error(t, err)
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
 func TestListPublishedProductsReturnsOnlyPublished(t *testing.T) {
 	testhelper.CleanupDB(t, testhelper.TestDB)
 	stack := newCatalogStack(t)

@@ -31,6 +31,15 @@ func toProductID(raw string) (uuid.UUID, error) {
 	return productID, nil
 }
 
+func toSKU(raw string) (string, error) {
+	sku := strings.TrimSpace(raw)
+	if sku == "" {
+		return "", status.Errorf(codes.InvalidArgument, "invalid sku")
+	}
+
+	return sku, nil
+}
+
 func toReserveQuantity(quantity int64) (int32, error) {
 	if quantity <= 0 {
 		return 0, status.Errorf(codes.InvalidArgument, "quantity must be positive")
