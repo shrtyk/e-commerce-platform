@@ -9,6 +9,7 @@ option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/p
 
 service CatalogService {
   rpc GetProduct(GetProductRequest) returns (GetProductResponse);
+  rpc GetProductBySKU(GetProductBySKURequest) returns (GetProductBySKUResponse);
   rpc ListPublishedProducts(ListPublishedProductsRequest) returns (ListPublishedProductsResponse);
   rpc ReserveStock(ReserveStockRequest) returns (ReserveStockResponse);
   rpc ReleaseStock(ReleaseStockRequest) returns (ReleaseStockResponse);
@@ -19,6 +20,14 @@ message GetProductRequest {
 }
 
 message GetProductResponse {
+  Product product = 1;
+}
+
+message GetProductBySKURequest {
+  string sku = 1;
+}
+
+message GetProductBySKUResponse {
   Product product = 1;
 }
 

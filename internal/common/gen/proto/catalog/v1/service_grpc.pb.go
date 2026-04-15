@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	CatalogService_GetProduct_FullMethodName            = "/ecommerce.catalog.v1.CatalogService/GetProduct"
+	CatalogService_GetProductBySKU_FullMethodName       = "/ecommerce.catalog.v1.CatalogService/GetProductBySKU"
 	CatalogService_ListPublishedProducts_FullMethodName = "/ecommerce.catalog.v1.CatalogService/ListPublishedProducts"
 	CatalogService_ReserveStock_FullMethodName          = "/ecommerce.catalog.v1.CatalogService/ReserveStock"
 	CatalogService_ReleaseStock_FullMethodName          = "/ecommerce.catalog.v1.CatalogService/ReleaseStock"
@@ -30,6 +31,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type CatalogServiceClient interface {
 	GetProduct(ctx context.Context, in *GetProductRequest, opts ...grpc.CallOption) (*GetProductResponse, error)
+	GetProductBySKU(ctx context.Context, in *GetProductBySKURequest, opts ...grpc.CallOption) (*GetProductBySKUResponse, error)
 	ListPublishedProducts(ctx context.Context, in *ListPublishedProductsRequest, opts ...grpc.CallOption) (*ListPublishedProductsResponse, error)
 	ReserveStock(ctx context.Context, in *ReserveStockRequest, opts ...grpc.CallOption) (*ReserveStockResponse, error)
 	ReleaseStock(ctx context.Context, in *ReleaseStockRequest, opts ...grpc.CallOption) (*ReleaseStockResponse, error)
@@ -47,6 +49,16 @@ func (c *catalogServiceClient) GetProduct(ctx context.Context, in *GetProductReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetProductResponse)
 	err := c.cc.Invoke(ctx, CatalogService_GetProduct_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) GetProductBySKU(ctx context.Context, in *GetProductBySKURequest, opts ...grpc.CallOption) (*GetProductBySKUResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProductBySKUResponse)
+	err := c.cc.Invoke(ctx, CatalogService_GetProductBySKU_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +100,7 @@ func (c *catalogServiceClient) ReleaseStock(ctx context.Context, in *ReleaseStoc
 // for forward compatibility.
 type CatalogServiceServer interface {
 	GetProduct(context.Context, *GetProductRequest) (*GetProductResponse, error)
+	GetProductBySKU(context.Context, *GetProductBySKURequest) (*GetProductBySKUResponse, error)
 	ListPublishedProducts(context.Context, *ListPublishedProductsRequest) (*ListPublishedProductsResponse, error)
 	ReserveStock(context.Context, *ReserveStockRequest) (*ReserveStockResponse, error)
 	ReleaseStock(context.Context, *ReleaseStockRequest) (*ReleaseStockResponse, error)
@@ -103,6 +116,9 @@ type UnimplementedCatalogServiceServer struct{}
 
 func (UnimplementedCatalogServiceServer) GetProduct(context.Context, *GetProductRequest) (*GetProductResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetProduct not implemented")
+}
+func (UnimplementedCatalogServiceServer) GetProductBySKU(context.Context, *GetProductBySKURequest) (*GetProductBySKUResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetProductBySKU not implemented")
 }
 func (UnimplementedCatalogServiceServer) ListPublishedProducts(context.Context, *ListPublishedProductsRequest) (*ListPublishedProductsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListPublishedProducts not implemented")
@@ -148,6 +164,24 @@ func _CatalogService_GetProduct_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(CatalogServiceServer).GetProduct(ctx, req.(*GetProductRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_GetProductBySKU_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProductBySKURequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).GetProductBySKU(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_GetProductBySKU_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).GetProductBySKU(ctx, req.(*GetProductBySKURequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -216,6 +250,10 @@ var CatalogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetProduct",
 			Handler:    _CatalogService_GetProduct_Handler,
+		},
+		{
+			MethodName: "GetProductBySKU",
+			Handler:    _CatalogService_GetProductBySKU_Handler,
 		},
 		{
 			MethodName: "ListPublishedProducts",
