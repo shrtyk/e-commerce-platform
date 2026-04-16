@@ -3,7 +3,6 @@ package grpc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -22,6 +21,7 @@ type cartService interface {
 	AddCartItem(ctx context.Context, input cart.AddCartItemInput) (domain.Cart, error)
 	UpdateCartItem(ctx context.Context, input cart.UpdateCartItemInput) (domain.Cart, error)
 	RemoveCartItem(ctx context.Context, input cart.RemoveCartItemInput) (domain.Cart, error)
+	GetCheckoutSnapshot(ctx context.Context, userID uuid.UUID) (domain.Cart, error)
 }
 
 type CartServer struct {
@@ -111,16 +111,22 @@ func (s *CartServer) RemoveCartItem(ctx context.Context, req *cartv1.RemoveCartI
 	return toRemoveCartItemResponse(result), nil
 }
 
-func (s *CartServer) GetCheckoutSnapshot(context.Context, *cartv1.GetCheckoutSnapshotRequest) (*cartv1.GetCheckoutSnapshotResponse, error) {
-	return nil, s.unimplemented("GetCheckoutSnapshot")
-}
-
-func (s *CartServer) unimplemented(method string) error {
-	if s.logger != nil {
-		s.logger.Debug("cart grpc method unimplemented", slog.String("method", method))
+func (s *CartServer) GetCheckoutSnapshot(ctx context.Context, req *cartv1.GetCheckoutSnapshotRequest) (*cartv1.GetCheckoutSnapshotResponse, error) {
+	requestedUserID, err := s.validateRequestedUserID(ctx, req.GetUserId())
+	if err != nil {
+		return nil, err
 	}
 
-	return status.Error(grpccodes.Unimplemented, fmt.Sprintf("method %s not implemented", method))
+	if s.cartService == nil {
+		return nil, status.Error(grpccodes.Internal, "cart service is not configured")
+	}
+
+	result, err := s.cartService.GetCheckoutSnapshot(ctx, requestedUserID)
+	if err != nil {
+		return nil, s.mapServiceError(err)
+	}
+
+	return toGetCheckoutSnapshotResponse(result), nil
 }
 
 func (s *CartServer) validateRequestedUserID(ctx context.Context, rawUserID string) (uuid.UUID, error) {

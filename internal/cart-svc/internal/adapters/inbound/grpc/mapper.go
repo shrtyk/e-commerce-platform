@@ -76,6 +76,10 @@ func toRemoveCartItemResponse(result domain.Cart) *cartv1.RemoveCartItemResponse
 	return &cartv1.RemoveCartItemResponse{Cart: toProtoCart(result)}
 }
 
+func toGetCheckoutSnapshotResponse(result domain.Cart) *cartv1.GetCheckoutSnapshotResponse {
+	return &cartv1.GetCheckoutSnapshotResponse{Snapshot: toProtoCheckoutSnapshot(result)}
+}
+
 func toProtoCart(result domain.Cart) *cartv1.Cart {
 	items := make([]*cartv1.CartItem, 0, len(result.Items))
 	for i := range result.Items {
@@ -99,6 +103,20 @@ func toProtoCartItem(item domain.CartItem) *cartv1.CartItem {
 		Quantity:  item.Quantity,
 		UnitPrice: toMoney(item.UnitPrice, item.Currency),
 		LineTotal: toMoney(item.LineTotal, item.Currency),
+	}
+}
+
+func toProtoCheckoutSnapshot(result domain.Cart) *cartv1.CheckoutSnapshot {
+	items := make([]*cartv1.CartItem, 0, len(result.Items))
+	for i := range result.Items {
+		items = append(items, toProtoCartItem(result.Items[i]))
+	}
+
+	return &cartv1.CheckoutSnapshot{
+		UserId:      result.UserID.String(),
+		Currency:    result.Currency,
+		Items:       items,
+		TotalAmount: toMoney(result.TotalAmount, result.Currency),
 	}
 }
 

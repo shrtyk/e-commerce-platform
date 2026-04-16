@@ -14,9 +14,7 @@ import (
 	httpcommon "github.com/shrtyk/e-commerce-platform/internal/common/transport/http"
 )
 
-var publicMethods = []string{
-	cartv1.CartService_GetCheckoutSnapshot_FullMethodName,
-}
+var publicMethods []string
 
 func NewServer(
 	logger *slog.Logger,
