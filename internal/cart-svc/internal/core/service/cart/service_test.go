@@ -1275,6 +1275,197 @@ func TestRemoveCartItemRefreshesCacheAfterWrite(t *testing.T) {
 	require.Equal(t, 1, cache.setActiveByUserIDCalls)
 }
 
+func TestGetCheckoutSnapshotReturnsEmptyWhenActiveCartMissing(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	svc := NewCartServiceWithCatalogAndCache(
+		&stubCartRepository{
+			getActiveByUserIDFn: func(_ context.Context, _ uuid.UUID) (domain.Cart, error) {
+				return domain.Cart{}, outbound.ErrCartNotFound
+			},
+		},
+		&stubCartItemRepository{},
+		&stubProductSnapshotRepository{},
+		&stubCatalogReader{},
+		&stubCartCache{},
+		time.Minute,
+	)
+
+	got, err := svc.GetCheckoutSnapshot(context.Background(), userID)
+	require.NoError(t, err)
+	require.Equal(t, userID, got.UserID)
+	require.Equal(t, domain.CartStatusActive, got.Status)
+	require.Empty(t, got.Currency)
+	require.Equal(t, int64(0), got.TotalAmount)
+	require.Len(t, got.Items, 0)
+}
+
+func TestGetCheckoutSnapshotRepricesFromCatalogWithoutMutatingState(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	cartID := uuid.New()
+	now := time.Now().UTC()
+
+	storedItem, err := domain.NewCartItem("SKU-1", "Old name", 2, 500, "USD", now, now)
+	require.NoError(t, err)
+
+	cache := &stubCartCache{
+		getActiveByUserIDFn: func(_ context.Context, _ uuid.UUID) (domain.Cart, bool, error) {
+			return domain.Cart{}, false, nil
+		},
+	}
+
+	svc := NewCartServiceWithCatalogAndCache(
+		&stubCartRepository{
+			getActiveByUserIDFn: func(_ context.Context, _ uuid.UUID) (domain.Cart, error) {
+				return domain.Cart{ID: cartID, UserID: userID, Status: domain.CartStatusActive, Currency: "USD"}, nil
+			},
+		},
+		&stubCartItemRepository{
+			listByCartIDFn: func(_ context.Context, _ uuid.UUID) ([]domain.CartItem, error) {
+				return []domain.CartItem{storedItem}, nil
+			},
+		},
+		&stubProductSnapshotRepository{},
+		&stubCatalogReader{
+			getProductBySKUFn: func(_ context.Context, gotSKU string) (outbound.CatalogProduct, error) {
+				require.Equal(t, "SKU-1", gotSKU)
+				return outbound.CatalogProduct{
+					SKU:         "SKU-1",
+					Name:        "Fresh name",
+					Price:       1250,
+					Currency:    "USD",
+					IsPublished: true,
+				}, nil
+			},
+		},
+		cache,
+		time.Minute,
+	)
+
+	got, err := svc.GetCheckoutSnapshot(context.Background(), userID)
+	require.NoError(t, err)
+	require.Equal(t, userID, got.UserID)
+	require.Equal(t, "USD", got.Currency)
+	require.Equal(t, int64(2500), got.TotalAmount)
+	require.Len(t, got.Items, 1)
+	require.Equal(t, "SKU-1", got.Items[0].SKU)
+	require.Equal(t, "Fresh name", got.Items[0].Name)
+	require.Equal(t, int64(1250), got.Items[0].UnitPrice)
+	require.Equal(t, int64(2500), got.Items[0].LineTotal)
+
+	require.Equal(t, "Old name", storedItem.Name)
+	require.Equal(t, int64(500), storedItem.UnitPrice)
+	require.Equal(t, 0, cache.setActiveByUserIDCalls)
+	require.Equal(t, 0, cache.deleteActiveByUserIDCalls)
+}
+
+func TestGetCheckoutSnapshotFailsWhenCatalogProductUnavailable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		catalog  outbound.CatalogProduct
+		catalogE error
+	}{
+		{
+			name:     "missing product",
+			catalogE: outbound.ErrProductNotFound,
+		},
+		{
+			name: "unpublished product",
+			catalog: outbound.CatalogProduct{
+				SKU:         "SKU-1",
+				Name:        "Hidden",
+				Price:       100,
+				Currency:    "USD",
+				IsPublished: false,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			userID := uuid.New()
+			cartID := uuid.New()
+			now := time.Now().UTC()
+
+			item, err := domain.NewCartItem("SKU-1", "Stored", 1, 50, "USD", now, now)
+			require.NoError(t, err)
+
+			svc := NewCartServiceWithCatalog(
+				&stubCartRepository{
+					getActiveByUserIDFn: func(_ context.Context, _ uuid.UUID) (domain.Cart, error) {
+						return domain.Cart{ID: cartID, UserID: userID, Status: domain.CartStatusActive, Currency: "USD"}, nil
+					},
+				},
+				&stubCartItemRepository{
+					listByCartIDFn: func(_ context.Context, _ uuid.UUID) ([]domain.CartItem, error) {
+						return []domain.CartItem{item}, nil
+					},
+				},
+				&stubProductSnapshotRepository{},
+				&stubCatalogReader{
+					getProductBySKUFn: func(_ context.Context, _ string) (outbound.CatalogProduct, error) {
+						if tt.catalogE != nil {
+							return outbound.CatalogProduct{}, tt.catalogE
+						}
+
+						return tt.catalog, nil
+					},
+				},
+			)
+
+			got, err := svc.GetCheckoutSnapshot(context.Background(), userID)
+			require.ErrorIs(t, err, ErrProductSnapshotNotFound)
+			require.Equal(t, domain.Cart{}, got)
+		})
+	}
+}
+
+func TestGetCheckoutSnapshotWrapsGenericCatalogError(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	cartID := uuid.New()
+	now := time.Now().UTC()
+	catalogErr := errors.New("catalog unavailable")
+
+	item, err := domain.NewCartItem("SKU-1", "Stored", 1, 50, "USD", now, now)
+	require.NoError(t, err)
+
+	svc := NewCartServiceWithCatalog(
+		&stubCartRepository{
+			getActiveByUserIDFn: func(_ context.Context, _ uuid.UUID) (domain.Cart, error) {
+				return domain.Cart{ID: cartID, UserID: userID, Status: domain.CartStatusActive, Currency: "USD"}, nil
+			},
+		},
+		&stubCartItemRepository{
+			listByCartIDFn: func(_ context.Context, _ uuid.UUID) ([]domain.CartItem, error) {
+				return []domain.CartItem{item}, nil
+			},
+		},
+		&stubProductSnapshotRepository{},
+		&stubCatalogReader{
+			getProductBySKUFn: func(_ context.Context, _ string) (outbound.CatalogProduct, error) {
+				return outbound.CatalogProduct{}, catalogErr
+			},
+		},
+	)
+
+	got, err := svc.GetCheckoutSnapshot(context.Background(), userID)
+	require.ErrorContains(t, err, "get product by sku from catalog")
+	require.ErrorIs(t, err, catalogErr)
+	require.Equal(t, domain.Cart{}, got)
+}
+
 type stubCartRepository struct {
 	getActiveByUserIDFn func(ctx context.Context, userID uuid.UUID) (domain.Cart, error)
 	createActiveFn      func(ctx context.Context, userID uuid.UUID, currency string) (domain.Cart, error)
@@ -1387,6 +1578,7 @@ type stubCartCache struct {
 	setActiveByUserIDFn func(ctx context.Context, userID uuid.UUID, cart domain.Cart, ttl time.Duration) error
 	deleteByUserIDFn    func(ctx context.Context, userID uuid.UUID) error
 
+	getActiveByUserIDCalls    int
 	setActiveByUserIDCalls    int
 	deleteActiveByUserIDCalls int
 	lastSetUserID             uuid.UUID
@@ -1396,6 +1588,8 @@ type stubCartCache struct {
 }
 
 func (s *stubCartCache) GetActiveByUserID(ctx context.Context, userID uuid.UUID) (domain.Cart, bool, error) {
+	s.getActiveByUserIDCalls++
+
 	if s.getActiveByUserIDFn == nil {
 		return domain.Cart{}, false, nil
 	}

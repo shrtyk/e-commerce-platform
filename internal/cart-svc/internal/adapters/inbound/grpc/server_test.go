@@ -68,12 +68,12 @@ func TestServerAuthInterceptor(t *testing.T) {
 			wantVerifyHit: false,
 		},
 		{
-			name: "public checkout snapshot bypasses auth and stays unimplemented",
-			call: func(ctx context.Context, client cartv1.CartServiceClient, _ string) error {
-				_, err := client.GetCheckoutSnapshot(ctx, &cartv1.GetCheckoutSnapshotRequest{})
+			name: "checkout snapshot requires auth",
+			call: func(ctx context.Context, client cartv1.CartServiceClient, userID string) error {
+				_, err := client.GetCheckoutSnapshot(ctx, &cartv1.GetCheckoutSnapshotRequest{UserId: userID})
 				return err
 			},
-			expectedCode:  codes.Unimplemented,
+			expectedCode:  codes.Unauthenticated,
 			wantVerifyHit: false,
 		},
 		{
@@ -134,6 +134,9 @@ func newGRPCHarness(t *testing.T) *grpcHarness {
 			return testDomainCart(userID), nil
 		},
 		removeCartItemFn: func(context.Context, cart.RemoveCartItemInput) (domain.Cart, error) {
+			return testDomainCart(userID), nil
+		},
+		getCheckoutSnapshotFn: func(context.Context, uuid.UUID) (domain.Cart, error) {
 			return testDomainCart(userID), nil
 		},
 	}

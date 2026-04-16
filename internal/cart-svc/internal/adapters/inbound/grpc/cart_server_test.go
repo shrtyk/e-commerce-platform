@@ -243,17 +243,104 @@ func TestCartServerMutatingMethodsUserIDMismatch(t *testing.T) {
 	}
 }
 
-func TestGetCheckoutSnapshotUnimplemented(t *testing.T) {
-	server := NewCartServer(&fakeCartService{}, newTestLogger())
-	_, err := server.GetCheckoutSnapshot(context.Background(), &cartv1.GetCheckoutSnapshotRequest{})
-	require.Equal(t, codes.Unimplemented, status.Code(err))
+func TestGetCheckoutSnapshot(t *testing.T) {
+	userID := uuid.New()
+
+	tests := []struct {
+		name         string
+		ctx          context.Context
+		request      *cartv1.GetCheckoutSnapshotRequest
+		setup        func(*fakeCartService)
+		expectedCode codes.Code
+	}{
+		{
+			name:         "missing auth claims",
+			ctx:          context.Background(),
+			request:      &cartv1.GetCheckoutSnapshotRequest{UserId: userID.String()},
+			expectedCode: codes.Unauthenticated,
+		},
+		{
+			name:         "invalid user id",
+			ctx:          withClaims(userID),
+			request:      &cartv1.GetCheckoutSnapshotRequest{UserId: "bad-uuid"},
+			expectedCode: codes.InvalidArgument,
+		},
+		{
+			name:         "request user mismatch",
+			ctx:          withClaims(userID),
+			request:      &cartv1.GetCheckoutSnapshotRequest{UserId: uuid.NewString()},
+			expectedCode: codes.PermissionDenied,
+		},
+		{
+			name:    "checkout product missing",
+			ctx:     withClaims(userID),
+			request: &cartv1.GetCheckoutSnapshotRequest{UserId: userID.String()},
+			setup: func(svc *fakeCartService) {
+				svc.getCheckoutSnapshotFn = func(context.Context, uuid.UUID) (domain.Cart, error) {
+					return domain.Cart{}, cart.ErrProductSnapshotNotFound
+				}
+			},
+			expectedCode: codes.NotFound,
+		},
+		{
+			name:    "checkout unexpected internal error",
+			ctx:     withClaims(userID),
+			request: &cartv1.GetCheckoutSnapshotRequest{UserId: userID.String()},
+			setup: func(svc *fakeCartService) {
+				svc.getCheckoutSnapshotFn = func(context.Context, uuid.UUID) (domain.Cart, error) {
+					return domain.Cart{}, errors.New("storage down")
+				}
+			},
+			expectedCode: codes.Internal,
+		},
+		{
+			name:    "success",
+			ctx:     withClaims(userID),
+			request: &cartv1.GetCheckoutSnapshotRequest{UserId: userID.String()},
+			setup: func(svc *fakeCartService) {
+				svc.getCheckoutSnapshotFn = func(_ context.Context, gotUserID uuid.UUID) (domain.Cart, error) {
+					require.Equal(t, userID, gotUserID)
+					return testDomainCart(userID), nil
+				}
+			},
+			expectedCode: codes.OK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &fakeCartService{}
+			if tt.setup != nil {
+				tt.setup(svc)
+			}
+
+			server := NewCartServer(svc, newTestLogger())
+			response, err := server.GetCheckoutSnapshot(tt.ctx, tt.request)
+			requireCode(t, err, tt.expectedCode)
+
+			if tt.expectedCode != codes.OK {
+				require.Nil(t, response)
+				return
+			}
+
+			require.NotNil(t, response)
+			require.Equal(t, userID.String(), response.GetSnapshot().GetUserId())
+			require.Equal(t, int64(2000), response.GetSnapshot().GetTotalAmount().GetAmount())
+			require.Len(t, response.GetSnapshot().GetItems(), 1)
+			require.Equal(t, "SKU-1", response.GetSnapshot().GetItems()[0].GetSku())
+			require.Equal(t, "Product", response.GetSnapshot().GetItems()[0].GetName())
+			require.Equal(t, int64(1000), response.GetSnapshot().GetItems()[0].GetUnitPrice().GetAmount())
+			require.Equal(t, int64(2000), response.GetSnapshot().GetItems()[0].GetLineTotal().GetAmount())
+		})
+	}
 }
 
 type fakeCartService struct {
-	getActiveCartFn  func(ctx context.Context, userID uuid.UUID) (domain.Cart, error)
-	addCartItemFn    func(ctx context.Context, input cart.AddCartItemInput) (domain.Cart, error)
-	updateCartItemFn func(ctx context.Context, input cart.UpdateCartItemInput) (domain.Cart, error)
-	removeCartItemFn func(ctx context.Context, input cart.RemoveCartItemInput) (domain.Cart, error)
+	getActiveCartFn       func(ctx context.Context, userID uuid.UUID) (domain.Cart, error)
+	addCartItemFn         func(ctx context.Context, input cart.AddCartItemInput) (domain.Cart, error)
+	updateCartItemFn      func(ctx context.Context, input cart.UpdateCartItemInput) (domain.Cart, error)
+	removeCartItemFn      func(ctx context.Context, input cart.RemoveCartItemInput) (domain.Cart, error)
+	getCheckoutSnapshotFn func(ctx context.Context, userID uuid.UUID) (domain.Cart, error)
 }
 
 func (s *fakeCartService) GetActiveCart(ctx context.Context, userID uuid.UUID) (domain.Cart, error) {
@@ -286,6 +373,14 @@ func (s *fakeCartService) RemoveCartItem(ctx context.Context, input cart.RemoveC
 	}
 
 	return s.removeCartItemFn(ctx, input)
+}
+
+func (s *fakeCartService) GetCheckoutSnapshot(ctx context.Context, userID uuid.UUID) (domain.Cart, error) {
+	if s.getCheckoutSnapshotFn == nil {
+		return domain.Cart{}, nil
+	}
+
+	return s.getCheckoutSnapshotFn(ctx, userID)
 }
 
 func withClaims(userID uuid.UUID) context.Context {
