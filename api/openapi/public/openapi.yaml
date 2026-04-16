@@ -186,13 +186,17 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /v1/cart/items/{cartItemId}:
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/cart/items/{sku}:
     patch:
       tags: [Cart]
       operationId: updateCartItem
       summary: Update cart item quantity
       parameters:
-        - $ref: '#/components/parameters/CartItemId'
+        - $ref: '#/components/parameters/Sku'
       requestBody:
         required: true
         content:
@@ -212,19 +216,27 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
     delete:
       tags: [Cart]
       operationId: removeCartItem
       summary: Remove item from cart
       parameters:
-        - $ref: '#/components/parameters/CartItemId'
+        - $ref: '#/components/parameters/Sku'
       responses:
-        '204':
-          description: Item removed
+        '200':
+          description: Updated cart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/orders:
     post:
       tags: [Orders]
@@ -278,12 +290,13 @@ components:
       required: true
       schema:
         type: string
-    CartItemId:
-      name: cartItemId
+    Sku:
+      name: sku
       in: path
       required: true
       schema:
         type: string
+        minLength: 1
     OrderId:
       name: orderId
       in: path
@@ -439,11 +452,9 @@ components:
             $ref: '#/components/schemas/Product'
     CartItem:
       type: object
-      required: [cartItemId, productId, quantity, unitPrice, lineTotal]
+      required: [sku, quantity, unitPrice, lineTotal]
       properties:
-        cartItemId:
-          type: string
-        productId:
+        sku:
           type: string
         quantity:
           type: integer
@@ -457,8 +468,6 @@ components:
         currency:
           type: string
         name:
-          type: string
-        sku:
           type: string
     Cart:
       type: object
@@ -482,9 +491,9 @@ components:
           minimum: 0
     AddCartItemRequest:
       type: object
-      required: [productId, quantity]
+      required: [sku, quantity]
       properties:
-        productId:
+        sku:
           type: string
           minLength: 1
           x-oapi-codegen-extra-tags:
