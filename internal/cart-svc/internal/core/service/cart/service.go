@@ -2,6 +2,7 @@ package cart
 
 import (
 	"errors"
+	"time"
 
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/core/ports/outbound"
 )
@@ -11,14 +12,18 @@ type CartService struct {
 	items     outbound.CartItemRepository
 	snapshots outbound.ProductSnapshotRepository
 	catalog   outbound.CatalogReader
+	cache     outbound.CartCache
+	cacheTTL  time.Duration
 }
+
+const defaultActiveCartCacheTTL = 5 * time.Minute
 
 func NewCartService(
 	carts outbound.CartRepository,
 	items outbound.CartItemRepository,
 	snapshots outbound.ProductSnapshotRepository,
 ) *CartService {
-	return NewCartServiceWithCatalog(carts, items, snapshots, nil)
+	return NewCartServiceWithCatalogAndCache(carts, items, snapshots, nil, nil, 0)
 }
 
 func NewCartServiceWithCatalog(
@@ -27,11 +32,28 @@ func NewCartServiceWithCatalog(
 	snapshots outbound.ProductSnapshotRepository,
 	catalog outbound.CatalogReader,
 ) *CartService {
+	return NewCartServiceWithCatalogAndCache(carts, items, snapshots, catalog, nil, 0)
+}
+
+func NewCartServiceWithCatalogAndCache(
+	carts outbound.CartRepository,
+	items outbound.CartItemRepository,
+	snapshots outbound.ProductSnapshotRepository,
+	catalog outbound.CatalogReader,
+	cache outbound.CartCache,
+	cacheTTL time.Duration,
+) *CartService {
+	if cacheTTL <= 0 {
+		cacheTTL = defaultActiveCartCacheTTL
+	}
+
 	return &CartService{
 		carts:     carts,
 		items:     items,
 		snapshots: snapshots,
 		catalog:   catalog,
+		cache:     cache,
+		cacheTTL:  cacheTTL,
 	}
 }
 
