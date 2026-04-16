@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -40,10 +41,8 @@ func HasAnyRole(role Role, allowed ...Role) bool {
 		return true
 	}
 
-	for _, current := range allowed {
-		if role == current {
-			return true
-		}
+	if slices.Contains(allowed, role) {
+		return true
 	}
 
 	return false

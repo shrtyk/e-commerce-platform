@@ -15,16 +15,13 @@ import (
 )
 
 var publicMethods = []string{
-	cartv1.CartService_GetActiveCart_FullMethodName,
-	cartv1.CartService_AddCartItem_FullMethodName,
-	cartv1.CartService_UpdateCartItem_FullMethodName,
-	cartv1.CartService_RemoveCartItem_FullMethodName,
 	cartv1.CartService_GetCheckoutSnapshot_FullMethodName,
 }
 
 func NewServer(
 	logger *slog.Logger,
 	serviceName string,
+	cartService cartService,
 	tokenVerifier httpcommon.TokenVerifier,
 	tracer trace.Tracer,
 ) *grpcpkg.Server {
@@ -49,7 +46,7 @@ func NewServer(
 		),
 	)
 
-	cartv1.RegisterCartServiceServer(server, NewCartServer(logger))
+	cartv1.RegisterCartServiceServer(server, NewCartServer(cartService, logger))
 
 	return server
 }
