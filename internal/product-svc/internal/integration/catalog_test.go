@@ -35,7 +35,8 @@ func TestGetProductReturnsProductAndStock(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			testhelper.CleanupDB(t, testhelper.TestDB)
+			harness := testhelper.IntegrationHarness(t)
+			testhelper.CleanupDB(t, harness.DB)
 			stack := newCatalogStack(t)
 
 			created := createProductViaService(t, stack, domain.ProductStatusPublished, 12)
@@ -61,7 +62,8 @@ func TestGetProductReturnsProductAndStock(t *testing.T) {
 
 func TestGetProductReturnsNotFound(t *testing.T) {
 	uuid := uuid.NewString()
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newCatalogStack(t)
 
 	httpErr := getProductHTTPError(t, stack, uuid, http.StatusNotFound)
@@ -74,7 +76,8 @@ func TestGetProductReturnsNotFound(t *testing.T) {
 }
 
 func TestGetProductRejectsBadUUID(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newCatalogStack(t)
 
 	httpErr := getProductHTTPError(t, stack, "not-a-uuid", http.StatusBadRequest)
@@ -82,7 +85,8 @@ func TestGetProductRejectsBadUUID(t *testing.T) {
 }
 
 func TestGetProductBySKUReturnsProduct(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newCatalogStack(t)
 
 	created := createProductViaService(t, stack, domain.ProductStatusPublished, 5)
@@ -100,7 +104,8 @@ func TestGetProductBySKUReturnsProduct(t *testing.T) {
 }
 
 func TestGetProductBySKUReturnsNotFound(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newCatalogStack(t)
 
 	grpcClient := catalogv1.NewCatalogServiceClient(stack.GRPCConn)
@@ -110,7 +115,8 @@ func TestGetProductBySKUReturnsNotFound(t *testing.T) {
 }
 
 func TestListPublishedProductsReturnsOnlyPublished(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newCatalogStack(t)
 
 	draft := createProductViaService(t, stack, domain.ProductStatusDraft, 5)
@@ -134,7 +140,8 @@ func TestReserveStockViaGRPC(t *testing.T) {
 	var initialQuantity int32 = 10
 	var reserveQuantity int32 = 4
 
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newCatalogStack(t)
 
 	created := createProductViaService(t, stack, domain.ProductStatusPublished, initialQuantity)
@@ -159,7 +166,8 @@ func TestReserveStockRejectsInsufficient(t *testing.T) {
 	var initialQuantity int32 = 2
 	var reserveQuantity int32 = 3
 
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newCatalogStack(t)
 
 	created := createProductViaService(t, stack, domain.ProductStatusPublished, initialQuantity)
@@ -183,7 +191,7 @@ func TestReserveStockRejectsInsufficient(t *testing.T) {
 func newCatalogStack(t *testing.T) *testhelper.TestStack {
 	t.Helper()
 
-	return testhelper.NewTestStack(t, testhelper.TestDB)
+	return testhelper.NewTestStack(t, testhelper.IntegrationHarness(t).DB)
 }
 
 func createProductViaService(

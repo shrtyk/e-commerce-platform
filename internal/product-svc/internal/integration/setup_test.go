@@ -11,11 +11,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	db := testhelper.StartSharedTestDB(nil)
-	testhelper.TestDB = db
+	testhelper.StartSharedHarness(nil)
 
 	code := m.Run()
-	testhelper.StopSharedTestDB()
+	testhelper.StopSharedHarness()
 
 	os.Exit(code)
 }
