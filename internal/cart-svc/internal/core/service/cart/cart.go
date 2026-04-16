@@ -271,6 +271,80 @@ func (s *CartService) RemoveCartItem(ctx context.Context, input RemoveCartItemIn
 	return authoritativeCart, nil
 }
 
+func (s *CartService) GetCheckoutSnapshot(ctx context.Context, userID uuid.UUID) (domain.Cart, error) {
+	if userID == uuid.Nil {
+		return domain.Cart{}, ErrInvalidUserID
+	}
+
+	cart, err := s.loadActiveCartFromStorage(ctx, userID)
+	if err != nil {
+		if errors.Is(err, outbound.ErrCartNotFound) {
+			return s.newEmptyActiveCart(userID), nil
+		}
+
+		return domain.Cart{}, err
+	}
+
+	repriced, err := s.repriceCheckoutSnapshot(ctx, cart)
+	if err != nil {
+		return domain.Cart{}, err
+	}
+
+	return repriced, nil
+}
+
+func (s *CartService) repriceCheckoutSnapshot(ctx context.Context, stored domain.Cart) (domain.Cart, error) {
+	if s.catalog == nil {
+		return domain.Cart{}, fmt.Errorf("catalog reader is not configured")
+	}
+
+	repriced := stored
+	repriced.Items = make([]domain.CartItem, 0, len(stored.Items))
+
+	for i := range stored.Items {
+		storedItem := stored.Items[i]
+
+		product, err := s.catalog.GetProductBySKU(ctx, storedItem.SKU)
+		if err != nil {
+			if errors.Is(err, outbound.ErrProductNotFound) {
+				return domain.Cart{}, ErrProductSnapshotNotFound
+			}
+
+			return domain.Cart{}, fmt.Errorf("get product by sku from catalog: %w", err)
+		}
+
+		if !product.IsPublished {
+			return domain.Cart{}, ErrProductSnapshotNotFound
+		}
+
+		repricedItem, err := domain.NewCartItem(
+			storedItem.SKU,
+			product.Name,
+			storedItem.Quantity,
+			product.Price,
+			product.Currency,
+			storedItem.CreatedAt,
+			storedItem.UpdatedAt,
+		)
+		if err != nil {
+			return domain.Cart{}, fmt.Errorf("create repriced cart item: %w", err)
+		}
+
+		repriced.Items = append(repriced.Items, repricedItem)
+	}
+
+	if len(repriced.Items) > 0 {
+		repriced.Currency = repriced.Items[0].Currency
+	}
+
+	recalculated, err := repriced.RecalculateTotals()
+	if err != nil {
+		return domain.Cart{}, fmt.Errorf("recalculate checkout snapshot totals: %w", err)
+	}
+
+	return recalculated, nil
+}
+
 func (s *CartService) ensureActiveCart(ctx context.Context, userID uuid.UUID, currency string) (domain.Cart, error) {
 	cart, err := s.carts.GetActiveByUserID(ctx, userID)
 	if err == nil {
