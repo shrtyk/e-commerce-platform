@@ -20,6 +20,7 @@ import (
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/outbound/catalog/grpc"
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/outbound/postgres/repos"
 	reposqlc "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/outbound/postgres/sqlc"
+	adapterredis "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/outbound/redis"
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/config"
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/core/ports/outbound"
@@ -72,7 +73,7 @@ func NewApplication(
 	}
 
 	if app.CartService == nil {
-		app.CartService = buildCartService(app.Database, app.CatalogConn)
+		app.CartService = buildCartService(app.Config, app.Database, app.Redis, app.CatalogConn)
 	}
 
 	return app
@@ -108,7 +109,7 @@ func WithCartService(service *cart.CartService) option {
 	}
 }
 
-func buildCartService(db *sql.DB, catalogConn *grpcpkg.ClientConn) *cart.CartService {
+func buildCartService(cfg *config.Config, db *sql.DB, redisClient *redislib.Client, catalogConn *grpcpkg.ClientConn) *cart.CartService {
 	if db == nil {
 		return nil
 	}
@@ -117,14 +118,28 @@ func buildCartService(db *sql.DB, catalogConn *grpcpkg.ClientConn) *cart.CartSer
 	itemRepo := &cartItemRepositoryAdapter{repo: repos.NewCartItemRepository(db)}
 	snapshotRepo := &productSnapshotRepositoryAdapter{repo: repos.NewProductSnapshotRepository(db)}
 
+	var (
+		catalogReader outbound.CatalogReader
+		cache         outbound.CartCache
+		cacheTTL      time.Duration
+	)
+
+	if cfg != nil {
+		cacheTTL = cfg.Cache.ActiveCartTTL
+	}
+
+	if redisClient != nil {
+		cache = adapterredis.NewCartCache(redisClient)
+	}
+
 	if catalogConn == nil {
-		return cart.NewCartService(cartRepo, itemRepo, snapshotRepo)
+		return cart.NewCartServiceWithCatalogAndCache(cartRepo, itemRepo, snapshotRepo, catalogReader, cache, cacheTTL)
 	}
 
 	catalogClient := catalogv1.NewCatalogServiceClient(catalogConn)
-	catalogReader := adaptergrpc.NewCatalogReader(catalogClient)
+	catalogReader = adaptergrpc.NewCatalogReader(catalogClient)
 
-	return cart.NewCartServiceWithCatalog(cartRepo, itemRepo, snapshotRepo, catalogReader)
+	return cart.NewCartServiceWithCatalogAndCache(cartRepo, itemRepo, snapshotRepo, catalogReader, cache, cacheTTL)
 }
 
 type cartRepositoryAdapter struct {
