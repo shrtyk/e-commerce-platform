@@ -14,6 +14,7 @@ service OrderService {
 message CreateOrderRequest {
   string user_id = 1;
   string payment_method = 2;
+  string idempotency_key = 3;
 }
 
 message CreateOrderResponse {

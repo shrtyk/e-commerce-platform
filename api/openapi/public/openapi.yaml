@@ -242,6 +242,23 @@ paths:
       tags: [Orders]
       operationId: createOrder
       summary: Checkout active cart and create order
+      description: |
+        Performs checkout for the authenticated user.
+
+        Idempotency contract:
+        - `Idempotency-Key` header is required, non-empty, max length 255.
+        - Same authenticated user + same idempotency key + same logical request payload returns the same logical checkout result.
+        - Reusing the same key with a different logical payload is rejected.
+
+        gRPC error mapping contract for internal `OrderService/CreateOrder`:
+        - `INVALID_ARGUMENT` → `CheckoutErrorCode.INVALID_ARGUMENT`
+        - `NOT_FOUND` → `CheckoutErrorCode.CART_NOT_FOUND` or `CheckoutErrorCode.SKU_NOT_FOUND`
+        - `FAILED_PRECONDITION` → `CheckoutErrorCode.CART_EMPTY`
+        - `ABORTED` → `CheckoutErrorCode.STOCK_UNAVAILABLE`, `CheckoutErrorCode.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD`, or `CheckoutErrorCode.CONFLICT`
+        - `PERMISSION_DENIED` → `CheckoutErrorCode.PAYMENT_DECLINED`
+        - `INTERNAL` → `CheckoutErrorCode.INTERNAL`
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -256,9 +273,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/Order'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/CheckoutBadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/CheckoutNotFound'
+        '409':
+          $ref: '#/components/responses/CheckoutConflict'
+        '500':
+          $ref: '#/components/responses/CheckoutInternalServerError'
   /v1/orders/{orderId}:
     get:
       tags: [Orders]
@@ -303,6 +326,19 @@ components:
       required: true
       schema:
         type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Required key for checkout request de-duplication.
+        Must be non-empty and at most 255 characters.
+        Same authenticated user + same key + same logical request payload must resolve to the same logical checkout result.
+        Same authenticated user + same key + different logical request payload must be rejected.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
   responses:
     BadRequest:
       description: Request validation failed
@@ -328,7 +364,54 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    CheckoutBadRequest:
+      description: "Checkout request validation failed. ErrorResponse.code: INVALID_ARGUMENT"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckoutErrorResponse'
+    CheckoutNotFound:
+      description: "Checkout related resource not found. ErrorResponse.code: CART_NOT_FOUND or SKU_NOT_FOUND"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckoutErrorResponse'
+    CheckoutConflict:
+      description: "Checkout conflict. ErrorResponse.code: CART_EMPTY, STOCK_UNAVAILABLE, IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD, CONFLICT, PAYMENT_DECLINED"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckoutErrorResponse'
+    CheckoutInternalServerError:
+      description: "Checkout internal failure. ErrorResponse.code: INTERNAL"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckoutErrorResponse'
   schemas:
+    CheckoutErrorCode:
+      type: string
+      description: Canonical checkout error code set mapped from ecommerce.order.v1.CheckoutErrorCode.
+      enum:
+        - INVALID_ARGUMENT
+        - CART_NOT_FOUND
+        - CART_EMPTY
+        - SKU_NOT_FOUND
+        - STOCK_UNAVAILABLE
+        - PAYMENT_DECLINED
+        - IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD
+        - CONFLICT
+        - INTERNAL
+    CheckoutErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/CheckoutErrorCode'
+        message:
+          type: string
+        correlationId:
+          type: string
     ErrorResponse:
       type: object
       required: [code, message]
@@ -524,7 +607,7 @@ components:
             validate: "omitempty,min=1,max=50"
     OrderItem:
       type: object
-      required: [productId, quantity, unitPrice, lineTotal]
+      required: [sku, quantity, unitPrice, lineTotal]
       properties:
         productId:
           type: string

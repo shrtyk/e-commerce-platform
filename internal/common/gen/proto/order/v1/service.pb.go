@@ -25,8 +25,14 @@ type CreateOrderRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	PaymentMethod string                 `protobuf:"bytes,2,opt,name=payment_method,json=paymentMethod,proto3" json:"payment_method,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Required idempotency key for checkout request de-duplication.
+	// Must be non-empty and at most 255 bytes.
+	// Same user_id + idempotency_key + same logical payload should resolve to
+	// the same logical checkout result.
+	// Same user_id + idempotency_key + different logical payload must be rejected.
+	IdempotencyKey string `protobuf:"bytes,3,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *CreateOrderRequest) Reset() {
@@ -69,6 +75,13 @@ func (x *CreateOrderRequest) GetUserId() string {
 func (x *CreateOrderRequest) GetPaymentMethod() string {
 	if x != nil {
 		return x.PaymentMethod
+	}
+	return ""
+}
+
+func (x *CreateOrderRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
 	}
 	return ""
 }
@@ -217,10 +230,11 @@ var File_order_v1_service_proto protoreflect.FileDescriptor
 
 const file_order_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x16order/v1/service.proto\x12\x12ecommerce.order.v1\x1a\x14order/v1/types.proto\"T\n" +
+	"\x16order/v1/service.proto\x12\x12ecommerce.order.v1\x1a\x14order/v1/types.proto\"}\n" +
 	"\x12CreateOrderRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12%\n" +
-	"\x0epayment_method\x18\x02 \x01(\tR\rpaymentMethod\"F\n" +
+	"\x0epayment_method\x18\x02 \x01(\tR\rpaymentMethod\x12'\n" +
+	"\x0fidempotency_key\x18\x03 \x01(\tR\x0eidempotencyKey\"F\n" +
 	"\x13CreateOrderResponse\x12/\n" +
 	"\x05order\x18\x01 \x01(\v2\x19.ecommerce.order.v1.OrderR\x05order\"E\n" +
 	"\x0fGetOrderRequest\x12\x19\n" +

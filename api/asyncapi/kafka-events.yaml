@@ -327,32 +327,52 @@ components:
           type: integer
     OrderItemPayload:
       type: object
+      required:
+        - orderItemId
+        - sku
+        - quantity
+        - unitPrice
+        - lineTotal
       properties:
+        orderItemId:
+          type: string
+          description: Canonical order item identity key aligned with protobuf order_item_id semantics.
         productId:
           type: string
+          description: Optional product aggregate identifier snapshot; not canonical for item identity.
         sku:
           type: string
+          description: Non-canonical product reference snapshot (merchant SKU) captured at order time; use orderItemId as the canonical item identity.
         name:
           type: string
         quantity:
           type: integer
         unitPrice:
-          type: integer
+          $ref: '#/components/schemas/Money'
         lineTotal:
-          type: integer
+          $ref: '#/components/schemas/Money'
     OrderPayload:
       type: object
       properties:
+        metadata:
+          $ref: '#/components/schemas/EventMetadata'
         orderId:
           type: string
         userId:
           type: string
         status:
           type: string
+          description: Order status mapped from ecommerce.order.v1.OrderStatus.
+          enum:
+            - pending
+            - awaiting_stock
+            - awaiting_payment
+            - confirmed
+            - cancelled
         currency:
           type: string
         totalAmount:
-          type: integer
+          $ref: '#/components/schemas/Money'
         items:
           type: array
           items:
@@ -360,28 +380,46 @@ components:
     OrderResultPayload:
       type: object
       properties:
+        metadata:
+          $ref: '#/components/schemas/EventMetadata'
         orderId:
           type: string
         userId:
           type: string
         status:
           type: string
+          description: Order status mapped from ecommerce.order.v1.OrderStatus.
+          enum:
+            - pending
+            - awaiting_stock
+            - awaiting_payment
+            - confirmed
+            - cancelled
         currency:
           type: string
         totalAmount:
-          type: integer
+          $ref: '#/components/schemas/Money'
         confirmedAt:
           type: string
           format: date-time
     OrderCancelledPayload:
       type: object
       properties:
+        metadata:
+          $ref: '#/components/schemas/EventMetadata'
         orderId:
           type: string
         userId:
           type: string
         status:
           type: string
+          description: Order status mapped from ecommerce.order.v1.OrderStatus.
+          enum:
+            - pending
+            - awaiting_stock
+            - awaiting_payment
+            - confirmed
+            - cancelled
         cancelReasonCode:
           type: string
         cancelReasonMessage:
@@ -392,6 +430,8 @@ components:
     PaymentPayload:
       type: object
       properties:
+        metadata:
+          $ref: '#/components/schemas/EventMetadata'
         paymentAttemptId:
           type: string
         orderId:
@@ -399,14 +439,14 @@ components:
         status:
           type: string
         amount:
-          type: integer
-        currency:
-          type: string
+          $ref: '#/components/schemas/Money'
         providerName:
           type: string
     PaymentResultPayload:
       type: object
       properties:
+        metadata:
+          $ref: '#/components/schemas/EventMetadata'
         paymentAttemptId:
           type: string
         orderId:
@@ -414,9 +454,7 @@ components:
         status:
           type: string
         amount:
-          type: integer
-        currency:
-          type: string
+          $ref: '#/components/schemas/Money'
         providerName:
           type: string
         providerReference:
@@ -427,6 +465,8 @@ components:
     PaymentFailedPayload:
       type: object
       properties:
+        metadata:
+          $ref: '#/components/schemas/EventMetadata'
         paymentAttemptId:
           type: string
         orderId:
@@ -434,9 +474,7 @@ components:
         status:
           type: string
         amount:
-          type: integer
-        currency:
-          type: string
+          $ref: '#/components/schemas/Money'
         providerName:
           type: string
         failureCode:
@@ -497,3 +535,28 @@ components:
         failedAt:
           type: string
           format: date-time
+    EventMetadata:
+      type: object
+      properties:
+        eventId:
+          type: string
+        eventName:
+          type: string
+        producer:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        correlationId:
+          type: string
+        causationId:
+          type: string
+        schemaVersion:
+          type: string
+    Money:
+      type: object
+      properties:
+        amount:
+          type: integer
+        currency:
+          type: string

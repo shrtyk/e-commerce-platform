@@ -80,6 +80,76 @@ func (OrderStatus) EnumDescriptor() ([]byte, []int) {
 	return file_order_v1_types_proto_rawDescGZIP(), []int{0}
 }
 
+type CheckoutErrorCode int32
+
+const (
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_UNSPECIFIED                                   CheckoutErrorCode = 0
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_INVALID_ARGUMENT                              CheckoutErrorCode = 1
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_CART_NOT_FOUND                                CheckoutErrorCode = 2
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_CART_EMPTY                                    CheckoutErrorCode = 3
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_SKU_NOT_FOUND                                 CheckoutErrorCode = 4
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_STOCK_UNAVAILABLE                             CheckoutErrorCode = 5
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_PAYMENT_DECLINED                              CheckoutErrorCode = 6
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD CheckoutErrorCode = 7
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_CONFLICT                                      CheckoutErrorCode = 8
+	CheckoutErrorCode_CHECKOUT_ERROR_CODE_INTERNAL                                      CheckoutErrorCode = 9
+)
+
+// Enum value maps for CheckoutErrorCode.
+var (
+	CheckoutErrorCode_name = map[int32]string{
+		0: "CHECKOUT_ERROR_CODE_UNSPECIFIED",
+		1: "CHECKOUT_ERROR_CODE_INVALID_ARGUMENT",
+		2: "CHECKOUT_ERROR_CODE_CART_NOT_FOUND",
+		3: "CHECKOUT_ERROR_CODE_CART_EMPTY",
+		4: "CHECKOUT_ERROR_CODE_SKU_NOT_FOUND",
+		5: "CHECKOUT_ERROR_CODE_STOCK_UNAVAILABLE",
+		6: "CHECKOUT_ERROR_CODE_PAYMENT_DECLINED",
+		7: "CHECKOUT_ERROR_CODE_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD",
+		8: "CHECKOUT_ERROR_CODE_CONFLICT",
+		9: "CHECKOUT_ERROR_CODE_INTERNAL",
+	}
+	CheckoutErrorCode_value = map[string]int32{
+		"CHECKOUT_ERROR_CODE_UNSPECIFIED":                                   0,
+		"CHECKOUT_ERROR_CODE_INVALID_ARGUMENT":                              1,
+		"CHECKOUT_ERROR_CODE_CART_NOT_FOUND":                                2,
+		"CHECKOUT_ERROR_CODE_CART_EMPTY":                                    3,
+		"CHECKOUT_ERROR_CODE_SKU_NOT_FOUND":                                 4,
+		"CHECKOUT_ERROR_CODE_STOCK_UNAVAILABLE":                             5,
+		"CHECKOUT_ERROR_CODE_PAYMENT_DECLINED":                              6,
+		"CHECKOUT_ERROR_CODE_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD": 7,
+		"CHECKOUT_ERROR_CODE_CONFLICT":                                      8,
+		"CHECKOUT_ERROR_CODE_INTERNAL":                                      9,
+	}
+)
+
+func (x CheckoutErrorCode) Enum() *CheckoutErrorCode {
+	p := new(CheckoutErrorCode)
+	*p = x
+	return p
+}
+
+func (x CheckoutErrorCode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CheckoutErrorCode) Descriptor() protoreflect.EnumDescriptor {
+	return file_order_v1_types_proto_enumTypes[1].Descriptor()
+}
+
+func (CheckoutErrorCode) Type() protoreflect.EnumType {
+	return &file_order_v1_types_proto_enumTypes[1]
+}
+
+func (x CheckoutErrorCode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CheckoutErrorCode.Descriptor instead.
+func (CheckoutErrorCode) EnumDescriptor() ([]byte, []int) {
+	return file_order_v1_types_proto_rawDescGZIP(), []int{1}
+}
+
 type OrderItem struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	OrderItemId   string                 `protobuf:"bytes,1,opt,name=order_item_id,json=orderItemId,proto3" json:"order_item_id,omitempty"`
@@ -285,7 +355,18 @@ const file_order_v1_types_proto_rawDesc = "" +
 	"\x1bORDER_STATUS_AWAITING_STOCK\x10\x02\x12!\n" +
 	"\x1dORDER_STATUS_AWAITING_PAYMENT\x10\x03\x12\x1a\n" +
 	"\x16ORDER_STATUS_CONFIRMED\x10\x04\x12\x1a\n" +
-	"\x16ORDER_STATUS_CANCELLED\x10\x05BRZPgithub.com/shrtyk/e-commerce-platform/internal/common/gen/proto/order/v1;orderv1b\x06proto3"
+	"\x16ORDER_STATUS_CANCELLED\x10\x05*\xb5\x03\n" +
+	"\x11CheckoutErrorCode\x12#\n" +
+	"\x1fCHECKOUT_ERROR_CODE_UNSPECIFIED\x10\x00\x12(\n" +
+	"$CHECKOUT_ERROR_CODE_INVALID_ARGUMENT\x10\x01\x12&\n" +
+	"\"CHECKOUT_ERROR_CODE_CART_NOT_FOUND\x10\x02\x12\"\n" +
+	"\x1eCHECKOUT_ERROR_CODE_CART_EMPTY\x10\x03\x12%\n" +
+	"!CHECKOUT_ERROR_CODE_SKU_NOT_FOUND\x10\x04\x12)\n" +
+	"%CHECKOUT_ERROR_CODE_STOCK_UNAVAILABLE\x10\x05\x12(\n" +
+	"$CHECKOUT_ERROR_CODE_PAYMENT_DECLINED\x10\x06\x12E\n" +
+	"ACHECKOUT_ERROR_CODE_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD\x10\a\x12 \n" +
+	"\x1cCHECKOUT_ERROR_CODE_CONFLICT\x10\b\x12 \n" +
+	"\x1cCHECKOUT_ERROR_CODE_INTERNAL\x10\tBRZPgithub.com/shrtyk/e-commerce-platform/internal/common/gen/proto/order/v1;orderv1b\x06proto3"
 
 var (
 	file_order_v1_types_proto_rawDescOnce sync.Once
@@ -299,20 +380,21 @@ func file_order_v1_types_proto_rawDescGZIP() []byte {
 	return file_order_v1_types_proto_rawDescData
 }
 
-var file_order_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_order_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_order_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_order_v1_types_proto_goTypes = []any{
-	(OrderStatus)(0),  // 0: ecommerce.order.v1.OrderStatus
-	(*OrderItem)(nil), // 1: ecommerce.order.v1.OrderItem
-	(*Order)(nil),     // 2: ecommerce.order.v1.Order
-	(*v1.Money)(nil),  // 3: ecommerce.common.v1.Money
+	(OrderStatus)(0),       // 0: ecommerce.order.v1.OrderStatus
+	(CheckoutErrorCode)(0), // 1: ecommerce.order.v1.CheckoutErrorCode
+	(*OrderItem)(nil),      // 2: ecommerce.order.v1.OrderItem
+	(*Order)(nil),          // 3: ecommerce.order.v1.Order
+	(*v1.Money)(nil),       // 4: ecommerce.common.v1.Money
 }
 var file_order_v1_types_proto_depIdxs = []int32{
-	3, // 0: ecommerce.order.v1.OrderItem.unit_price:type_name -> ecommerce.common.v1.Money
-	3, // 1: ecommerce.order.v1.OrderItem.line_total:type_name -> ecommerce.common.v1.Money
+	4, // 0: ecommerce.order.v1.OrderItem.unit_price:type_name -> ecommerce.common.v1.Money
+	4, // 1: ecommerce.order.v1.OrderItem.line_total:type_name -> ecommerce.common.v1.Money
 	0, // 2: ecommerce.order.v1.Order.status:type_name -> ecommerce.order.v1.OrderStatus
-	3, // 3: ecommerce.order.v1.Order.total_amount:type_name -> ecommerce.common.v1.Money
-	1, // 4: ecommerce.order.v1.Order.items:type_name -> ecommerce.order.v1.OrderItem
+	4, // 3: ecommerce.order.v1.Order.total_amount:type_name -> ecommerce.common.v1.Money
+	2, // 4: ecommerce.order.v1.Order.items:type_name -> ecommerce.order.v1.OrderItem
 	5, // [5:5] is the sub-list for method output_type
 	5, // [5:5] is the sub-list for method input_type
 	5, // [5:5] is the sub-list for extension type_name
@@ -330,7 +412,7 @@ func file_order_v1_types_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_order_v1_types_proto_rawDesc), len(file_order_v1_types_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,

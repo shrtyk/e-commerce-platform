@@ -27,6 +27,26 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OrderServiceClient interface {
+	// CreateOrder performs checkout for the authenticated user and creates an order.
+	//
+	// Idempotency contract:
+	//   - idempotency_key is REQUIRED, must be non-empty, max length 255 bytes.
+	//   - For the same authenticated user_id + idempotency_key + same logical payload,
+	//     the server must return the same logical checkout result (same order outcome).
+	//   - Reusing idempotency_key with a different logical payload must be rejected.
+	//
+	// gRPC error contract:
+	//   - On business failures, server returns non-OK gRPC status and carries
+	//     checkout error semantics from CheckoutErrorCode in response trailers/metadata.
+	//   - Canonical mapping:
+	//     INVALID_ARGUMENT -> CHECKOUT_ERROR_CODE_INVALID_ARGUMENT
+	//     NOT_FOUND -> CHECKOUT_ERROR_CODE_CART_NOT_FOUND | CHECKOUT_ERROR_CODE_SKU_NOT_FOUND
+	//     FAILED_PRECONDITION -> CHECKOUT_ERROR_CODE_CART_EMPTY
+	//     ABORTED -> CHECKOUT_ERROR_CODE_STOCK_UNAVAILABLE |
+	//     CHECKOUT_ERROR_CODE_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD |
+	//     CHECKOUT_ERROR_CODE_CONFLICT
+	//     PERMISSION_DENIED -> CHECKOUT_ERROR_CODE_PAYMENT_DECLINED
+	//     INTERNAL -> CHECKOUT_ERROR_CODE_INTERNAL
 	CreateOrder(ctx context.Context, in *CreateOrderRequest, opts ...grpc.CallOption) (*CreateOrderResponse, error)
 	GetOrder(ctx context.Context, in *GetOrderRequest, opts ...grpc.CallOption) (*GetOrderResponse, error)
 }
@@ -63,6 +83,26 @@ func (c *orderServiceClient) GetOrder(ctx context.Context, in *GetOrderRequest, 
 // All implementations must embed UnimplementedOrderServiceServer
 // for forward compatibility.
 type OrderServiceServer interface {
+	// CreateOrder performs checkout for the authenticated user and creates an order.
+	//
+	// Idempotency contract:
+	//   - idempotency_key is REQUIRED, must be non-empty, max length 255 bytes.
+	//   - For the same authenticated user_id + idempotency_key + same logical payload,
+	//     the server must return the same logical checkout result (same order outcome).
+	//   - Reusing idempotency_key with a different logical payload must be rejected.
+	//
+	// gRPC error contract:
+	//   - On business failures, server returns non-OK gRPC status and carries
+	//     checkout error semantics from CheckoutErrorCode in response trailers/metadata.
+	//   - Canonical mapping:
+	//     INVALID_ARGUMENT -> CHECKOUT_ERROR_CODE_INVALID_ARGUMENT
+	//     NOT_FOUND -> CHECKOUT_ERROR_CODE_CART_NOT_FOUND | CHECKOUT_ERROR_CODE_SKU_NOT_FOUND
+	//     FAILED_PRECONDITION -> CHECKOUT_ERROR_CODE_CART_EMPTY
+	//     ABORTED -> CHECKOUT_ERROR_CODE_STOCK_UNAVAILABLE |
+	//     CHECKOUT_ERROR_CODE_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD |
+	//     CHECKOUT_ERROR_CODE_CONFLICT
+	//     PERMISSION_DENIED -> CHECKOUT_ERROR_CODE_PAYMENT_DECLINED
+	//     INTERNAL -> CHECKOUT_ERROR_CODE_INTERNAL
 	CreateOrder(context.Context, *CreateOrderRequest) (*CreateOrderResponse, error)
 	GetOrder(context.Context, *GetOrderRequest) (*GetOrderResponse, error)
 	mustEmbedUnimplementedOrderServiceServer()
