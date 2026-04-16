@@ -14,6 +14,7 @@ import (
 func NewRouter(
 	logger *slog.Logger,
 	serviceName string,
+	cartService cartService,
 	tokenVerifier httpcommon.TokenVerifier,
 	tracer trace.Tracer,
 ) http.Handler {
@@ -27,7 +28,7 @@ func NewRouter(
 		provider.Recovery,
 	)
 
-	handler := NewCartHandler()
+	handler := NewCartHandler(cartService)
 	r.Get("/healthz", handler.Healthz)
 
 	openAPIOptions := dto.ChiServerOptions{
