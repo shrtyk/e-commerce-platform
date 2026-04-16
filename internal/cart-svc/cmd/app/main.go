@@ -3,15 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
-
 	redislib "github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel"
 	grpcpkg "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/inbound/grpc"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/inbound/http"
@@ -19,6 +18,7 @@ import (
 	adapterredis "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/outbound/redis"
 	cartapp "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/app"
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/config"
+	commonjwt "github.com/shrtyk/e-commerce-platform/internal/common/auth/jwt"
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 )
@@ -56,13 +56,12 @@ func main() {
 		redisClient = adapterredis.MustCreateRedis(cfg.Redis, cfg.Timeouts)
 	}
 
-	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, nil, tracer)
-	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, nil, tracer)
+	tokenVerifier := commonjwt.NewTokenVerifier(cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenIssuer)
 
 	app := cartapp.NewApplication(
 		&cfg,
-		handler,
-		grpcServer,
+		nil,
+		nil,
 		db,
 		redisClient,
 		cartapp.WithCatalogConn(catalogConn),
@@ -70,6 +69,10 @@ func main() {
 		cartapp.WithTracerProvider(tracerProvider),
 		cartapp.WithMeterProvider(meterProvider),
 	)
+
+	app.GRPCServer = adaptergrpc.NewServer(logger, cfg.Service.Name, app.CartService, tokenVerifier, tracer)
+
+	app.Handler = adapterhttp.NewRouter(logger, cfg.Service.Name, app.CartService, tokenVerifier, tracer)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()

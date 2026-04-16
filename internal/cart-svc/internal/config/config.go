@@ -10,6 +10,7 @@ import (
 type Config struct {
 	commoncfg.Config
 	Catalog Catalog
+	Auth    Auth  `env-prefix:"AUTH_"`
 	Cache   Cache `env-prefix:"CART_CACHE_"`
 }
 
@@ -19,6 +20,11 @@ type Catalog struct {
 
 type Cache struct {
 	ActiveCartTTL time.Duration `env:"ACTIVE_CART_TTL" env-default:"5m"`
+}
+
+type Auth struct {
+	AccessTokenKey    string `env:"ACCESS_TOKEN_KEY" env-required:"true"`
+	AccessTokenIssuer string `env:"ACCESS_TOKEN_ISSUER" env-default:"ecom-identity-svc"`
 }
 
 func MustLoad() Config {
