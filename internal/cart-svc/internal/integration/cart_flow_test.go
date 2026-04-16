@@ -25,8 +25,9 @@ import (
 )
 
 func TestHTTPAndGRPCCartFlowWithSnapshotFallbackAndRedisCache(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
-	testhelper.CleanupRedis(t, testhelper.TestRedis)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	testhelper.CleanupRedis(t, harness.RedisClient)
 
 	stack := newCartStack(t)
 
@@ -90,8 +91,9 @@ func TestHTTPAndGRPCCartFlowWithSnapshotFallbackAndRedisCache(t *testing.T) {
 }
 
 func TestCheckoutSnapshotRepricesWithoutMutatingStoredCart(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
-	testhelper.CleanupRedis(t, testhelper.TestRedis)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	testhelper.CleanupRedis(t, harness.RedisClient)
 
 	stack := newCartStack(t)
 
@@ -166,8 +168,9 @@ func TestCheckoutSnapshotRepricesWithoutMutatingStoredCart(t *testing.T) {
 }
 
 func TestHTTPAuthRejectsMissingAndMalformedBearerToken(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
-	testhelper.CleanupRedis(t, testhelper.TestRedis)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	testhelper.CleanupRedis(t, harness.RedisClient)
 
 	stack := newCartStack(t)
 
@@ -200,8 +203,9 @@ func TestHTTPAuthRejectsMissingAndMalformedBearerToken(t *testing.T) {
 }
 
 func TestGRPCAuthRejectsMissingMalformedAndMismatchedUser(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
-	testhelper.CleanupRedis(t, testhelper.TestRedis)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	testhelper.CleanupRedis(t, harness.RedisClient)
 
 	stack := newCartStack(t)
 	client := cartv1.NewCartServiceClient(stack.GRPCConn)
@@ -275,7 +279,9 @@ type storedCartItemRow struct {
 func newCartStack(t *testing.T) *testhelper.TestStack {
 	t.Helper()
 
-	return testhelper.NewTestStack(t, testhelper.TestDB, testhelper.TestRedis)
+	harness := testhelper.IntegrationHarness(t)
+
+	return testhelper.NewTestStack(t, harness.DB, harness.RedisClient)
 }
 
 func addItemHTTP(

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,9 +19,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 	grpcpkg "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/inbound/grpc"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/inbound/http"
@@ -36,11 +33,11 @@ import (
 	commonjwt "github.com/shrtyk/e-commerce-platform/internal/common/auth/jwt"
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
 	commonv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1"
+	commonintegration "github.com/shrtyk/e-commerce-platform/internal/common/testhelper/integration"
 )
 
 const (
-	bufconnBufferSize = 1024 * 1024
-	serviceName       = "cart-svc-test"
+	serviceName = "cart-svc-test"
 
 	TestAccessTokenKey    = "test-cart-access-token-signing-key-32b"
 	TestAccessTokenIssuer = "test-identity-svc"
@@ -82,7 +79,7 @@ func NewTestStack(t *testing.T, db *sql.DB, redisClient *redislib.Client) *TestS
 	httpHandler := adapterhttp.NewRouter(logger, serviceName, cartService, tokenVerifier, tracer)
 	grpcServer := adaptergrpc.NewServer(logger, serviceName, cartService, tokenVerifier, tracer)
 
-	grpcConn, stopGRPC := startBufconnGRPCServer(t, "cart-test", grpcServer)
+	grpcConn, stopGRPC := commonintegration.StartBufconnGRPCServer(t, "cart-test", grpcServer)
 	t.Cleanup(stopGRPC)
 
 	return &TestStack{
@@ -405,72 +402,10 @@ func newCatalogTestServer(t *testing.T) (*FakeCatalogServer, *grpcpkg.ClientConn
 	fakeCatalog := NewFakeCatalogServer()
 	catalogv1.RegisterCatalogServiceServer(server, fakeCatalog)
 
-	conn, stop := startBufconnGRPCServer(t, "catalog-test", server)
+	conn, stop := commonintegration.StartBufconnGRPCServer(t, "catalog-test", server)
 	t.Cleanup(stop)
 
 	return fakeCatalog, conn
-}
-
-func startBufconnGRPCServer(t *testing.T, target string, server *grpcpkg.Server) (*grpcpkg.ClientConn, func()) {
-	t.Helper()
-
-	listener := bufconn.Listen(bufconnBufferSize)
-	ready := make(chan struct{})
-	serveDone := make(chan struct{})
-	readyListener := &readySignalListener{Listener: listener, ready: ready}
-
-	go func() {
-		defer close(serveDone)
-		_ = server.Serve(readyListener)
-	}()
-
-	select {
-	case <-ready:
-	case <-time.After(5 * time.Second):
-		server.Stop()
-		require.NoError(t, listener.Close())
-		<-serveDone
-		t.Fatal("grpc server did not start accepting connections")
-	}
-
-	dialer := func(ctx context.Context, _ string) (net.Conn, error) {
-		return listener.Dial()
-	}
-
-	conn, err := grpcpkg.NewClient(
-		"passthrough:///"+target,
-		grpcpkg.WithContextDialer(dialer),
-		grpcpkg.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		server.Stop()
-		require.NoError(t, listener.Close())
-		<-serveDone
-		t.Fatalf("create grpc client connection: %v", err)
-	}
-
-	stop := func() {
-		require.NoError(t, conn.Close())
-		server.Stop()
-		require.NoError(t, listener.Close())
-		<-serveDone
-	}
-
-	return conn, stop
-}
-
-type readySignalListener struct {
-	net.Listener
-	once  sync.Once
-	ready chan struct{}
-}
-
-func (l *readySignalListener) Accept() (net.Conn, error) {
-	l.once.Do(func() {
-		close(l.ready)
-	})
-
-	return l.Listener.Accept()
 }
 
 func normalizeSKU(value string) string {

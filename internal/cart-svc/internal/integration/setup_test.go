@@ -11,16 +11,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	db := testhelper.StartSharedTestDB(nil)
-	redisClient := testhelper.StartSharedTestRedis(nil)
-
-	testhelper.TestDB = db
-	testhelper.TestRedis = redisClient
+	testhelper.StartSharedHarness(nil)
 
 	code := m.Run()
 
-	testhelper.StopSharedTestRedis()
-	testhelper.StopSharedTestDB()
+	testhelper.StopSharedHarness()
 
 	os.Exit(code)
 }
