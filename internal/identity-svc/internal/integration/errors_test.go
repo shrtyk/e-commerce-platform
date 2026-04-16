@@ -55,7 +55,8 @@ func TestRefreshInvalidToken(t *testing.T) {
 }
 
 func TestRefreshRevokedToken(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 
 	tokens := registerHTTP(t, stack.HTTPHandler, registerHTTPInput{
@@ -68,7 +69,8 @@ func TestRefreshRevokedToken(t *testing.T) {
 }
 
 func TestGRPCRegisterDuplicateEmail(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 	grpcClient := identityv1.NewIdentityServiceClient(stack.GRPCConn)
 
@@ -87,7 +89,8 @@ func TestGRPCRegisterDuplicateEmail(t *testing.T) {
 }
 
 func TestGRPCLoginInvalidCredentials(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 	grpcClient := identityv1.NewIdentityServiceClient(stack.GRPCConn)
 
@@ -106,7 +109,8 @@ func TestGRPCLoginInvalidCredentials(t *testing.T) {
 }
 
 func TestGRPCGetProfileNotFound(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 	grpcClient := identityv1.NewIdentityServiceClient(stack.GRPCConn)
 

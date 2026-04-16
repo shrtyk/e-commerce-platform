@@ -29,7 +29,8 @@ func TestGetMyProfileRequiresAuth(t *testing.T) {
 }
 
 func TestGetMyProfileReturnsUserProfile(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 	grpcClient := identityv1.NewIdentityServiceClient(stack.GRPCConn)
 
@@ -54,7 +55,8 @@ func TestGetMyProfileReturnsUserProfile(t *testing.T) {
 }
 
 func TestUpdateMyProfileUpdatesDisplayName(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 	grpcClient := identityv1.NewIdentityServiceClient(stack.GRPCConn)
 
@@ -77,7 +79,8 @@ func TestUpdateMyProfileUpdatesDisplayName(t *testing.T) {
 }
 
 func TestUpdateMyProfileWithNilDisplayName(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 	grpcClient := identityv1.NewIdentityServiceClient(stack.GRPCConn)
 

@@ -23,7 +23,8 @@ import (
 )
 
 func TestRegisterUserCreatesUser(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 
 	httpResponse := registerHTTP(t, stack.HTTPHandler, registerHTTPInput{
@@ -47,7 +48,8 @@ func TestRegisterUserCreatesUser(t *testing.T) {
 }
 
 func TestLoginUserReturnsTokens(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 
 	registerHTTP(t, stack.HTTPHandler, registerHTTPInput{
@@ -71,7 +73,8 @@ func TestLoginUserReturnsTokens(t *testing.T) {
 }
 
 func TestRefreshTokenRotatesSession(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 
 	tokens := registerHTTP(t, stack.HTTPHandler, registerHTTPInput{
@@ -88,13 +91,14 @@ func TestRefreshTokenRotatesSession(t *testing.T) {
 
 	sessionID := parseSessionID(t, tokens.RefreshToken)
 	var revoked bool
-	err := testhelper.TestDB.QueryRow("SELECT revoked_at IS NOT NULL FROM sessions WHERE session_id = $1", sessionID).Scan(&revoked)
+	err := harness.DB.QueryRow("SELECT revoked_at IS NOT NULL FROM sessions WHERE session_id = $1", sessionID).Scan(&revoked)
 	require.NoError(t, err)
 	require.True(t, revoked)
 }
 
 func TestLoginRejectsInvalidCredentials(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 
 	registerHTTP(t, stack.HTTPHandler, registerHTTPInput{
@@ -117,7 +121,8 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 }
 
 func TestRegisterRejectsDuplicateEmail(t *testing.T) {
-	testhelper.CleanupDB(t, testhelper.TestDB)
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
 	stack := newAuthStack(t)
 
 	registerHTTP(t, stack.HTTPHandler, registerHTTPInput{
@@ -148,7 +153,7 @@ type registerHTTPInput struct {
 func newAuthStack(t *testing.T) *testhelper.TestStack {
 	t.Helper()
 
-	return testhelper.NewTestStack(t, testhelper.TestDB)
+	return testhelper.NewTestStack(t, testhelper.IntegrationHarness(t).DB)
 }
 
 func registerHTTP(t *testing.T, handler http.Handler, input registerHTTPInput) dto.AuthTokensResponse {
