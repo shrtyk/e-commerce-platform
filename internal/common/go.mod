@@ -5,8 +5,12 @@ go 1.26.0
 require (
 	github.com/google/uuid v1.6.0
 	github.com/ilyakaznacheev/cleanenv v1.5.0
+	github.com/jackc/pgx/v5 v5.9.1
 	github.com/jhump/protoreflect/v2 v2.0.0-beta.2
+	github.com/redis/go-redis/v9 v9.17.0
 	github.com/stretchr/testify v1.11.1
+	github.com/testcontainers/testcontainers-go v0.42.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	github.com/twmb/franz-go v1.20.7
 	github.com/twmb/franz-go/pkg/sr v1.7.0
 	go.opentelemetry.io/otel v1.40.0
