@@ -35,28 +35,30 @@ func (s *CartService) GetActiveCart(ctx context.Context, userID uuid.UUID) (doma
 		return domain.Cart{}, ErrInvalidUserID
 	}
 
-	cart, err := s.carts.GetActiveByUserID(ctx, userID)
+	if s.cache != nil {
+		cachedCart, found, cacheErr := s.cache.GetActiveByUserID(ctx, userID)
+		if cacheErr == nil && found {
+			if validatedCachedCart, ok := validateCachedActiveCart(userID, cachedCart); ok {
+				return validatedCachedCart, nil
+			}
+		}
+	}
+
+	cart, err := s.loadActiveCartFromStorage(ctx, userID)
 	if err != nil {
 		if errors.Is(err, outbound.ErrCartNotFound) {
-			return domain.Cart{}, ErrCartNotFound
+			emptyCart := s.newEmptyActiveCart(userID)
+			s.setActiveCartCache(ctx, userID, emptyCart)
+
+			return emptyCart, nil
 		}
 
-		return domain.Cart{}, fmt.Errorf("get active cart: %w", err)
+		return domain.Cart{}, err
 	}
 
-	items, err := s.items.ListByCartID(ctx, cart.ID)
-	if err != nil {
-		return domain.Cart{}, fmt.Errorf("list cart items: %w", err)
-	}
+	s.setActiveCartCache(ctx, userID, cart)
 
-	cart.Items = items
-
-	recalculated, err := cart.RecalculateTotals()
-	if err != nil {
-		return domain.Cart{}, fmt.Errorf("recalculate cart totals: %w", err)
-	}
-
-	return recalculated, nil
+	return cart, nil
 }
 
 func (s *CartService) AddCartItem(ctx context.Context, input AddCartItemInput) (domain.Cart, error) {
@@ -113,7 +115,14 @@ func (s *CartService) AddCartItem(ctx context.Context, input AddCartItemInput) (
 		return domain.Cart{}, fmt.Errorf("insert cart item: %w", err)
 	}
 
-	return s.loadCartWithItems(ctx, cart)
+	authoritativeCart, err := s.loadCartWithItems(ctx, cart)
+	if err != nil {
+		return domain.Cart{}, err
+	}
+
+	s.setActiveCartCache(ctx, input.UserID, authoritativeCart)
+
+	return authoritativeCart, nil
 }
 
 func (s *CartService) resolveProductSnapshotBySKU(ctx context.Context, sku string) (domain.ProductSnapshot, error) {
@@ -185,8 +194,12 @@ func (s *CartService) UpdateCartItem(ctx context.Context, input UpdateCartItemIn
 		return domain.Cart{}, ErrInvalidQuantity
 	}
 
-	cart, err := s.GetActiveCart(ctx, input.UserID)
+	cart, err := s.loadActiveCartFromStorage(ctx, input.UserID)
 	if err != nil {
+		if errors.Is(err, outbound.ErrCartNotFound) {
+			return domain.Cart{}, ErrCartNotFound
+		}
+
 		return domain.Cart{}, err
 	}
 
@@ -199,7 +212,18 @@ func (s *CartService) UpdateCartItem(ctx context.Context, input UpdateCartItemIn
 		return domain.Cart{}, fmt.Errorf("update cart item quantity: %w", err)
 	}
 
-	return s.GetActiveCart(ctx, input.UserID)
+	authoritativeCart, err := s.loadActiveCartFromStorage(ctx, input.UserID)
+	if err != nil {
+		if errors.Is(err, outbound.ErrCartNotFound) {
+			return domain.Cart{}, ErrCartNotFound
+		}
+
+		return domain.Cart{}, err
+	}
+
+	s.setActiveCartCache(ctx, input.UserID, authoritativeCart)
+
+	return authoritativeCart, nil
 }
 
 func (s *CartService) RemoveCartItem(ctx context.Context, input RemoveCartItemInput) (domain.Cart, error) {
@@ -212,8 +236,12 @@ func (s *CartService) RemoveCartItem(ctx context.Context, input RemoveCartItemIn
 		return domain.Cart{}, ErrInvalidSKU
 	}
 
-	cart, err := s.GetActiveCart(ctx, input.UserID)
+	cart, err := s.loadActiveCartFromStorage(ctx, input.UserID)
 	if err != nil {
+		if errors.Is(err, outbound.ErrCartNotFound) {
+			return domain.Cart{}, ErrCartNotFound
+		}
+
 		return domain.Cart{}, err
 	}
 
@@ -226,7 +254,21 @@ func (s *CartService) RemoveCartItem(ctx context.Context, input RemoveCartItemIn
 		return domain.Cart{}, fmt.Errorf("delete cart item: %w", err)
 	}
 
-	return s.GetActiveCart(ctx, input.UserID)
+	authoritativeCart, err := s.loadActiveCartFromStorage(ctx, input.UserID)
+	if err != nil {
+		if errors.Is(err, outbound.ErrCartNotFound) {
+			authoritativeCart = s.newEmptyActiveCart(input.UserID)
+			s.setActiveCartCache(ctx, input.UserID, authoritativeCart)
+
+			return authoritativeCart, nil
+		}
+
+		return domain.Cart{}, err
+	}
+
+	s.setActiveCartCache(ctx, input.UserID, authoritativeCart)
+
+	return authoritativeCart, nil
 }
 
 func (s *CartService) ensureActiveCart(ctx context.Context, userID uuid.UUID, currency string) (domain.Cart, error) {
@@ -274,4 +316,58 @@ func (s *CartService) loadCartWithItems(ctx context.Context, cart domain.Cart) (
 	}
 
 	return recalculated, nil
+}
+
+func (s *CartService) loadActiveCartFromStorage(ctx context.Context, userID uuid.UUID) (domain.Cart, error) {
+	cart, err := s.carts.GetActiveByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, outbound.ErrCartNotFound) {
+			return domain.Cart{}, outbound.ErrCartNotFound
+		}
+
+		return domain.Cart{}, fmt.Errorf("get active cart: %w", err)
+	}
+
+	loaded, err := s.loadCartWithItems(ctx, cart)
+	if err != nil {
+		return domain.Cart{}, err
+	}
+
+	return loaded, nil
+}
+
+func (s *CartService) setActiveCartCache(ctx context.Context, userID uuid.UUID, cart domain.Cart) {
+	if s.cache == nil {
+		return
+	}
+
+	if err := s.cache.SetActiveByUserID(ctx, userID, cart, s.cacheTTL); err != nil {
+		_ = s.cache.DeleteActiveByUserID(ctx, userID)
+	}
+}
+
+func validateCachedActiveCart(userID uuid.UUID, cart domain.Cart) (domain.Cart, bool) {
+	if cart.UserID != userID {
+		return domain.Cart{}, false
+	}
+
+	if cart.Status != domain.CartStatusActive {
+		return domain.Cart{}, false
+	}
+
+	recalculated, err := cart.RecalculateTotals()
+	if err != nil {
+		return domain.Cart{}, false
+	}
+
+	return recalculated, true
+}
+
+func (s *CartService) newEmptyActiveCart(userID uuid.UUID) domain.Cart {
+	return domain.Cart{
+		UserID:      userID,
+		Status:      domain.CartStatusActive,
+		Items:       []domain.CartItem{},
+		TotalAmount: 0,
+	}
 }
