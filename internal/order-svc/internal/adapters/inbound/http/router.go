@@ -16,6 +16,7 @@ func NewRouter(
 	logger *slog.Logger,
 	serviceName string,
 	db *sql.DB,
+	checkoutService checkoutService,
 	tokenVerifier httpcommon.TokenVerifier,
 	tracer trace.Tracer,
 ) http.Handler {
@@ -29,11 +30,14 @@ func NewRouter(
 		provider.Recovery,
 	)
 
-	handler := NewOrderHandler(db, 0)
+	handler := NewOrderHandler(db, 0, checkoutService)
 	r.Get("/healthz", handler.Healthz)
 	r.Get("/readyz", handler.Readyz)
 
-	openAPIOptions := dto.ChiServerOptions{BaseRouter: r}
+	openAPIOptions := dto.ChiServerOptions{
+		BaseRouter:       r,
+		ErrorHandlerFunc: handler.HandleOpenAPIError,
+	}
 	openAPIOptions.Middlewares = []dto.MiddlewareFunc{provider.Auth()}
 
 	dto.HandlerWithOptions(handler, openAPIOptions)
