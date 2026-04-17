@@ -39,8 +39,8 @@ func IsRetriable(err error) bool {
 		return false
 	}
 
-	var retriable RetriableError
-	return errors.As(err, &retriable)
+	_, ok := errors.AsType[RetriableError](err)
+	return ok
 }
 
 func IsNonRetriable(err error) bool {
@@ -48,8 +48,8 @@ func IsNonRetriable(err error) bool {
 		return false
 	}
 
-	var nonRetriable NonRetriableError
-	return errors.As(err, &nonRetriable)
+	_, ok := errors.AsType[NonRetriableError](err)
+	return ok
 }
 
 func ClassifyError(err error) error {

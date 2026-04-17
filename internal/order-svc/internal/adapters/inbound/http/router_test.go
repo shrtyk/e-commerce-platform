@@ -16,6 +16,7 @@ func TestNewRouterProtectedByDefault(t *testing.T) {
 		"order-svc",
 		nil,
 		nil,
+		nil,
 		noop.NewTracerProvider().Tracer("test"),
 	)
 
@@ -31,6 +32,7 @@ func TestNewRouterHealthzStillPublic(t *testing.T) {
 	router := NewRouter(
 		slog.Default(),
 		"order-svc",
+		nil,
 		nil,
 		nil,
 		noop.NewTracerProvider().Tracer("test"),
