@@ -12,6 +12,8 @@ import (
 
 	cartv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/cart/v1"
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
+	commonv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1"
+	paymentv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/core/ports/outbound"
 )
 
@@ -130,5 +132,74 @@ func (a *StockReservationService) ReserveStock(ctx context.Context, input outbou
 	}
 }
 
+type StockReleaseService struct {
+	client catalogv1.CatalogServiceClient
+}
+
+func NewStockReleaseService(client catalogv1.CatalogServiceClient) *StockReleaseService {
+	return &StockReleaseService{client: client}
+}
+
+func (a *StockReleaseService) ReleaseStock(ctx context.Context, input outbound.ReleaseStockInput) error {
+	_, err := a.client.ReleaseStock(ctx, &catalogv1.ReleaseStockRequest{OrderId: input.OrderID.String()})
+	if err == nil {
+		return nil
+	}
+
+	switch status.Code(err) {
+	case codes.NotFound:
+		return outbound.ErrStockReleaseNotFound
+	case codes.FailedPrecondition:
+		return outbound.ErrStockReleaseUnavailable
+	case codes.Aborted:
+		return outbound.ErrStockReleaseConflict
+	default:
+		return fmt.Errorf("catalog release stock: %w", err)
+	}
+}
+
+type CheckoutPaymentService struct {
+	client paymentv1.PaymentServiceClient
+}
+
+func NewCheckoutPaymentService(client paymentv1.PaymentServiceClient) *CheckoutPaymentService {
+	return &CheckoutPaymentService{client: client}
+}
+
+func (a *CheckoutPaymentService) InitiatePayment(ctx context.Context, input outbound.InitiatePaymentInput) error {
+	response, err := a.client.InitiatePayment(ctx, &paymentv1.InitiatePaymentRequest{
+		OrderId: input.OrderID.String(),
+		Amount: &commonv1.Money{
+			Amount:   input.Amount,
+			Currency: input.Currency,
+		},
+		ProviderName:   input.PaymentProvider,
+		IdempotencyKey: input.IdempotencyKey,
+	})
+	if err != nil {
+		switch status.Code(err) {
+		case codes.FailedPrecondition:
+			return outbound.ErrPaymentDeclined
+		case codes.Aborted:
+			return outbound.ErrPaymentConflict
+		default:
+			return fmt.Errorf("payment initiate payment: %w", err)
+		}
+	}
+
+	attempt := response.GetPaymentAttempt()
+	if attempt == nil {
+		return errors.New("payment initiate payment: empty payment attempt")
+	}
+
+	if attempt.GetStatus() == paymentv1.PaymentStatus_PAYMENT_STATUS_FAILED {
+		return outbound.ErrPaymentDeclined
+	}
+
+	return nil
+}
+
 var _ outbound.CheckoutSnapshotRepository = (*CheckoutSnapshotRepository)(nil)
 var _ outbound.StockReservationService = (*StockReservationService)(nil)
+var _ outbound.StockReleaseService = (*StockReleaseService)(nil)
+var _ outbound.CheckoutPaymentService = (*CheckoutPaymentService)(nil)

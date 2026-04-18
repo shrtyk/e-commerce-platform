@@ -13,7 +13,11 @@ var (
 	ErrStockReservationSKUNotFound        = errors.New("stock reservation sku not found")
 	ErrStockReservationUnavailable        = errors.New("stock reservation unavailable")
 	ErrStockReservationConflict           = errors.New("stock reservation conflict")
+	ErrStockReleaseNotFound               = errors.New("stock release reservation not found")
+	ErrStockReleaseUnavailable            = errors.New("stock release unavailable")
+	ErrStockReleaseConflict               = errors.New("stock release conflict")
 	ErrPaymentDeclined                    = errors.New("payment declined")
+	ErrPaymentConflict                    = errors.New("payment conflict")
 )
 
 type CheckoutIdempotencyPayload struct {
@@ -55,6 +59,26 @@ type ReserveStockItem struct {
 	Quantity  int32
 }
 
+type ReleaseStockInput struct {
+	OrderID uuid.UUID
+	UserID  uuid.UUID
+	Items   []ReleaseStockItem
+}
+
+type ReleaseStockItem struct {
+	ProductID uuid.UUID
+	SKU       string
+	Quantity  int32
+}
+
+type InitiatePaymentInput struct {
+	OrderID         uuid.UUID
+	Amount          int64
+	Currency        string
+	IdempotencyKey  string
+	PaymentProvider string
+}
+
 //mockery:generate: true
 type CheckoutSnapshotRepository interface {
 	GetCheckoutSnapshot(ctx context.Context, userID uuid.UUID) (CheckoutSnapshot, error)
@@ -63,6 +87,16 @@ type CheckoutSnapshotRepository interface {
 //mockery:generate: true
 type StockReservationService interface {
 	ReserveStock(ctx context.Context, input ReserveStockInput) error
+}
+
+//mockery:generate: true
+type StockReleaseService interface {
+	ReleaseStock(ctx context.Context, input ReleaseStockInput) error
+}
+
+//mockery:generate: true
+type CheckoutPaymentService interface {
+	InitiatePayment(ctx context.Context, input InitiatePaymentInput) error
 }
 
 //mockery:generate: true

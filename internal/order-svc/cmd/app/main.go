@@ -16,6 +16,7 @@ import (
 	commonjwt "github.com/shrtyk/e-commerce-platform/internal/common/auth/jwt"
 	cartv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/cart/v1"
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
+	paymentv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1"
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/inbound/grpc"
@@ -61,6 +62,11 @@ func main() {
 		catalogGRPCAddr = "product-svc:9090"
 	}
 
+	paymentGRPCAddr := strings.TrimSpace(os.Getenv("PAYMENT_GRPC_ADDR"))
+	if paymentGRPCAddr == "" {
+		paymentGRPCAddr = "payment-svc:9090"
+	}
+
 	cartConn, err := grpcpkg.NewClient(
 		cartGRPCAddr,
 		grpcpkg.WithTransportCredentials(insecure.NewCredentials()),
@@ -77,14 +83,25 @@ func main() {
 		panic(fmt.Errorf("create catalog grpc client: %w", err))
 	}
 
+	paymentConn, err := grpcpkg.NewClient(
+		paymentGRPCAddr,
+		grpcpkg.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		panic(fmt.Errorf("create payment grpc client: %w", err))
+	}
+
+	catalogClient := catalogv1.NewCatalogServiceClient(catalogConn)
 	checkoutService := checkout.NewService(
 		orderRepository,
 		sagaRepository,
 		adaptercheckoutgrpc.NewCheckoutSnapshotRepository(
 			cartv1.NewCartServiceClient(cartConn),
-			catalogv1.NewCatalogServiceClient(catalogConn),
+			catalogClient,
 		),
-		adaptercheckoutgrpc.NewStockReservationService(catalogv1.NewCatalogServiceClient(catalogConn)),
+		adaptercheckoutgrpc.NewStockReservationService(catalogClient),
+		adaptercheckoutgrpc.NewStockReleaseService(catalogClient),
+		adaptercheckoutgrpc.NewCheckoutPaymentService(paymentv1.NewPaymentServiceClient(paymentConn)),
 	)
 
 	authAccessTokenKey := strings.TrimSpace(os.Getenv("AUTH_ACCESS_TOKEN_KEY"))
@@ -120,6 +137,9 @@ func main() {
 		}
 		if closeErr := catalogConn.Close(); closeErr != nil {
 			logger.Error("close catalog grpc conn", "error", closeErr.Error())
+		}
+		if closeErr := paymentConn.Close(); closeErr != nil {
+			logger.Error("close payment grpc conn", "error", closeErr.Error())
 		}
 	}()
 
