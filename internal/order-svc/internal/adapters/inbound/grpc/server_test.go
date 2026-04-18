@@ -176,6 +176,10 @@ func TestOrderServerCreateOrder(t *testing.T) {
 						return false
 					}
 
+					if input.CausationID != "idem-5" {
+						return false
+					}
+
 					return input.PaymentMethod != nil && *input.PaymentMethod == "card"
 				})).
 					Return(successOrder, nil).

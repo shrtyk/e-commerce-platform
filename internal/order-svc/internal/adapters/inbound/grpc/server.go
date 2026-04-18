@@ -103,6 +103,8 @@ func (s *OrderServer) CreateOrder(ctx context.Context, req *orderv1.CreateOrderR
 	input := checkout.CheckoutInput{
 		UserID:         requestedUserID,
 		IdempotencyKey: strings.TrimSpace(req.GetIdempotencyKey()),
+		CorrelationID:  transport.RequestIDFromContext(ctx),
+		CausationID:    strings.TrimSpace(req.GetIdempotencyKey()),
 	}
 	if paymentMethod := strings.TrimSpace(req.GetPaymentMethod()); paymentMethod != "" {
 		input.PaymentMethod = &paymentMethod

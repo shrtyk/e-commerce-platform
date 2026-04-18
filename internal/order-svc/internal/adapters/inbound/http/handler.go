@@ -101,6 +101,8 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		UserID:         claims.UserID,
 		IdempotencyKey: idempotencyKey,
 		PaymentMethod:  request.PaymentMethod,
+		CorrelationID:  transport.RequestIDFromContext(r.Context()),
+		CausationID:    idempotencyKey,
 	})
 	if err != nil {
 		h.writeError(w, r, mapCheckoutHTTPError(err))

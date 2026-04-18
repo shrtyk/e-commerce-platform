@@ -2,12 +2,18 @@ package checkout
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
 	testifymock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
@@ -275,6 +281,7 @@ func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
 	saga := outboundmocks.NewMockOrderSagaStateRepository(t)
 	snapshots := outboundmocks.NewMockCheckoutSnapshotRepository(t)
 	stock := outboundmocks.NewMockStockReservationService(t)
+	publisher := &captureEventPublisher{}
 
 	snapshots.EXPECT().
 		GetCheckoutSnapshot(testifymock.Anything, userID).
@@ -356,11 +363,17 @@ func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
 		Return(nil).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock, nil, nil)
+	svc := NewService(orders, saga, snapshots, stock, nil, nil).WithEventing(publisher, nil, "order-svc")
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: idempotencyKey})
 	require.NoError(t, err)
 	require.Equal(t, outbound.OrderStatusAwaitingPayment, order.Status)
+	require.Len(t, publisher.events, 1)
+	require.Equal(t, "order.created", publisher.events[0].EventName)
+	createdPayload, ok := publisher.events[0].Payload.(domain.OrderCreatedPayload)
+	require.True(t, ok)
+	require.Equal(t, domain.OrderStatusPending, createdPayload.Status)
+	require.Equal(t, idempotencyKey, publisher.events[0].CausationID)
 
 	orders.AssertNumberOfCalls(t, "TransitionStatus", 2)
 	orders.AssertNumberOfCalls(t, "AppendStatusHistory", 2)
@@ -388,6 +401,7 @@ func TestCheckoutPaymentFailureCompensation(t *testing.T) {
 	stock := outboundmocks.NewMockStockReservationService(t)
 	stockRelease := outboundmocks.NewMockStockReleaseService(t)
 	payment := outboundmocks.NewMockCheckoutPaymentService(t)
+	publisher := &captureEventPublisher{}
 
 	orders.EXPECT().
 		GetByUserIDAndIdempotencyKey(testifymock.Anything, userID, "idem-payment-fail").
@@ -490,13 +504,19 @@ func TestCheckoutPaymentFailureCompensation(t *testing.T) {
 		Return(nil).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock, stockRelease, payment)
+	svc := NewService(orders, saga, snapshots, stock, stockRelease, payment).WithEventing(publisher, nil, "order-svc")
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-payment-fail"})
 	require.Equal(t, outbound.Order{}, order)
 	require.Error(t, err)
 	require.ErrorIs(t, err, outbound.ErrPaymentDeclined)
 	require.Equal(t, CheckoutErrorCodePaymentDeclined, CodeOf(err))
+	require.Len(t, publisher.events, 2)
+	require.Equal(t, "order.created", publisher.events[0].EventName)
+	require.Equal(t, "order.cancelled", publisher.events[1].EventName)
+	cancelledPayload, ok := publisher.events[1].Payload.(domain.OrderCancelledPayload)
+	require.True(t, ok)
+	require.Equal(t, string(CheckoutErrorCodePaymentDeclined), cancelledPayload.CancelReasonCode)
 }
 
 func TestCheckoutPaymentFailureCompensationStockReleaseFailure(t *testing.T) {
@@ -1162,4 +1182,183 @@ func checkoutSnapshotWithSingleItem(userID uuid.UUID, totalAmount int64, sku str
 			Currency:  "USD",
 		}},
 	}
+}
+
+type captureEventPublisher struct {
+	events []domain.DomainEvent
+	err    error
+}
+
+func (p *captureEventPublisher) Publish(_ context.Context, event domain.DomainEvent) error {
+	p.events = append(p.events, event)
+	return p.err
+}
+
+func TestCheckoutCreateOrderAndOutboxAtomicWithTxProvider(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	orderID := uuid.New()
+
+	tests := []struct {
+		name            string
+		publishErr      error
+		wantOrder       outbound.Order
+		wantErrContains string
+		wantCommits     int
+		wantRollbacks   int
+	}{
+		{
+			name:            "publish failure rolls back order creation",
+			publishErr:      errors.New("append outbox record failed"),
+			wantOrder:       outbound.Order{},
+			wantErrContains: "publish order created event",
+			wantCommits:     0,
+			wantRollbacks:   1,
+		},
+		{
+			name:          "publish success commits both",
+			wantOrder:     outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusPending, Currency: "USD"},
+			wantCommits:   1,
+			wantRollbacks: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orders := outboundmocks.NewMockOrderRepository(t)
+			saga := outboundmocks.NewMockOrderSagaStateRepository(t)
+			snapshots := outboundmocks.NewMockCheckoutSnapshotRepository(t)
+			stock := outboundmocks.NewMockStockReservationService(t)
+
+			snapshot := checkoutSnapshotWithSingleItem(userID, 1500, "SKU-1", "Item", 1500)
+
+			baseOrder := outbound.Order{
+				OrderID:     orderID,
+				UserID:      userID,
+				Status:      outbound.OrderStatusPending,
+				Currency:    "USD",
+				TotalAmount: 1500,
+				Items: []outbound.OrderItem{{
+					OrderID:   orderID,
+					ProductID: snapshot.Items[0].ProductID,
+					SKU:       snapshot.Items[0].SKU,
+					Name:      snapshot.Items[0].Name,
+					Quantity:  snapshot.Items[0].Quantity,
+					UnitPrice: snapshot.Items[0].UnitPrice,
+					LineTotal: snapshot.Items[0].LineTotal,
+					Currency:  snapshot.Items[0].Currency,
+				}},
+			}
+
+			orders.EXPECT().CreateWithItems(testifymock.Anything, testifymock.Anything).Return(baseOrder, nil).Once()
+
+			behavior := &checkoutSQLBehavior{}
+			db := newCheckoutTestDB(t, behavior)
+
+			publisher := &captureEventPublisher{err: tt.publishErr}
+			txProvider := sqltx.NewProvider(db, func(_ *sql.Tx) TransactionRepos {
+				return TransactionRepos{Orders: orders, Saga: saga, Publisher: publisher}
+			})
+
+			svc := NewService(orders, saga, snapshots, stock, nil, nil).WithEventing(publisher, txProvider, "order-svc")
+
+			order, err := svc.createOrderAndPublishCreatedEvent(context.Background(), userID, "idem-tx", snapshot)
+			if tt.wantErrContains != "" {
+				require.Error(t, err)
+				require.ErrorContains(t, err, tt.wantErrContains)
+				require.Equal(t, tt.wantOrder, order)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.wantOrder.Status, order.Status)
+				require.Equal(t, tt.wantOrder.OrderID, order.OrderID)
+			}
+
+			require.Equal(t, tt.wantCommits, behavior.commitCount)
+			require.Equal(t, tt.wantRollbacks, behavior.rollbackCount)
+		})
+	}
+}
+
+var checkoutTestDriverSeq uint64
+
+type checkoutSQLBehavior struct {
+	mu sync.Mutex
+
+	beginErr    error
+	commitErr   error
+	rollbackErr error
+
+	commitCount   int
+	rollbackCount int
+}
+
+func newCheckoutTestDB(t *testing.T, behavior *checkoutSQLBehavior) *sql.DB {
+	t.Helper()
+
+	name := fmt.Sprintf("checkout_tx_test_driver_%d", atomic.AddUint64(&checkoutTestDriverSeq, 1))
+	sql.Register(name, &checkoutTestDriver{behavior: behavior})
+
+	db, err := sql.Open(name, "")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
+
+	return db
+}
+
+type checkoutTestDriver struct {
+	behavior *checkoutSQLBehavior
+}
+
+func (d *checkoutTestDriver) Open(_ string) (driver.Conn, error) {
+	return &checkoutTestConn{behavior: d.behavior}, nil
+}
+
+type checkoutTestConn struct {
+	behavior *checkoutSQLBehavior
+}
+
+func (c *checkoutTestConn) Prepare(_ string) (driver.Stmt, error) {
+	return nil, fmt.Errorf("prepare not supported")
+}
+
+func (c *checkoutTestConn) Close() error {
+	return nil
+}
+
+func (c *checkoutTestConn) Begin() (driver.Tx, error) {
+	return c.BeginTx(context.Background(), driver.TxOptions{})
+}
+
+func (c *checkoutTestConn) BeginTx(_ context.Context, _ driver.TxOptions) (driver.Tx, error) {
+	c.behavior.mu.Lock()
+	defer c.behavior.mu.Unlock()
+
+	if c.behavior.beginErr != nil {
+		return nil, c.behavior.beginErr
+	}
+
+	return &checkoutTestTx{behavior: c.behavior}, nil
+}
+
+type checkoutTestTx struct {
+	behavior *checkoutSQLBehavior
+}
+
+func (tx *checkoutTestTx) Commit() error {
+	tx.behavior.mu.Lock()
+	defer tx.behavior.mu.Unlock()
+
+	tx.behavior.commitCount++
+	return tx.behavior.commitErr
+}
+
+func (tx *checkoutTestTx) Rollback() error {
+	tx.behavior.mu.Lock()
+	defer tx.behavior.mu.Unlock()
+
+	tx.behavior.rollbackCount++
+	return tx.behavior.rollbackErr
 }

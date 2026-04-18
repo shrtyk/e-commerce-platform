@@ -5,14 +5,31 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/shrtyk/e-commerce-platform/internal/common/tx"
 
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/core/ports/outbound"
 )
 
 const maxIdempotencyKeyLength = 255
+
+const (
+	orderEventsTopic           = "order.events"
+	orderCreatedEventName      = "order.created"
+	orderCancelledEventName    = "order.cancelled"
+	orderAggregateType         = "order"
+	orderEventSchemaVersion    = "1"
+	outboxHeaderIdempotencyKey = "idempotencyKey"
+)
+
+type TransactionRepos struct {
+	Orders    outbound.OrderRepository
+	Saga      outbound.OrderSagaStateRepository
+	Publisher outbound.EventPublisher
+}
 
 type Service struct {
 	orders           outbound.OrderRepository
@@ -22,12 +39,17 @@ type Service struct {
 	stockRelease     outbound.StockReleaseService
 	payment          outbound.CheckoutPaymentService
 	idempotencyGuard outbound.CheckoutIdempotencyGuard
+	publisher        outbound.EventPublisher
+	txProvider       tx.Provider[TransactionRepos]
+	producer         string
 }
 
 type CheckoutInput struct {
 	UserID         uuid.UUID
 	IdempotencyKey string
 	PaymentMethod  *string
+	CorrelationID  string
+	CausationID    string
 }
 
 type GetOrderInput struct {
@@ -67,7 +89,32 @@ func NewService(
 		stockRelease:     release,
 		payment:          paymentService,
 		idempotencyGuard: guard,
+		producer:         "order-svc",
 	}
+}
+
+func (s *Service) WithEventing(
+	publisher outbound.EventPublisher,
+	txProvider tx.Provider[TransactionRepos],
+	producer string,
+) *Service {
+	if s == nil {
+		return nil
+	}
+
+	if publisher != nil {
+		s.publisher = publisher
+	}
+
+	if txProvider != nil {
+		s.txProvider = txProvider
+	}
+
+	if trimmedProducer := strings.TrimSpace(producer); trimmedProducer != "" {
+		s.producer = trimmedProducer
+	}
+
+	return s
 }
 
 func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.Order, error) {
@@ -76,6 +123,11 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 	}
 
 	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
+
+	ctx = withEventMetadata(ctx, eventMetadata{
+		CorrelationID: strings.TrimSpace(input.CorrelationID),
+		CausationID:   strings.TrimSpace(input.CausationID),
+	})
 
 	existing, err := s.orders.GetByUserIDAndIdempotencyKey(ctx, input.UserID, idempotencyKey)
 	if err == nil {
@@ -115,9 +167,9 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 		return outbound.Order{}, newCodeError(CheckoutErrorCodeCartEmpty, "checkout snapshot has no items")
 	}
 
-	createdOrder, err := s.orders.CreateWithItems(ctx, toCreateOrderInput(input.UserID, idempotencyKey, snapshot))
+	createdOrder, err := s.createOrderAndPublishCreatedEvent(ctx, input.UserID, idempotencyKey, snapshot)
 	if err != nil {
-		return outbound.Order{}, wrapCode(mapCheckoutCode(err), "create order with items", err)
+		return outbound.Order{}, err
 	}
 
 	order, err := s.transitionOrderStatus(ctx, createdOrder, domain.OrderStatusAwaitingStock, nil)
@@ -266,22 +318,251 @@ func (s *Service) transitionOrderStatus(
 		return outbound.Order{}, wrapCode(CheckoutErrorCodeConflict, "validate order transition", err)
 	}
 
-	updated, err := s.orders.TransitionStatus(
-		ctx,
-		order.OrderID,
-		toOutboundOrderStatus(fromStatus),
-		toOutboundOrderStatus(next),
-	)
-	if err != nil {
-		return outbound.Order{}, wrapCode(mapCheckoutCode(err), "transition order status", err)
-	}
+	updated := outbound.Order{}
+	err = s.withTransactionRepos(ctx, func(repos TransactionRepos) error {
+		nextOrder, transitionErr := repos.Orders.TransitionStatus(
+			ctx,
+			order.OrderID,
+			toOutboundOrderStatus(fromStatus),
+			toOutboundOrderStatus(next),
+		)
+		if transitionErr != nil {
+			return wrapCode(mapCheckoutCode(transitionErr), "transition order status", transitionErr)
+		}
 
-	fromStatusOutbound := toOutboundOrderStatus(fromStatus)
-	if _, err := s.orders.AppendStatusHistory(ctx, order.OrderID, &fromStatusOutbound, updated.Status, reasonCode); err != nil {
-		return outbound.Order{}, wrapCode(mapCheckoutCode(err), "append order status history", err)
+		fromStatusOutbound := toOutboundOrderStatus(fromStatus)
+		if _, historyErr := repos.Orders.AppendStatusHistory(ctx, order.OrderID, &fromStatusOutbound, nextOrder.Status, reasonCode); historyErr != nil {
+			return wrapCode(mapCheckoutCode(historyErr), "append order status history", historyErr)
+		}
+
+		if next == domain.OrderStatusCancelled {
+			cancelledEvent, eventErr := s.newOrderCancelledEvent(ctx, nextOrder, reasonCode)
+			if eventErr != nil {
+				return wrapCode(CheckoutErrorCodeInternal, "map order cancelled event", eventErr)
+			}
+
+			if publishErr := repos.Publisher.Publish(ctx, cancelledEvent); publishErr != nil {
+				return wrapCode(mapCheckoutCode(publishErr), "publish order cancelled event", publishErr)
+			}
+		}
+
+		updated = nextOrder
+		return nil
+	})
+	if err != nil {
+		return outbound.Order{}, err
 	}
 
 	return updated, nil
+}
+
+func (s *Service) createOrderAndPublishCreatedEvent(
+	ctx context.Context,
+	userID uuid.UUID,
+	idempotencyKey string,
+	snapshot outbound.CheckoutSnapshot,
+) (outbound.Order, error) {
+	createdOrder := outbound.Order{}
+	input := toCreateOrderInput(userID, idempotencyKey, snapshot)
+
+	err := s.withTransactionRepos(ctx, func(repos TransactionRepos) error {
+		order, createErr := repos.Orders.CreateWithItems(ctx, input)
+		if createErr != nil {
+			return wrapCode(mapCheckoutCode(createErr), "create order with items", createErr)
+		}
+
+		createdEvent, eventErr := s.newOrderCreatedEvent(ctx, order, idempotencyKey)
+		if eventErr != nil {
+			return wrapCode(CheckoutErrorCodeInternal, "map order created event", eventErr)
+		}
+
+		if publishErr := repos.Publisher.Publish(ctx, createdEvent); publishErr != nil {
+			return wrapCode(mapCheckoutCode(publishErr), "publish order created event", publishErr)
+		}
+
+		createdOrder = order
+		return nil
+	})
+	if err != nil {
+		return outbound.Order{}, err
+	}
+
+	return createdOrder, nil
+}
+
+func (s *Service) withTransactionRepos(ctx context.Context, fn func(TransactionRepos) error) error {
+	repos := TransactionRepos{
+		Orders:    s.orders,
+		Saga:      s.saga,
+		Publisher: s.resolvePublisher(),
+	}
+
+	if s.txProvider == nil {
+		return fn(repos)
+	}
+
+	return s.txProvider.WithTransaction(ctx, nil, func(uow tx.UnitOfWork[TransactionRepos]) error {
+		return fn(uow.Repos())
+	})
+}
+
+func (s *Service) resolvePublisher() outbound.EventPublisher {
+	if s.publisher != nil {
+		return s.publisher
+	}
+
+	return noopEventPublisher{}
+}
+
+func (s *Service) newOrderCreatedEvent(
+	ctx context.Context,
+	order outbound.Order,
+	idempotencyKey string,
+) (domain.DomainEvent, error) {
+	if order.OrderID == uuid.Nil {
+		return domain.DomainEvent{}, fmt.Errorf("order_id is required")
+	}
+
+	if order.UserID == uuid.Nil {
+		return domain.DomainEvent{}, fmt.Errorf("user_id is required")
+	}
+
+	correlationID := correlationIDFromContext(ctx, order.OrderID.String())
+	causationID := causationIDFromContext(ctx)
+	if causationID == "" {
+		causationID = strings.TrimSpace(idempotencyKey)
+	}
+	if causationID == "" {
+		causationID = correlationID
+	}
+
+	items := make([]domain.OrderItemSnapshot, 0, len(order.Items))
+	for _, item := range order.Items {
+		items = append(items, domain.OrderItemSnapshot{
+			ProductID: item.ProductID.String(),
+			SKU:       item.SKU,
+			Name:      item.Name,
+			Quantity:  item.Quantity,
+			UnitPrice: item.UnitPrice,
+			LineTotal: item.LineTotal,
+			Currency:  item.Currency,
+		})
+	}
+
+	headers := map[string]string{}
+	if idempotency := strings.TrimSpace(idempotencyKey); idempotency != "" {
+		headers[outboxHeaderIdempotencyKey] = idempotency
+	}
+
+	return domain.DomainEvent{
+		EventID:       uuid.NewString(),
+		EventName:     orderCreatedEventName,
+		Producer:      s.producer,
+		OccurredAt:    timeNowUTC(),
+		CorrelationID: correlationID,
+		CausationID:   causationID,
+		SchemaVersion: orderEventSchemaVersion,
+		AggregateType: orderAggregateType,
+		AggregateID:   order.OrderID.String(),
+		Topic:         orderEventsTopic,
+		Key:           order.OrderID.String(),
+		Payload: domain.OrderCreatedPayload{
+			OrderID:     order.OrderID.String(),
+			UserID:      order.UserID.String(),
+			Status:      domain.OrderStatus(order.Status),
+			Currency:    order.Currency,
+			TotalAmount: order.TotalAmount,
+			Items:       items,
+		},
+		Headers: headers,
+	}, nil
+}
+
+func (s *Service) newOrderCancelledEvent(
+	ctx context.Context,
+	order outbound.Order,
+	reasonCode *string,
+) (domain.DomainEvent, error) {
+	if order.OrderID == uuid.Nil {
+		return domain.DomainEvent{}, fmt.Errorf("order_id is required")
+	}
+
+	if order.UserID == uuid.Nil {
+		return domain.DomainEvent{}, fmt.Errorf("user_id is required")
+	}
+
+	cancelReasonCode := ""
+	if reasonCode != nil {
+		cancelReasonCode = strings.TrimSpace(*reasonCode)
+	}
+
+	correlationID := correlationIDFromContext(ctx, order.OrderID.String())
+	causationID := causationIDFromContext(ctx)
+	if causationID == "" {
+		causationID = correlationID
+	}
+
+	now := timeNowUTC()
+
+	return domain.DomainEvent{
+		EventID:       uuid.NewString(),
+		EventName:     orderCancelledEventName,
+		Producer:      s.producer,
+		OccurredAt:    now,
+		CorrelationID: correlationID,
+		CausationID:   causationID,
+		SchemaVersion: orderEventSchemaVersion,
+		AggregateType: orderAggregateType,
+		AggregateID:   order.OrderID.String(),
+		Topic:         orderEventsTopic,
+		Key:           order.OrderID.String(),
+		Payload: domain.OrderCancelledPayload{
+			OrderID:             order.OrderID.String(),
+			UserID:              order.UserID.String(),
+			Status:              domain.OrderStatus(order.Status),
+			CancelReasonCode:    cancelReasonCode,
+			CancelReasonMessage: cancelReasonCode,
+			CancelledAt:         now,
+		},
+		Headers: map[string]string{},
+	}, nil
+}
+
+func correlationIDFromContext(ctx context.Context, fallback string) string {
+	correlationID := strings.TrimSpace(eventMetadataFromContext(ctx).CorrelationID)
+	if correlationID != "" {
+		return correlationID
+	}
+
+	if strings.TrimSpace(fallback) != "" {
+		return fallback
+	}
+
+	return uuid.NewString()
+}
+
+func causationIDFromContext(ctx context.Context) string {
+	return strings.TrimSpace(eventMetadataFromContext(ctx).CausationID)
+}
+
+type eventMetadata struct {
+	CorrelationID string
+	CausationID   string
+}
+
+type eventMetadataKey struct{}
+
+func withEventMetadata(ctx context.Context, metadata eventMetadata) context.Context {
+	return context.WithValue(ctx, eventMetadataKey{}, metadata)
+}
+
+func eventMetadataFromContext(ctx context.Context) eventMetadata {
+	metadata, _ := ctx.Value(eventMetadataKey{}).(eventMetadata)
+	return metadata
+}
+
+func timeNowUTC() time.Time {
+	return time.Now().UTC()
 }
 
 func (s *Service) transitionStockStage(
@@ -547,5 +828,11 @@ func (noopStockReleaseService) ReleaseStock(context.Context, outbound.ReleaseSto
 type noopCheckoutPaymentService struct{}
 
 func (noopCheckoutPaymentService) InitiatePayment(context.Context, outbound.InitiatePaymentInput) error {
+	return nil
+}
+
+type noopEventPublisher struct{}
+
+func (noopEventPublisher) Publish(context.Context, domain.DomainEvent) error {
 	return nil
 }
