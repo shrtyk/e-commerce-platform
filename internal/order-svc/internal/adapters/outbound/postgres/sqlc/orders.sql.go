@@ -376,23 +376,30 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Order
 
 const createOrderCheckoutIdempotency = `-- name: CreateOrderCheckoutIdempotency :exec
 INSERT INTO
-  order_checkout_idempotency (order_id, user_id, idempotency_key)
+  order_checkout_idempotency (order_id, user_id, idempotency_key, payload_fingerprint)
 VALUES
   (
     $1,
     $2,
-    $3
+    $3,
+    $4
   )
 `
 
 type CreateOrderCheckoutIdempotencyParams struct {
-	OrderID        uuid.UUID
-	UserID         uuid.UUID
-	IdempotencyKey string
+	OrderID            uuid.UUID
+	UserID             uuid.UUID
+	IdempotencyKey     string
+	PayloadFingerprint string
 }
 
 func (q *Queries) CreateOrderCheckoutIdempotency(ctx context.Context, arg CreateOrderCheckoutIdempotencyParams) error {
-	_, err := q.db.ExecContext(ctx, createOrderCheckoutIdempotency, arg.OrderID, arg.UserID, arg.IdempotencyKey)
+	_, err := q.db.ExecContext(ctx, createOrderCheckoutIdempotency,
+		arg.OrderID,
+		arg.UserID,
+		arg.IdempotencyKey,
+		arg.PayloadFingerprint,
+	)
 	return err
 }
 
@@ -500,6 +507,28 @@ func (q *Queries) CreateOrderSagaState(ctx context.Context, arg CreateOrderSagaS
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getCheckoutIdempotencyPayloadFingerprint = `-- name: GetCheckoutIdempotencyPayloadFingerprint :one
+SELECT
+  payload_fingerprint
+FROM
+  order_checkout_idempotency
+WHERE
+  user_id = $1
+  AND idempotency_key = $2
+`
+
+type GetCheckoutIdempotencyPayloadFingerprintParams struct {
+	UserID         uuid.UUID
+	IdempotencyKey string
+}
+
+func (q *Queries) GetCheckoutIdempotencyPayloadFingerprint(ctx context.Context, arg GetCheckoutIdempotencyPayloadFingerprintParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getCheckoutIdempotencyPayloadFingerprint, arg.UserID, arg.IdempotencyKey)
+	var payload_fingerprint string
+	err := row.Scan(&payload_fingerprint)
+	return payload_fingerprint, err
 }
 
 const getOrderByID = `-- name: GetOrderByID :one

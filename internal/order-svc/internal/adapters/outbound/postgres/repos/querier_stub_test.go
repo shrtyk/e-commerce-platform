@@ -16,11 +16,12 @@ type stubQuerier struct {
 }
 
 type orderQuerierStub struct {
-	createOrderFunc                       func(ctx context.Context, arg sqlc.CreateOrderParams) (sqlc.Order, error)
-	createOrderCheckoutIdempotencyFunc    func(ctx context.Context, arg sqlc.CreateOrderCheckoutIdempotencyParams) error
-	getOrderByIDFunc                      func(ctx context.Context, orderID uuid.UUID) (sqlc.Order, error)
-	getOrderByUserIDAndIdempotencyKeyFunc func(ctx context.Context, arg sqlc.GetOrderByUserIDAndIdempotencyKeyParams) (sqlc.Order, error)
-	transitionOrderStatusFunc             func(ctx context.Context, arg sqlc.TransitionOrderStatusParams) (sqlc.Order, error)
+	createOrderFunc                              func(ctx context.Context, arg sqlc.CreateOrderParams) (sqlc.Order, error)
+	createOrderCheckoutIdempotencyFunc           func(ctx context.Context, arg sqlc.CreateOrderCheckoutIdempotencyParams) error
+	getCheckoutIdempotencyPayloadFingerprintFunc func(ctx context.Context, arg sqlc.GetCheckoutIdempotencyPayloadFingerprintParams) (string, error)
+	getOrderByIDFunc                             func(ctx context.Context, orderID uuid.UUID) (sqlc.Order, error)
+	getOrderByUserIDAndIdempotencyKeyFunc        func(ctx context.Context, arg sqlc.GetOrderByUserIDAndIdempotencyKeyParams) (sqlc.Order, error)
+	transitionOrderStatusFunc                    func(ctx context.Context, arg sqlc.TransitionOrderStatusParams) (sqlc.Order, error)
 }
 
 type itemsHistoryQuerierStub struct {

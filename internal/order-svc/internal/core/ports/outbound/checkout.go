@@ -30,6 +30,11 @@ type ValidateCheckoutIdempotencyInput struct {
 	Payload        CheckoutIdempotencyPayload
 }
 
+//mockery:generate: true
+type CheckoutIdempotencyPayloadStore interface {
+	GetPayloadFingerprint(ctx context.Context, userID uuid.UUID, idempotencyKey string) (string, error)
+}
+
 type CheckoutSnapshot struct {
 	UserID      uuid.UUID
 	Currency    string
@@ -99,7 +104,6 @@ type CheckoutPaymentService interface {
 	InitiatePayment(ctx context.Context, input InitiatePaymentInput) error
 }
 
-//mockery:generate: true
 type CheckoutIdempotencyGuard interface {
 	ValidateCheckoutIdempotency(ctx context.Context, input ValidateCheckoutIdempotencyInput) error
 }

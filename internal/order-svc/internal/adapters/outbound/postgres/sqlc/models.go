@@ -118,6 +118,7 @@ type OrderCheckoutIdempotency struct {
 	OrderID                    uuid.UUID
 	UserID                     uuid.UUID
 	IdempotencyKey             string
+	PayloadFingerprint         string
 	CreatedAt                  time.Time
 }
 

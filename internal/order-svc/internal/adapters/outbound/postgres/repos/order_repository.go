@@ -103,9 +103,10 @@ func (r *OrderRepository) createWithItems(
 	}
 
 	err = queries.CreateOrderCheckoutIdempotency(ctx, sqlc.CreateOrderCheckoutIdempotencyParams{
-		OrderID:        createdOrder.OrderID,
-		UserID:         input.UserID,
-		IdempotencyKey: input.IdempotencyKey,
+		OrderID:            createdOrder.OrderID,
+		UserID:             input.UserID,
+		IdempotencyKey:     input.IdempotencyKey,
+		PayloadFingerprint: input.PayloadFingerprint,
 	})
 	if err != nil {
 		return outbound.Order{}, fmt.Errorf("create order idempotency key: %w", mapOrderWriteErr(err))
@@ -155,6 +156,22 @@ func (r *OrderRepository) GetByUserIDAndIdempotencyKey(
 	}
 
 	return mapOrder(orderRow, mapOrderItems(itemsRows)), nil
+}
+
+func (r *OrderRepository) GetPayloadFingerprint(ctx context.Context, userID uuid.UUID, idempotencyKey string) (string, error) {
+	fingerprint, err := r.queries.GetCheckoutIdempotencyPayloadFingerprint(ctx, sqlc.GetCheckoutIdempotencyPayloadFingerprintParams{
+		UserID:         userID,
+		IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", outbound.ErrOrderNotFound
+		}
+
+		return "", fmt.Errorf("get checkout idempotency payload fingerprint: %w", err)
+	}
+
+	return fingerprint, nil
 }
 
 func (r *OrderRepository) TransitionStatus(

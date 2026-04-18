@@ -167,7 +167,13 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 		return outbound.Order{}, newCodeError(CheckoutErrorCodeCartEmpty, "checkout snapshot has no items")
 	}
 
-	createdOrder, err := s.createOrderAndPublishCreatedEvent(ctx, input.UserID, idempotencyKey, snapshot)
+	createdOrder, err := s.createOrderAndPublishCreatedEvent(
+		ctx,
+		input.UserID,
+		idempotencyKey,
+		normalizePaymentMethod(input.PaymentMethod),
+		snapshot,
+	)
 	if err != nil {
 		return outbound.Order{}, err
 	}
@@ -184,7 +190,7 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 	reserveStockInput := toReserveStockInput(createdOrder.OrderID, input.UserID, snapshot)
 	if err := s.stock.ReserveStock(ctx, reserveStockInput); err != nil {
 		code := mapCheckoutCode(err)
-		if compErr := s.compensateStockFailure(ctx, createdOrder.OrderID, order.Status, code); compErr != nil {
+		if compErr := s.compensateStockFailure(ctx, order, code); compErr != nil {
 			return outbound.Order{}, compErr
 		}
 
@@ -206,7 +212,7 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 
 	if err := s.payment.InitiatePayment(ctx, toInitiatePaymentInput(order)); err != nil {
 		code := mapCheckoutCode(err)
-		if compErr := s.compensatePaymentFailure(ctx, createdOrder.OrderID, order.Status, reserveStockInput, code); compErr != nil {
+		if compErr := s.compensatePaymentFailure(ctx, order, reserveStockInput, code); compErr != nil {
 			return outbound.Order{}, &CheckoutError{
 				Code: code,
 				Err:  fmt.Errorf("initiate payment: %w", errors.Join(err, compErr)),
@@ -250,19 +256,17 @@ func (s *Service) GetOrder(ctx context.Context, input GetOrderInput) (outbound.O
 
 func (s *Service) compensateStockFailure(
 	ctx context.Context,
-	orderID uuid.UUID,
-	currentStatus outbound.OrderStatus,
+	order outbound.Order,
 	code CheckoutErrorCode,
 ) error {
-	if _, err := s.transitionStockStage(ctx, orderID, domain.SagaStageFailed); err != nil {
+	if _, err := s.transitionStockStage(ctx, order.OrderID, domain.SagaStageFailed); err != nil {
 		return err
 	}
 
-	if _, err := s.saga.SetLastErrorCode(ctx, orderID, string(code)); err != nil {
+	if _, err := s.saga.SetLastErrorCode(ctx, order.OrderID, string(code)); err != nil {
 		return wrapCode(mapCheckoutCode(err), "set order saga last error code", err)
 	}
 
-	order := outbound.Order{OrderID: orderID, Status: currentStatus}
 	reason := string(code)
 	_, err := s.transitionOrderStatus(ctx, order, domain.OrderStatusCancelled, &reason)
 	if err != nil {
@@ -274,22 +278,20 @@ func (s *Service) compensateStockFailure(
 
 func (s *Service) compensatePaymentFailure(
 	ctx context.Context,
-	orderID uuid.UUID,
-	currentStatus outbound.OrderStatus,
+	order outbound.Order,
 	releaseStockInput outbound.ReserveStockInput,
 	code CheckoutErrorCode,
 ) error {
-	if _, err := s.transitionPaymentStage(ctx, orderID, domain.SagaStageFailed); err != nil {
+	if _, err := s.transitionPaymentStage(ctx, order.OrderID, domain.SagaStageFailed); err != nil {
 		return err
 	}
 
-	if _, err := s.saga.SetLastErrorCode(ctx, orderID, string(code)); err != nil {
+	if _, err := s.saga.SetLastErrorCode(ctx, order.OrderID, string(code)); err != nil {
 		return wrapCode(mapCheckoutCode(err), "set order saga last error code", err)
 	}
 
 	var compensationErr error
 
-	order := outbound.Order{OrderID: orderID, Status: currentStatus}
 	reason := string(code)
 	if _, err := s.transitionOrderStatus(ctx, order, domain.OrderStatusCancelled, &reason); err != nil {
 		compensationErr = errors.Join(compensationErr, fmt.Errorf("cancel order after payment failure: %w", err))
@@ -336,6 +338,11 @@ func (s *Service) transitionOrderStatus(
 		}
 
 		if next == domain.OrderStatusCancelled {
+			nextOrder.Items = order.Items
+			nextOrder.Currency = order.Currency
+			nextOrder.TotalAmount = order.TotalAmount
+			nextOrder.UserID = order.UserID
+
 			cancelledEvent, eventErr := s.newOrderCancelledEvent(ctx, nextOrder, reasonCode)
 			if eventErr != nil {
 				return wrapCode(CheckoutErrorCodeInternal, "map order cancelled event", eventErr)
@@ -344,6 +351,17 @@ func (s *Service) transitionOrderStatus(
 			if publishErr := repos.Publisher.Publish(ctx, cancelledEvent); publishErr != nil {
 				return wrapCode(mapCheckoutCode(publishErr), "publish order cancelled event", publishErr)
 			}
+		}
+
+		nextOrder.Items = order.Items
+		if nextOrder.UserID == uuid.Nil {
+			nextOrder.UserID = order.UserID
+		}
+		if nextOrder.Currency == "" {
+			nextOrder.Currency = order.Currency
+		}
+		if nextOrder.TotalAmount == 0 {
+			nextOrder.TotalAmount = order.TotalAmount
 		}
 
 		updated = nextOrder
@@ -360,10 +378,11 @@ func (s *Service) createOrderAndPublishCreatedEvent(
 	ctx context.Context,
 	userID uuid.UUID,
 	idempotencyKey string,
+	paymentMethod string,
 	snapshot outbound.CheckoutSnapshot,
 ) (outbound.Order, error) {
 	createdOrder := outbound.Order{}
-	input := toCreateOrderInput(userID, idempotencyKey, snapshot)
+	input := toCreateOrderInput(userID, idempotencyKey, paymentMethod, snapshot)
 
 	err := s.withTransactionRepos(ctx, func(repos TransactionRepos) error {
 		order, createErr := repos.Orders.CreateWithItems(ctx, input)
@@ -672,7 +691,7 @@ func (s *Service) validateInput(input CheckoutInput) error {
 	return nil
 }
 
-func toCreateOrderInput(userID uuid.UUID, idempotencyKey string, snapshot outbound.CheckoutSnapshot) outbound.CreateOrderInput {
+func toCreateOrderInput(userID uuid.UUID, idempotencyKey string, paymentMethod string, snapshot outbound.CheckoutSnapshot) outbound.CreateOrderInput {
 	items := make([]outbound.CreateOrderItemInput, 0, len(snapshot.Items))
 	for _, item := range snapshot.Items {
 		items = append(items, outbound.CreateOrderItemInput{
@@ -687,13 +706,14 @@ func toCreateOrderInput(userID uuid.UUID, idempotencyKey string, snapshot outbou
 	}
 
 	return outbound.CreateOrderInput{
-		OrderID:        uuid.New(),
-		UserID:         userID,
-		Status:         outbound.OrderStatusPending,
-		Currency:       snapshot.Currency,
-		TotalAmount:    snapshot.TotalAmount,
-		IdempotencyKey: idempotencyKey,
-		Items:          items,
+		OrderID:            uuid.New(),
+		UserID:             userID,
+		Status:             outbound.OrderStatusPending,
+		Currency:           snapshot.Currency,
+		TotalAmount:        snapshot.TotalAmount,
+		IdempotencyKey:     idempotencyKey,
+		PayloadFingerprint: checkoutPayloadFingerprint(outbound.CheckoutIdempotencyPayload{PaymentMethod: paymentMethod}),
+		Items:              items,
 	}
 }
 

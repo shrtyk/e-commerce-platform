@@ -20,6 +20,7 @@ type Querier interface {
 	CreateOrderCheckoutIdempotency(ctx context.Context, arg CreateOrderCheckoutIdempotencyParams) error
 	CreateOrderItem(ctx context.Context, arg CreateOrderItemParams) (OrderItem, error)
 	CreateOrderSagaState(ctx context.Context, arg CreateOrderSagaStateParams) (OrderSagaState, error)
+	GetCheckoutIdempotencyPayloadFingerprint(ctx context.Context, arg GetCheckoutIdempotencyPayloadFingerprintParams) (string, error)
 	GetOrderByID(ctx context.Context, orderID uuid.UUID) (Order, error)
 	GetOrderByUserIDAndIdempotencyKey(ctx context.Context, arg GetOrderByUserIDAndIdempotencyKeyParams) (Order, error)
 	GetOrderSagaStateByOrderID(ctx context.Context, orderID uuid.UUID) (OrderSagaState, error)

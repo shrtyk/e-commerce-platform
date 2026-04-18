@@ -156,6 +156,7 @@ func main() {
 		adaptercheckoutgrpc.NewStockReservationService(catalogClient),
 		adaptercheckoutgrpc.NewStockReleaseService(catalogClient),
 		adaptercheckoutgrpc.NewCheckoutPaymentService(paymentv1.NewPaymentServiceClient(paymentConn)),
+		checkout.NewCheckoutIdempotencyGuard(orderRepository),
 	).WithEventing(outboxEventPublisher, txProvider, cfg.Service.Name)
 
 	authAccessTokenKey := strings.TrimSpace(os.Getenv("AUTH_ACCESS_TOKEN_KEY"))

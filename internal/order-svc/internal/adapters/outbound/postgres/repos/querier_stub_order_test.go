@@ -32,6 +32,14 @@ func (s stubQuerier) GetOrderByID(ctx context.Context, orderID uuid.UUID) (sqlc.
 	return s.order.getOrderByIDFunc(ctx, orderID)
 }
 
+func (s stubQuerier) GetCheckoutIdempotencyPayloadFingerprint(ctx context.Context, arg sqlc.GetCheckoutIdempotencyPayloadFingerprintParams) (string, error) {
+	if s.order.getCheckoutIdempotencyPayloadFingerprintFunc == nil {
+		return "", unexpectedQuerierCall("GetCheckoutIdempotencyPayloadFingerprint")
+	}
+
+	return s.order.getCheckoutIdempotencyPayloadFingerprintFunc(ctx, arg)
+}
+
 func (s stubQuerier) GetOrderByUserIDAndIdempotencyKey(ctx context.Context, arg sqlc.GetOrderByUserIDAndIdempotencyKeyParams) (sqlc.Order, error) {
 	if s.order.getOrderByUserIDAndIdempotencyKeyFunc == nil {
 		return sqlc.Order{}, unexpectedQuerierCall("GetOrderByUserIDAndIdempotencyKey")

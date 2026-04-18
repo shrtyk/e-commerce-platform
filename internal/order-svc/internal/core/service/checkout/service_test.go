@@ -1263,7 +1263,7 @@ func TestCheckoutCreateOrderAndOutboxAtomicWithTxProvider(t *testing.T) {
 
 			svc := NewService(orders, saga, snapshots, stock, nil, nil).WithEventing(publisher, txProvider, "order-svc")
 
-			order, err := svc.createOrderAndPublishCreatedEvent(context.Background(), userID, "idem-tx", snapshot)
+			order, err := svc.createOrderAndPublishCreatedEvent(context.Background(), userID, "idem-tx", "", snapshot)
 			if tt.wantErrContains != "" {
 				require.Error(t, err)
 				require.ErrorContains(t, err, tt.wantErrContains)

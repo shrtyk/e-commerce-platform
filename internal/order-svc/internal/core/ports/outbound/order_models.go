@@ -51,13 +51,14 @@ type OrderItem struct {
 }
 
 type CreateOrderInput struct {
-	OrderID        uuid.UUID
-	UserID         uuid.UUID
-	Status         OrderStatus
-	Currency       string
-	TotalAmount    int64
-	IdempotencyKey string
-	Items          []CreateOrderItemInput
+	OrderID            uuid.UUID
+	UserID             uuid.UUID
+	Status             OrderStatus
+	Currency           string
+	TotalAmount        int64
+	IdempotencyKey     string
+	PayloadFingerprint string
+	Items              []CreateOrderItemInput
 }
 
 type CreateOrderItemInput struct {

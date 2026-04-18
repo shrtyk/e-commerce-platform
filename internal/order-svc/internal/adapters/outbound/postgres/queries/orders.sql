@@ -53,13 +53,23 @@ RETURNING
 
 -- name: CreateOrderCheckoutIdempotency :exec
 INSERT INTO
-  order_checkout_idempotency (order_id, user_id, idempotency_key)
+  order_checkout_idempotency (order_id, user_id, idempotency_key, payload_fingerprint)
 VALUES
   (
     sqlc.arg (order_id),
     sqlc.arg (user_id),
-    sqlc.arg (idempotency_key)
+    sqlc.arg (idempotency_key),
+    sqlc.arg (payload_fingerprint)
   );
+
+-- name: GetCheckoutIdempotencyPayloadFingerprint :one
+SELECT
+  payload_fingerprint
+FROM
+  order_checkout_idempotency
+WHERE
+  user_id = sqlc.arg (user_id)
+  AND idempotency_key = sqlc.arg (idempotency_key);
 
 -- name: GetOrderByID :one
 SELECT
