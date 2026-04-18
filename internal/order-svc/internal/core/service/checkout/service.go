@@ -19,6 +19,8 @@ type Service struct {
 	saga             outbound.OrderSagaStateRepository
 	snapshots        outbound.CheckoutSnapshotRepository
 	stock            outbound.StockReservationService
+	stockRelease     outbound.StockReleaseService
+	payment          outbound.CheckoutPaymentService
 	idempotencyGuard outbound.CheckoutIdempotencyGuard
 }
 
@@ -33,8 +35,20 @@ func NewService(
 	saga outbound.OrderSagaStateRepository,
 	snapshots outbound.CheckoutSnapshotRepository,
 	stock outbound.StockReservationService,
+	stockRelease outbound.StockReleaseService,
+	payment outbound.CheckoutPaymentService,
 	guards ...outbound.CheckoutIdempotencyGuard,
 ) *Service {
+	release := outbound.StockReleaseService(noopStockReleaseService{})
+	if stockRelease != nil {
+		release = stockRelease
+	}
+
+	paymentService := outbound.CheckoutPaymentService(noopCheckoutPaymentService{})
+	if payment != nil {
+		paymentService = payment
+	}
+
 	guard := outbound.CheckoutIdempotencyGuard(noopCheckoutIdempotencyGuard{})
 	if len(guards) > 0 && guards[0] != nil {
 		guard = guards[0]
@@ -45,6 +59,8 @@ func NewService(
 		saga:             saga,
 		snapshots:        snapshots,
 		stock:            stock,
+		stockRelease:     release,
+		payment:          paymentService,
 		idempotencyGuard: guard,
 	}
 }
@@ -127,6 +143,26 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 		return outbound.Order{}, err
 	}
 
+	if _, err := s.transitionPaymentStage(ctx, createdOrder.OrderID, domain.SagaStageRequested); err != nil {
+		return outbound.Order{}, err
+	}
+
+	if err := s.payment.InitiatePayment(ctx, toInitiatePaymentInput(order)); err != nil {
+		code := mapCheckoutCode(err)
+		if compErr := s.compensatePaymentFailure(ctx, createdOrder.OrderID, order.Status, reserveStockInput, code); compErr != nil {
+			return outbound.Order{}, &CheckoutError{
+				Code: code,
+				Err:  fmt.Errorf("initiate payment: %w", errors.Join(err, compErr)),
+			}
+		}
+
+		return outbound.Order{}, wrapCode(code, "initiate payment", err)
+	}
+
+	if _, err := s.transitionPaymentStage(ctx, createdOrder.OrderID, domain.SagaStageSucceeded); err != nil {
+		return outbound.Order{}, err
+	}
+
 	return order, nil
 }
 
@@ -149,6 +185,40 @@ func (s *Service) compensateStockFailure(
 	_, err := s.transitionOrderStatus(ctx, order, domain.OrderStatusCancelled, &reason)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (s *Service) compensatePaymentFailure(
+	ctx context.Context,
+	orderID uuid.UUID,
+	currentStatus outbound.OrderStatus,
+	releaseStockInput outbound.ReserveStockInput,
+	code CheckoutErrorCode,
+) error {
+	if _, err := s.transitionPaymentStage(ctx, orderID, domain.SagaStageFailed); err != nil {
+		return err
+	}
+
+	if _, err := s.saga.SetLastErrorCode(ctx, orderID, string(code)); err != nil {
+		return wrapCode(mapCheckoutCode(err), "set order saga last error code", err)
+	}
+
+	var compensationErr error
+
+	order := outbound.Order{OrderID: orderID, Status: currentStatus}
+	reason := string(code)
+	if _, err := s.transitionOrderStatus(ctx, order, domain.OrderStatusCancelled, &reason); err != nil {
+		compensationErr = errors.Join(compensationErr, fmt.Errorf("cancel order after payment failure: %w", err))
+	}
+
+	if err := s.stockRelease.ReleaseStock(ctx, toReleaseStockInput(releaseStockInput)); err != nil {
+		compensationErr = errors.Join(compensationErr, fmt.Errorf("release stock after payment failure: %w", err))
+	}
+
+	if compensationErr != nil {
+		return compensationErr
 	}
 
 	return nil
@@ -229,6 +299,51 @@ func (s *Service) transitionStockStage(
 	}
 }
 
+func (s *Service) transitionPaymentStage(
+	ctx context.Context,
+	orderID uuid.UUID,
+	target domain.SagaStage,
+) (outbound.SagaState, error) {
+	from := domain.SagaStageNotStarted
+	switch target {
+	case domain.SagaStageRequested:
+		from = domain.SagaStageNotStarted
+	case domain.SagaStageSucceeded, domain.SagaStageFailed:
+		from = domain.SagaStageRequested
+	}
+
+	next, err := domain.TransitionPaymentStage(domain.SagaStageSucceeded, from, target)
+	if err != nil {
+		return outbound.SagaState{}, wrapCode(CheckoutErrorCodeConflict, "validate payment stage transition", err)
+	}
+
+	switch next {
+	case domain.SagaStageRequested:
+		state, reqErr := s.saga.TransitionPaymentStageToRequested(ctx, orderID)
+		if reqErr != nil {
+			return outbound.SagaState{}, wrapCode(mapCheckoutCode(reqErr), "transition payment stage to requested", reqErr)
+		}
+
+		return state, nil
+	case domain.SagaStageSucceeded:
+		state, sucErr := s.saga.TransitionPaymentStageToSucceeded(ctx, orderID)
+		if sucErr != nil {
+			return outbound.SagaState{}, wrapCode(mapCheckoutCode(sucErr), "transition payment stage to succeeded", sucErr)
+		}
+
+		return state, nil
+	case domain.SagaStageFailed:
+		state, failErr := s.saga.TransitionPaymentStageToFailed(ctx, orderID)
+		if failErr != nil {
+			return outbound.SagaState{}, wrapCode(mapCheckoutCode(failErr), "transition payment stage to failed", failErr)
+		}
+
+		return state, nil
+	default:
+		return outbound.SagaState{}, newCodeError(CheckoutErrorCodeInternal, "unsupported payment stage")
+	}
+}
+
 func (s *Service) validateInput(input CheckoutInput) error {
 	if input.UserID == uuid.Nil {
 		return newCodeError(CheckoutErrorCodeInvalidArgument, "checkout input user_id is required")
@@ -288,6 +403,33 @@ func toReserveStockInput(orderID uuid.UUID, userID uuid.UUID, snapshot outbound.
 	}
 }
 
+func toReleaseStockInput(input outbound.ReserveStockInput) outbound.ReleaseStockInput {
+	items := make([]outbound.ReleaseStockItem, 0, len(input.Items))
+	for _, item := range input.Items {
+		items = append(items, outbound.ReleaseStockItem{
+			ProductID: item.ProductID,
+			SKU:       item.SKU,
+			Quantity:  item.Quantity,
+		})
+	}
+
+	return outbound.ReleaseStockInput{
+		OrderID: input.OrderID,
+		UserID:  input.UserID,
+		Items:   items,
+	}
+}
+
+func toInitiatePaymentInput(order outbound.Order) outbound.InitiatePaymentInput {
+	return outbound.InitiatePaymentInput{
+		OrderID:         order.OrderID,
+		Amount:          order.TotalAmount,
+		Currency:        order.Currency,
+		IdempotencyKey:  order.OrderID.String(),
+		PaymentProvider: "default",
+	}
+}
+
 func mapCheckoutCode(err error) CheckoutErrorCode {
 	switch {
 	case errors.Is(err, outbound.ErrCheckoutSnapshotNotFound):
@@ -301,8 +443,14 @@ func mapCheckoutCode(err error) CheckoutErrorCode {
 		return CheckoutErrorCodeStockUnavailable
 	case errors.Is(err, outbound.ErrStockReservationConflict):
 		return CheckoutErrorCodeConflict
+	case errors.Is(err, outbound.ErrStockReleaseNotFound),
+		errors.Is(err, outbound.ErrStockReleaseUnavailable),
+		errors.Is(err, outbound.ErrStockReleaseConflict):
+		return CheckoutErrorCodeConflict
 	case errors.Is(err, outbound.ErrPaymentDeclined):
 		return CheckoutErrorCodePaymentDeclined
+	case errors.Is(err, outbound.ErrPaymentConflict):
+		return CheckoutErrorCodeConflict
 	case errors.Is(err, outbound.ErrOrderAlreadyExists),
 		errors.Is(err, outbound.ErrOrderInvalidStatusTransition),
 		errors.Is(err, outbound.ErrOrderSagaStateInvalidTransition),
@@ -357,5 +505,17 @@ func normalizePaymentMethod(paymentMethod *string) string {
 type noopCheckoutIdempotencyGuard struct{}
 
 func (noopCheckoutIdempotencyGuard) ValidateCheckoutIdempotency(context.Context, outbound.ValidateCheckoutIdempotencyInput) error {
+	return nil
+}
+
+type noopStockReleaseService struct{}
+
+func (noopStockReleaseService) ReleaseStock(context.Context, outbound.ReleaseStockInput) error {
+	return nil
+}
+
+type noopCheckoutPaymentService struct{}
+
+func (noopCheckoutPaymentService) InitiatePayment(context.Context, outbound.InitiatePaymentInput) error {
 	return nil
 }

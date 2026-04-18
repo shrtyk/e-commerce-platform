@@ -55,7 +55,7 @@ func TestCheckoutInvalidInput(t *testing.T) {
 			snapshots := outboundmocks.NewMockCheckoutSnapshotRepository(t)
 			stock := outboundmocks.NewMockStockReservationService(t)
 
-			svc := NewService(orders, saga, snapshots, stock)
+			svc := NewService(orders, saga, snapshots, stock, nil, nil)
 
 			order, err := svc.Checkout(context.Background(), tt.input)
 			require.Equal(t, outbound.Order{}, order)
@@ -103,7 +103,7 @@ func TestCheckoutIdempotencyReplay(t *testing.T) {
 		Return(existingOrder, nil).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock)
+	svc := NewService(orders, saga, snapshots, stock, nil, nil)
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: idempotencyKey})
 	require.NoError(t, err)
@@ -140,7 +140,7 @@ func TestCheckoutIdempotencyReplaySamePayloadStillSucceeds(t *testing.T) {
 		Return(nil).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock, guard)
+	svc := NewService(orders, saga, snapshots, stock, nil, nil, guard)
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{
 		UserID:         userID,
@@ -183,7 +183,7 @@ func TestCheckoutIdempotencyReplayDifferentPayloadFails(t *testing.T) {
 		Return(outbound.ErrCheckoutIdempotencyPayloadMismatch).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock, guard)
+	svc := NewService(orders, saga, snapshots, stock, nil, nil, guard)
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{
 		UserID:         userID,
@@ -249,7 +249,7 @@ func TestCheckoutCartErrors(t *testing.T) {
 					Once()
 			}
 
-			svc := NewService(orders, saga, snapshots, stock)
+			svc := NewService(orders, saga, snapshots, stock, nil, nil)
 
 			order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-1"})
 			require.Equal(t, outbound.Order{}, order)
@@ -340,6 +340,14 @@ func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
 		TransitionStockStageToSucceeded(testifymock.Anything, orderID).
 		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageNotStarted}, nil).
 		Once()
+	saga.EXPECT().
+		TransitionPaymentStageToRequested(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageRequested}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionPaymentStageToSucceeded(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageSucceeded}, nil).
+		Once()
 
 	stock.EXPECT().
 		ReserveStock(testifymock.Anything, testifymock.MatchedBy(func(input outbound.ReserveStockInput) bool {
@@ -348,7 +356,7 @@ func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
 		Return(nil).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock)
+	svc := NewService(orders, saga, snapshots, stock, nil, nil)
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: idempotencyKey})
 	require.NoError(t, err)
@@ -358,9 +366,350 @@ func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
 	orders.AssertNumberOfCalls(t, "AppendStatusHistory", 2)
 	saga.AssertNumberOfCalls(t, "TransitionStockStageToRequested", 1)
 	saga.AssertNumberOfCalls(t, "TransitionStockStageToSucceeded", 1)
+	saga.AssertNumberOfCalls(t, "TransitionPaymentStageToRequested", 1)
+	saga.AssertNumberOfCalls(t, "TransitionPaymentStageToSucceeded", 1)
 	stock.AssertNumberOfCalls(t, "ReserveStock", 1)
 	saga.AssertNotCalled(t, "TransitionStockStageToFailed", testifymock.Anything, testifymock.Anything)
+	saga.AssertNotCalled(t, "TransitionPaymentStageToFailed", testifymock.Anything, testifymock.Anything)
 	saga.AssertNotCalled(t, "SetLastErrorCode", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+}
+
+func TestCheckoutPaymentFailureCompensation(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	orderID := uuid.New()
+	now := time.Now().UTC()
+	cancelReason := string(CheckoutErrorCodePaymentDeclined)
+
+	orders := outboundmocks.NewMockOrderRepository(t)
+	saga := outboundmocks.NewMockOrderSagaStateRepository(t)
+	snapshots := outboundmocks.NewMockCheckoutSnapshotRepository(t)
+	stock := outboundmocks.NewMockStockReservationService(t)
+	stockRelease := outboundmocks.NewMockStockReleaseService(t)
+	payment := outboundmocks.NewMockCheckoutPaymentService(t)
+
+	orders.EXPECT().
+		GetByUserIDAndIdempotencyKey(testifymock.Anything, userID, "idem-payment-fail").
+		Return(outbound.Order{}, outbound.ErrOrderNotFound).
+		Once()
+	snapshots.EXPECT().
+		GetCheckoutSnapshot(testifymock.Anything, userID).
+		Return(checkoutSnapshotWithSingleItem(userID, 2100, "SKU-3", "Item 3", 2100), nil).
+		Once()
+	orders.EXPECT().
+		CreateWithItems(testifymock.Anything, testifymock.MatchedBy(func(input outbound.CreateOrderInput) bool {
+			return input.UserID == userID &&
+				input.IdempotencyKey == "idem-payment-fail" &&
+				input.Status == outbound.OrderStatusPending
+		})).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusPending, Currency: "USD", TotalAmount: 2100}, nil).
+		Once()
+
+	fromPending := outbound.OrderStatusPending
+	fromAwaitingStock := outbound.OrderStatusAwaitingStock
+	fromAwaitingPayment := outbound.OrderStatusAwaitingPayment
+
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusPending, outbound.OrderStatusAwaitingStock).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingStock, Currency: "USD", TotalAmount: 2100, CreatedAt: now, UpdatedAt: now}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(testifymock.Anything, orderID, &fromPending, outbound.OrderStatusAwaitingStock, (*string)(nil)).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusAwaitingStock, outbound.OrderStatusAwaitingPayment).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingPayment, Currency: "USD", TotalAmount: 2100, CreatedAt: now, UpdatedAt: now}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(testifymock.Anything, orderID, &fromAwaitingStock, outbound.OrderStatusAwaitingPayment, (*string)(nil)).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusAwaitingPayment, outbound.OrderStatusCancelled).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusCancelled, Currency: "USD", TotalAmount: 2100, CreatedAt: now, UpdatedAt: now}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(
+			testifymock.Anything,
+			orderID,
+			&fromAwaitingPayment,
+			outbound.OrderStatusCancelled,
+			testifymock.MatchedBy(func(reason *string) bool {
+				return reason != nil && *reason == string(CheckoutErrorCodePaymentDeclined)
+			}),
+		).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+
+	saga.EXPECT().
+		TransitionStockStageToRequested(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageRequested, PaymentStage: outbound.SagaStageNotStarted}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionStockStageToSucceeded(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageNotStarted}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionPaymentStageToRequested(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageRequested}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionPaymentStageToFailed(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageFailed}, nil).
+		Once()
+	saga.EXPECT().
+		SetLastErrorCode(testifymock.Anything, orderID, string(CheckoutErrorCodePaymentDeclined)).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageFailed, LastErrorCode: &cancelReason}, nil).
+		Once()
+
+	stock.EXPECT().
+		ReserveStock(testifymock.Anything, testifymock.MatchedBy(func(input outbound.ReserveStockInput) bool {
+			return input.OrderID == orderID && input.UserID == userID && len(input.Items) == 1
+		})).
+		Return(nil).
+		Once()
+
+	payment.EXPECT().
+		InitiatePayment(testifymock.Anything, testifymock.MatchedBy(func(input outbound.InitiatePaymentInput) bool {
+			return input.OrderID == orderID &&
+				input.Amount == 2100 &&
+				input.Currency == "USD" &&
+				input.IdempotencyKey == orderID.String()
+		})).
+		Return(outbound.ErrPaymentDeclined).
+		Once()
+
+	stockRelease.EXPECT().
+		ReleaseStock(testifymock.Anything, testifymock.MatchedBy(func(input outbound.ReleaseStockInput) bool {
+			return input.OrderID == orderID && input.UserID == userID && len(input.Items) == 1
+		})).
+		Return(nil).
+		Once()
+
+	svc := NewService(orders, saga, snapshots, stock, stockRelease, payment)
+
+	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-payment-fail"})
+	require.Equal(t, outbound.Order{}, order)
+	require.Error(t, err)
+	require.ErrorIs(t, err, outbound.ErrPaymentDeclined)
+	require.Equal(t, CheckoutErrorCodePaymentDeclined, CodeOf(err))
+}
+
+func TestCheckoutPaymentFailureCompensationStockReleaseFailure(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	orderID := uuid.New()
+	now := time.Now().UTC()
+	cancelReason := string(CheckoutErrorCodePaymentDeclined)
+
+	orders := outboundmocks.NewMockOrderRepository(t)
+	saga := outboundmocks.NewMockOrderSagaStateRepository(t)
+	snapshots := outboundmocks.NewMockCheckoutSnapshotRepository(t)
+	stock := outboundmocks.NewMockStockReservationService(t)
+	stockRelease := outboundmocks.NewMockStockReleaseService(t)
+	payment := outboundmocks.NewMockCheckoutPaymentService(t)
+
+	orders.EXPECT().
+		GetByUserIDAndIdempotencyKey(testifymock.Anything, userID, "idem-payment-release-fail").
+		Return(outbound.Order{}, outbound.ErrOrderNotFound).
+		Once()
+	snapshots.EXPECT().
+		GetCheckoutSnapshot(testifymock.Anything, userID).
+		Return(checkoutSnapshotWithSingleItem(userID, 2200, "SKU-4", "Item 4", 2200), nil).
+		Once()
+	orders.EXPECT().
+		CreateWithItems(testifymock.Anything, testifymock.Anything).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusPending, Currency: "USD", TotalAmount: 2200}, nil).
+		Once()
+
+	fromPending := outbound.OrderStatusPending
+	fromAwaitingStock := outbound.OrderStatusAwaitingStock
+	fromAwaitingPayment := outbound.OrderStatusAwaitingPayment
+
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusPending, outbound.OrderStatusAwaitingStock).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingStock, Currency: "USD", TotalAmount: 2200, CreatedAt: now, UpdatedAt: now}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(testifymock.Anything, orderID, &fromPending, outbound.OrderStatusAwaitingStock, (*string)(nil)).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusAwaitingStock, outbound.OrderStatusAwaitingPayment).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingPayment, Currency: "USD", TotalAmount: 2200, CreatedAt: now, UpdatedAt: now}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(testifymock.Anything, orderID, &fromAwaitingStock, outbound.OrderStatusAwaitingPayment, (*string)(nil)).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusAwaitingPayment, outbound.OrderStatusCancelled).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusCancelled, Currency: "USD", TotalAmount: 2200, CreatedAt: now, UpdatedAt: now}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(
+			testifymock.Anything,
+			orderID,
+			&fromAwaitingPayment,
+			outbound.OrderStatusCancelled,
+			testifymock.MatchedBy(func(reason *string) bool {
+				return reason != nil && *reason == string(CheckoutErrorCodePaymentDeclined)
+			}),
+		).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+
+	saga.EXPECT().
+		TransitionStockStageToRequested(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageRequested, PaymentStage: outbound.SagaStageNotStarted}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionStockStageToSucceeded(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageNotStarted}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionPaymentStageToRequested(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageRequested}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionPaymentStageToFailed(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageFailed}, nil).
+		Once()
+	saga.EXPECT().
+		SetLastErrorCode(testifymock.Anything, orderID, string(CheckoutErrorCodePaymentDeclined)).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageFailed, LastErrorCode: &cancelReason}, nil).
+		Once()
+
+	stock.EXPECT().
+		ReserveStock(testifymock.Anything, testifymock.Anything).
+		Return(nil).
+		Once()
+
+	payment.EXPECT().
+		InitiatePayment(testifymock.Anything, testifymock.Anything).
+		Return(outbound.ErrPaymentDeclined).
+		Once()
+
+	stockRelease.EXPECT().
+		ReleaseStock(testifymock.Anything, testifymock.Anything).
+		Return(outbound.ErrStockReleaseConflict).
+		Once()
+
+	svc := NewService(orders, saga, snapshots, stock, stockRelease, payment)
+
+	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-payment-release-fail"})
+	require.Equal(t, outbound.Order{}, order)
+	require.Error(t, err)
+	require.ErrorIs(t, err, outbound.ErrPaymentDeclined)
+	require.ErrorIs(t, err, outbound.ErrStockReleaseConflict)
+	require.Equal(t, CheckoutErrorCodePaymentDeclined, CodeOf(err))
+}
+
+func TestCheckoutPaymentFailureCompensationReleaseAttemptedWhenCancelTransitionFails(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	orderID := uuid.New()
+
+	orders := outboundmocks.NewMockOrderRepository(t)
+	saga := outboundmocks.NewMockOrderSagaStateRepository(t)
+	snapshots := outboundmocks.NewMockCheckoutSnapshotRepository(t)
+	stock := outboundmocks.NewMockStockReservationService(t)
+	stockRelease := outboundmocks.NewMockStockReleaseService(t)
+	payment := outboundmocks.NewMockCheckoutPaymentService(t)
+
+	orders.EXPECT().
+		GetByUserIDAndIdempotencyKey(testifymock.Anything, userID, "idem-payment-cancel-fail").
+		Return(outbound.Order{}, outbound.ErrOrderNotFound).
+		Once()
+	snapshots.EXPECT().
+		GetCheckoutSnapshot(testifymock.Anything, userID).
+		Return(checkoutSnapshotWithSingleItem(userID, 2200, "SKU-4", "Item 4", 2200), nil).
+		Once()
+	orders.EXPECT().
+		CreateWithItems(testifymock.Anything, testifymock.Anything).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusPending, Currency: "USD", TotalAmount: 2200}, nil).
+		Once()
+
+	fromPending := outbound.OrderStatusPending
+	fromAwaitingStock := outbound.OrderStatusAwaitingStock
+
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusPending, outbound.OrderStatusAwaitingStock).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingStock, Currency: "USD", TotalAmount: 2200}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(testifymock.Anything, orderID, &fromPending, outbound.OrderStatusAwaitingStock, (*string)(nil)).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusAwaitingStock, outbound.OrderStatusAwaitingPayment).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingPayment, Currency: "USD", TotalAmount: 2200}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(testifymock.Anything, orderID, &fromAwaitingStock, outbound.OrderStatusAwaitingPayment, (*string)(nil)).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusAwaitingPayment, outbound.OrderStatusCancelled).
+		Return(outbound.Order{}, outbound.ErrOrderInvalidStatusTransition).
+		Once()
+
+	saga.EXPECT().
+		TransitionStockStageToRequested(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageRequested, PaymentStage: outbound.SagaStageNotStarted}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionStockStageToSucceeded(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageNotStarted}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionPaymentStageToRequested(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageRequested}, nil).
+		Once()
+	saga.EXPECT().
+		TransitionPaymentStageToFailed(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageFailed}, nil).
+		Once()
+	saga.EXPECT().
+		SetLastErrorCode(testifymock.Anything, orderID, string(CheckoutErrorCodePaymentDeclined)).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageFailed}, nil).
+		Once()
+
+	stock.EXPECT().
+		ReserveStock(testifymock.Anything, testifymock.Anything).
+		Return(nil).
+		Once()
+
+	payment.EXPECT().
+		InitiatePayment(testifymock.Anything, testifymock.Anything).
+		Return(outbound.ErrPaymentDeclined).
+		Once()
+
+	stockRelease.EXPECT().
+		ReleaseStock(testifymock.Anything, testifymock.Anything).
+		Return(nil).
+		Once()
+
+	svc := NewService(orders, saga, snapshots, stock, stockRelease, payment)
+
+	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-payment-cancel-fail"})
+	require.Equal(t, outbound.Order{}, order)
+	require.Error(t, err)
+	require.ErrorIs(t, err, outbound.ErrPaymentDeclined)
+	require.ErrorIs(t, err, outbound.ErrOrderInvalidStatusTransition)
+	require.Equal(t, CheckoutErrorCodePaymentDeclined, CodeOf(err))
+}
+
+func TestMapCheckoutCodeStockReleaseNotFound(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, CheckoutErrorCodeConflict, mapCheckoutCode(outbound.ErrStockReleaseNotFound))
 }
 
 func TestCheckoutStockReservationFailureCompensation(t *testing.T) {
@@ -459,7 +808,7 @@ func TestCheckoutStockReservationFailureCompensation(t *testing.T) {
 		Return(outbound.OrderStatusHistory{}, nil).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock)
+	svc := NewService(orders, saga, snapshots, stock, nil, nil)
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-stock-fail"})
 	require.Equal(t, outbound.Order{}, order)
@@ -569,7 +918,7 @@ func TestCheckoutStockReservationConflictMapsToConflict(t *testing.T) {
 		Return(outbound.OrderStatusHistory{}, nil).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock)
+	svc := NewService(orders, saga, snapshots, stock, nil, nil)
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-stock-conflict"})
 	require.Equal(t, outbound.Order{}, order)
@@ -644,7 +993,7 @@ func TestCheckoutRepositoryAndTransitionFailuresMapToConflictOrInternal(t *testi
 					Once()
 			}
 
-			svc := NewService(orders, saga, snapshots, stock)
+			svc := NewService(orders, saga, snapshots, stock, nil, nil)
 
 			order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-map"})
 			require.Equal(t, outbound.Order{}, order)
@@ -681,7 +1030,7 @@ func TestCheckoutUsesDomainTransitionValidation(t *testing.T) {
 		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusConfirmed, Currency: "USD", TotalAmount: 300}, nil).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock)
+	svc := NewService(orders, saga, snapshots, stock, nil, nil)
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-transition"})
 	require.Equal(t, outbound.Order{}, order)
