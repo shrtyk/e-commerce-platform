@@ -30,6 +30,11 @@ type CheckoutInput struct {
 	PaymentMethod  *string
 }
 
+type GetOrderInput struct {
+	UserID  uuid.UUID
+	OrderID uuid.UUID
+}
+
 func NewService(
 	orders outbound.OrderRepository,
 	saga outbound.OrderSagaStateRepository,
@@ -161,6 +166,31 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 
 	if _, err := s.transitionPaymentStage(ctx, createdOrder.OrderID, domain.SagaStageSucceeded); err != nil {
 		return outbound.Order{}, err
+	}
+
+	return order, nil
+}
+
+func (s *Service) GetOrder(ctx context.Context, input GetOrderInput) (outbound.Order, error) {
+	if input.UserID == uuid.Nil {
+		return outbound.Order{}, newCodeError(CheckoutErrorCodeInvalidArgument, "get order input user_id is required")
+	}
+
+	if input.OrderID == uuid.Nil {
+		return outbound.Order{}, newCodeError(CheckoutErrorCodeInvalidArgument, "get order input order_id is required")
+	}
+
+	order, err := s.orders.GetByID(ctx, input.OrderID)
+	if err != nil {
+		if errors.Is(err, outbound.ErrOrderNotFound) {
+			return outbound.Order{}, wrapCode(CheckoutErrorCodeCartNotFound, "get order by id", err)
+		}
+
+		return outbound.Order{}, wrapCode(CheckoutErrorCodeInternal, "get order by id", err)
+	}
+
+	if order.UserID != input.UserID {
+		return outbound.Order{}, wrapCode(CheckoutErrorCodeCartNotFound, "get order by id", outbound.ErrOrderNotFound)
 	}
 
 	return order, nil

@@ -1041,6 +1041,112 @@ func TestCheckoutUsesDomainTransitionValidation(t *testing.T) {
 	orders.AssertNotCalled(t, "TransitionStatus", testifymock.Anything, testifymock.Anything, testifymock.Anything, testifymock.Anything)
 }
 
+func TestGetOrder(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	orderID := uuid.New()
+
+	tests := []struct {
+		name          string
+		input         GetOrderInput
+		setupOrderGet func(repo *outboundmocks.MockOrderRepository)
+		expectedCode  CheckoutErrorCode
+		expectedErrIs error
+		expectedOrder outbound.Order
+	}{
+		{
+			name:         "invalid input missing user id",
+			input:        GetOrderInput{OrderID: orderID},
+			expectedCode: CheckoutErrorCodeInvalidArgument,
+		},
+		{
+			name:         "invalid input missing order id",
+			input:        GetOrderInput{UserID: userID},
+			expectedCode: CheckoutErrorCodeInvalidArgument,
+		},
+		{
+			name:  "order not found",
+			input: GetOrderInput{UserID: userID, OrderID: orderID},
+			setupOrderGet: func(repo *outboundmocks.MockOrderRepository) {
+				repo.EXPECT().
+					GetByID(testifymock.Anything, orderID).
+					Return(outbound.Order{}, outbound.ErrOrderNotFound).
+					Once()
+			},
+			expectedCode:  CheckoutErrorCodeCartNotFound,
+			expectedErrIs: outbound.ErrOrderNotFound,
+		},
+		{
+			name:  "ownership mismatch mapped as not found",
+			input: GetOrderInput{UserID: userID, OrderID: orderID},
+			setupOrderGet: func(repo *outboundmocks.MockOrderRepository) {
+				repo.EXPECT().
+					GetByID(testifymock.Anything, orderID).
+					Return(outbound.Order{OrderID: orderID, UserID: uuid.New(), Status: outbound.OrderStatusPending}, nil).
+					Once()
+			},
+			expectedCode:  CheckoutErrorCodeCartNotFound,
+			expectedErrIs: outbound.ErrOrderNotFound,
+		},
+		{
+			name:  "repository internal error",
+			input: GetOrderInput{UserID: userID, OrderID: orderID},
+			setupOrderGet: func(repo *outboundmocks.MockOrderRepository) {
+				repo.EXPECT().
+					GetByID(testifymock.Anything, orderID).
+					Return(outbound.Order{}, errors.New("db down")).
+					Once()
+			},
+			expectedCode: CheckoutErrorCodeInternal,
+		},
+		{
+			name:  "success",
+			input: GetOrderInput{UserID: userID, OrderID: orderID},
+			setupOrderGet: func(repo *outboundmocks.MockOrderRepository) {
+				repo.EXPECT().
+					GetByID(testifymock.Anything, orderID).
+					Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingPayment, Currency: "USD", TotalAmount: 1000}, nil).
+					Once()
+			},
+			expectedOrder: outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingPayment, Currency: "USD", TotalAmount: 1000},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orders := outboundmocks.NewMockOrderRepository(t)
+			saga := outboundmocks.NewMockOrderSagaStateRepository(t)
+			snapshots := outboundmocks.NewMockCheckoutSnapshotRepository(t)
+			stock := outboundmocks.NewMockStockReservationService(t)
+
+			if tt.setupOrderGet != nil {
+				tt.setupOrderGet(orders)
+			}
+
+			svc := NewService(orders, saga, snapshots, stock, nil, nil)
+
+			order, err := svc.GetOrder(context.Background(), tt.input)
+			if tt.expectedCode == "" {
+				require.NoError(t, err)
+				require.Equal(t, tt.expectedOrder, order)
+				return
+			}
+
+			require.Equal(t, outbound.Order{}, order)
+			require.Error(t, err)
+			require.Equal(t, tt.expectedCode, CodeOf(err))
+			if tt.expectedErrIs != nil {
+				require.ErrorIs(t, err, tt.expectedErrIs)
+			}
+
+			if tt.setupOrderGet == nil {
+				orders.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+			}
+		})
+	}
+}
+
 func checkoutSnapshotWithSingleItem(userID uuid.UUID, totalAmount int64, sku string, name string, unitPrice int64) outbound.CheckoutSnapshot {
 	return outbound.CheckoutSnapshot{
 		UserID:      userID,
