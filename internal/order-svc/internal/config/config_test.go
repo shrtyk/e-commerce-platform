@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -22,6 +23,12 @@ func TestMustLoad(t *testing.T) {
 	require.Equal(t, ":19090", cfg.Service.GRPCAddr)
 	require.True(t, cfg.Redis.Enabled)
 	require.Equal(t, "order-redis:6379", cfg.Redis.Addr)
+	require.Equal(t, 100, cfg.Relay.BatchSize)
+	require.Equal(t, 500*time.Millisecond, cfg.Relay.Interval)
+	require.Equal(t, time.Second, cfg.Relay.RetryBaseBackoff)
+	require.Equal(t, 30*time.Second, cfg.Relay.RetryMaxBackoff)
+	require.Equal(t, "order-svc-relay-1", cfg.Relay.WorkerID)
+	require.Equal(t, 30*time.Second, cfg.Relay.StaleLockTTL)
 }
 
 func TestMustLoadDefaults(t *testing.T) {
@@ -35,6 +42,25 @@ func TestMustLoadDefaults(t *testing.T) {
 	require.Equal(t, ":8080", cfg.Service.HTTPAddr)
 	require.Equal(t, ":9090", cfg.Service.GRPCAddr)
 	require.False(t, cfg.Redis.Enabled)
+	require.Equal(t, 100, cfg.Relay.BatchSize)
+}
+
+func TestMustLoadPanicsWhenRelayInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("OUTBOX_RELAY_BATCH_SIZE", "0")
+
+	require.Panics(t, func() {
+		_ = config.MustLoad()
+	})
+}
+
+func TestMustLoadPanicsWhenWorkerIDWhitespaceOnly(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("OUTBOX_RELAY_WORKER_ID", "   ")
+
+	require.Panics(t, func() {
+		_ = config.MustLoad()
+	})
 }
 
 func TestMustLoadPanicsWhenRequiredEnvMissing(t *testing.T) {

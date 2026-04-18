@@ -24,8 +24,13 @@ type Application struct {
 	Logger         *slog.Logger
 	Handler        http.Handler
 	GRPCServer     *grpcpkg.Server
+	Workers        []worker
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *metric.MeterProvider
+}
+
+type worker interface {
+	Run(ctx context.Context) error
 }
 
 type option func(*Application)
@@ -78,6 +83,16 @@ func WithMeterProvider(provider *metric.MeterProvider) option {
 	}
 }
 
+func WithBackgroundWorker(backgroundWorker worker) option {
+	return func(a *Application) {
+		if backgroundWorker == nil {
+			return
+		}
+
+		a.Workers = append(a.Workers, backgroundWorker)
+	}
+}
+
 func (a *Application) Run(ctx context.Context) error {
 	if a.Config == nil || a.Config.Service.Name == "" {
 		return ErrConfigRequired
@@ -95,17 +110,69 @@ func (a *Application) Run(ctx context.Context) error {
 		defer a.Database.Close()
 	}
 
-	g, runCtx := errgroup.WithContext(ctx)
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	g := &errgroup.Group{}
+	serveErrCh := make(chan error, len(a.Workers)+2)
 
 	g.Go(func() error {
-		return runHTTPServer(runCtx, *a.Config, a.Handler)
+		err := runHTTPServer(runCtx, *a.Config, a.Handler)
+		if err != nil {
+			serveErrCh <- err
+		}
+
+		return err
 	})
 
 	g.Go(func() error {
-		return runGRPCServer(runCtx, *a.Config, a.GRPCServer)
+		err := runGRPCServer(runCtx, *a.Config, a.GRPCServer)
+		if err != nil {
+			serveErrCh <- err
+		}
+
+		return err
 	})
 
-	err := g.Wait()
+	for i, backgroundWorker := range a.Workers {
+		idx := i
+		workerInstance := backgroundWorker
+
+		g.Go(func() error {
+			if runErr := workerInstance.Run(runCtx); runErr != nil {
+				if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+					return nil
+				}
+
+				wrapped := fmt.Errorf("run background worker %d: %w", idx, runErr)
+				serveErrCh <- wrapped
+				return wrapped
+			}
+
+			return nil
+		})
+	}
+
+	waitErrCh := make(chan error, 1)
+	go func() {
+		waitErrCh <- g.Wait()
+	}()
+
+	var err error
+	select {
+	case <-runCtx.Done():
+	case err = <-serveErrCh:
+	}
+
+	cancelRun()
+
+	if waitErr := <-waitErrCh; waitErr != nil {
+		if err != nil {
+			err = errors.Join(err, waitErr)
+		} else {
+			err = waitErr
+		}
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.Config.Timeouts.Shutdown)
 	defer cancel()

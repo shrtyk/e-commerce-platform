@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/sr"
 	"go.opentelemetry.io/otel"
 	grpcpkg "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -16,13 +19,19 @@ import (
 	commonjwt "github.com/shrtyk/e-commerce-platform/internal/common/auth/jwt"
 	cartv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/cart/v1"
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
+	orderv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/order/v1"
 	paymentv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1"
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
+	commonkafka "github.com/shrtyk/e-commerce-platform/internal/common/messaging/kafka"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
+	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/inbound/grpc"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/inbound/http"
 	adaptercheckoutgrpc "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/checkout/grpc"
+	adapterevents "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/events"
+	adapterkafka "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/kafka"
 	adapterpostgres "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/postgres"
+	adapteroutbox "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/postgres/outbox"
 	adapterpostgresrepos "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/postgres/repos"
 	orderapp "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/app"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/config"
@@ -51,6 +60,51 @@ func main() {
 	db := adapterpostgres.MustCreatePostgres(cfg.Postgres, cfg.Timeouts)
 	orderRepository := adapterpostgresrepos.NewOrderRepository(db)
 	sagaRepository := adapterpostgresrepos.NewOrderSagaStateRepository(db)
+	outboxRepo := adapteroutbox.NewRepository(db)
+	outboxEventPublisher := adapterevents.MustCreateOutboxEventPublisher(outboxRepo)
+
+	kafkaBrokers := strings.Split(cfg.Kafka.Brokers, ",")
+	kafkaClient, err := commonkafka.NewClient(kgo.SeedBrokers(kafkaBrokers...))
+	if err != nil {
+		panic(fmt.Errorf("create kafka client: %w", err))
+	}
+	defer kafkaClient.Close()
+
+	schemaRegistryClient, err := sr.NewClient(sr.URLs(cfg.SchemaRegistry.URL))
+	if err != nil {
+		panic(fmt.Errorf("create schema registry client: %w", err))
+	}
+
+	typeRegistry := commonkafka.NewTypeRegistry()
+	err = typeRegistry.RegisterMessages(&orderv1.OrderCreated{}, &orderv1.OrderCancelled{})
+	if err != nil {
+		panic(fmt.Errorf("register kafka type: %w", err))
+	}
+
+	relayPublisher, err := adapterkafka.NewPublisher(kafkaClient, schemaRegistryClient, typeRegistry)
+	if err != nil {
+		panic(fmt.Errorf("create relay kafka publisher: %w", err))
+	}
+
+	relayWorker, err := adapterkafka.NewRelayWorker(outboxRepo, relayPublisher, adapterkafka.RelayConfig{
+		BatchSize:        cfg.Relay.BatchSize,
+		Interval:         cfg.Relay.Interval,
+		RetryBaseBackoff: cfg.Relay.RetryBaseBackoff,
+		RetryMaxBackoff:  cfg.Relay.RetryMaxBackoff,
+		WorkerID:         cfg.Relay.WorkerID,
+		StaleLockTTL:     cfg.Relay.StaleLockTTL,
+	})
+	if err != nil {
+		panic(fmt.Errorf("create outbox relay worker: %w", err))
+	}
+
+	txProvider := sqltx.NewProvider(db, func(sqlTx *sql.Tx) checkout.TransactionRepos {
+		return checkout.TransactionRepos{
+			Orders:    adapterpostgresrepos.NewOrderRepositoryFromTx(sqlTx),
+			Saga:      adapterpostgresrepos.NewOrderSagaStateRepositoryFromTx(sqlTx),
+			Publisher: adapterevents.MustCreateOutboxEventPublisher(adapteroutbox.NewRepositoryFromTx(sqlTx)),
+		}
+	})
 
 	cartGRPCAddr := strings.TrimSpace(os.Getenv("CART_GRPC_ADDR"))
 	if cartGRPCAddr == "" {
@@ -102,7 +156,7 @@ func main() {
 		adaptercheckoutgrpc.NewStockReservationService(catalogClient),
 		adaptercheckoutgrpc.NewStockReleaseService(catalogClient),
 		adaptercheckoutgrpc.NewCheckoutPaymentService(paymentv1.NewPaymentServiceClient(paymentConn)),
-	)
+	).WithEventing(outboxEventPublisher, txProvider, cfg.Service.Name)
 
 	authAccessTokenKey := strings.TrimSpace(os.Getenv("AUTH_ACCESS_TOKEN_KEY"))
 	if authAccessTokenKey == "" {
@@ -127,6 +181,7 @@ func main() {
 		orderapp.WithLogger(logger),
 		orderapp.WithTracerProvider(tracerProvider),
 		orderapp.WithMeterProvider(meterProvider),
+		orderapp.WithBackgroundWorker(relayWorker),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)

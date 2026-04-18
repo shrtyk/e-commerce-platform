@@ -12,6 +12,9 @@ import (
 
 type Querier interface {
 	AppendOrderStatusHistory(ctx context.Context, arg AppendOrderStatusHistoryParams) (OrderStatusHistory, error)
+	AppendOutboxRecord(ctx context.Context, arg AppendOutboxRecordParams) (OutboxRecord, error)
+	ClaimPendingOutboxRecords(ctx context.Context, arg ClaimPendingOutboxRecordsParams) ([]OutboxRecord, error)
+	ClaimStaleInProgressOutboxRecords(ctx context.Context, arg ClaimStaleInProgressOutboxRecordsParams) ([]OutboxRecord, error)
 	ClearOrderSagaLastErrorCode(ctx context.Context, orderID uuid.UUID) (OrderSagaState, error)
 	CreateOrder(ctx context.Context, arg CreateOrderParams) (Order, error)
 	CreateOrderCheckoutIdempotency(ctx context.Context, arg CreateOrderCheckoutIdempotencyParams) error
@@ -27,6 +30,9 @@ type Querier interface {
 	MarkOrderSagaStockFailed(ctx context.Context, orderID uuid.UUID) (OrderSagaState, error)
 	MarkOrderSagaStockRequested(ctx context.Context, orderID uuid.UUID) (OrderSagaState, error)
 	MarkOrderSagaStockSucceeded(ctx context.Context, orderID uuid.UUID) (OrderSagaState, error)
+	MarkOutboxRecordDead(ctx context.Context, arg MarkOutboxRecordDeadParams) (int64, error)
+	MarkOutboxRecordPublished(ctx context.Context, arg MarkOutboxRecordPublishedParams) (int64, error)
+	MarkOutboxRecordRetryableFailure(ctx context.Context, arg MarkOutboxRecordRetryableFailureParams) (int64, error)
 	SetOrderSagaLastErrorCode(ctx context.Context, arg SetOrderSagaLastErrorCodeParams) (OrderSagaState, error)
 	TransitionOrderStatus(ctx context.Context, arg TransitionOrderStatusParams) (Order, error)
 }

@@ -12,6 +12,7 @@ type stubQuerier struct {
 	order        orderQuerierStub
 	itemsHistory itemsHistoryQuerierStub
 	saga         sagaQuerierStub
+	outbox       outboxQuerierStub
 }
 
 type orderQuerierStub struct {
@@ -39,4 +40,61 @@ type sagaQuerierStub struct {
 	markOrderSagaPaymentRequestedFunc func(ctx context.Context, orderID uuid.UUID) (sqlc.OrderSagaState, error)
 	markOrderSagaPaymentSucceededFunc func(ctx context.Context, orderID uuid.UUID) (sqlc.OrderSagaState, error)
 	markOrderSagaPaymentFailedFunc    func(ctx context.Context, orderID uuid.UUID) (sqlc.OrderSagaState, error)
+}
+
+type outboxQuerierStub struct {
+	appendOutboxRecordFunc                func(ctx context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error)
+	claimPendingOutboxRecordsFunc         func(ctx context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
+	claimStaleInProgressOutboxRecordsFunc func(ctx context.Context, arg sqlc.ClaimStaleInProgressOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
+	markOutboxRecordPublishedFunc         func(ctx context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error)
+	markOutboxRecordRetryableFailureFunc  func(ctx context.Context, arg sqlc.MarkOutboxRecordRetryableFailureParams) (int64, error)
+	markOutboxRecordDeadFunc              func(ctx context.Context, arg sqlc.MarkOutboxRecordDeadParams) (int64, error)
+}
+
+func (s stubQuerier) AppendOutboxRecord(ctx context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error) {
+	if s.outbox.appendOutboxRecordFunc == nil {
+		return sqlc.OutboxRecord{}, unexpectedQuerierCall("AppendOutboxRecord")
+	}
+
+	return s.outbox.appendOutboxRecordFunc(ctx, arg)
+}
+
+func (s stubQuerier) ClaimPendingOutboxRecords(ctx context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
+	if s.outbox.claimPendingOutboxRecordsFunc == nil {
+		return nil, unexpectedQuerierCall("ClaimPendingOutboxRecords")
+	}
+
+	return s.outbox.claimPendingOutboxRecordsFunc(ctx, arg)
+}
+
+func (s stubQuerier) MarkOutboxRecordPublished(ctx context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error) {
+	if s.outbox.markOutboxRecordPublishedFunc == nil {
+		return 0, unexpectedQuerierCall("MarkOutboxRecordPublished")
+	}
+
+	return s.outbox.markOutboxRecordPublishedFunc(ctx, arg)
+}
+
+func (s stubQuerier) ClaimStaleInProgressOutboxRecords(ctx context.Context, arg sqlc.ClaimStaleInProgressOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
+	if s.outbox.claimStaleInProgressOutboxRecordsFunc == nil {
+		return nil, unexpectedQuerierCall("ClaimStaleInProgressOutboxRecords")
+	}
+
+	return s.outbox.claimStaleInProgressOutboxRecordsFunc(ctx, arg)
+}
+
+func (s stubQuerier) MarkOutboxRecordRetryableFailure(ctx context.Context, arg sqlc.MarkOutboxRecordRetryableFailureParams) (int64, error) {
+	if s.outbox.markOutboxRecordRetryableFailureFunc == nil {
+		return 0, unexpectedQuerierCall("MarkOutboxRecordRetryableFailure")
+	}
+
+	return s.outbox.markOutboxRecordRetryableFailureFunc(ctx, arg)
+}
+
+func (s stubQuerier) MarkOutboxRecordDead(ctx context.Context, arg sqlc.MarkOutboxRecordDeadParams) (int64, error) {
+	if s.outbox.markOutboxRecordDeadFunc == nil {
+		return 0, unexpectedQuerierCall("MarkOutboxRecordDead")
+	}
+
+	return s.outbox.markOutboxRecordDeadFunc(ctx, arg)
 }
