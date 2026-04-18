@@ -2,12 +2,14 @@ package http
 
 import (
 	"context"
+	"errors"
 	"math"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/render"
+	"github.com/google/uuid"
 	commonerrors "github.com/shrtyk/e-commerce-platform/internal/common/errors"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/inbound/http/dto"
@@ -24,6 +26,7 @@ type readinessChecker interface {
 
 type checkoutService interface {
 	Checkout(ctx context.Context, input checkout.CheckoutInput) (outbound.Order, error)
+	GetOrder(ctx context.Context, input checkout.GetOrderInput) (outbound.Order, error)
 }
 
 type OrderHandler struct {
@@ -108,8 +111,32 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, r, mapOrderDTO(result))
 }
 
-func (h *OrderHandler) GetOrderById(w http.ResponseWriter, _ *http.Request, _ dto.OrderId) {
-	w.WriteHeader(http.StatusNotImplemented)
+func (h *OrderHandler) GetOrderById(w http.ResponseWriter, r *http.Request, orderID dto.OrderId) {
+	claims, ok := transport.ClaimsFromContext(r.Context())
+	if !ok {
+		h.writeError(w, r, commonerrors.Unauthorized("unauthorized", "unauthorized"))
+		return
+	}
+
+	if h.checkoutService == nil {
+		h.writeError(w, r, commonerrors.InternalError("INTERNAL"))
+		return
+	}
+
+	parsedOrderID, err := uuid.Parse(strings.TrimSpace(orderID))
+	if err != nil || parsedOrderID == uuid.Nil {
+		h.writeError(w, r, commonerrors.BadRequest(string(checkout.CheckoutErrorCodeInvalidArgument), "invalid order id"))
+		return
+	}
+
+	order, err := h.checkoutService.GetOrder(r.Context(), checkout.GetOrderInput{UserID: claims.UserID, OrderID: parsedOrderID})
+	if err != nil {
+		h.writeError(w, r, mapGetOrderHTTPError(err))
+		return
+	}
+
+	render.Status(r, http.StatusOK)
+	render.JSON(w, r, mapOrderDTO(order))
 }
 
 func (h *OrderHandler) HandleOpenAPIError(w http.ResponseWriter, r *http.Request, _ error) {
@@ -141,6 +168,19 @@ func mapCheckoutHTTPError(err error) error {
 	default:
 		return commonerrors.InternalError(string(checkout.CheckoutErrorCodeInternal))
 	}
+}
+
+func mapGetOrderHTTPError(err error) error {
+	code := checkout.CodeOf(err)
+	if code == checkout.CheckoutErrorCodeInvalidArgument {
+		return commonerrors.BadRequest(string(code), string(code))
+	}
+
+	if code == checkout.CheckoutErrorCodeCartNotFound || errors.Is(err, outbound.ErrOrderNotFound) {
+		return commonerrors.NotFound(string(checkout.CheckoutErrorCodeCartNotFound), string(checkout.CheckoutErrorCodeCartNotFound))
+	}
+
+	return commonerrors.InternalError(string(checkout.CheckoutErrorCodeInternal))
 }
 
 func mapOrderDTO(order outbound.Order) dto.Order {

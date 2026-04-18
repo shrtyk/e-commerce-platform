@@ -211,6 +211,128 @@ func TestOrderHandlerCreateOrder(t *testing.T) {
 	}
 }
 
+func TestOrderHandlerGetOrderById(t *testing.T) {
+	userID := uuid.New()
+	orderID := uuid.New()
+
+	successOrder := outbound.Order{
+		OrderID:     orderID,
+		UserID:      userID,
+		Status:      outbound.OrderStatusAwaitingPayment,
+		Currency:    "USD",
+		TotalAmount: 1200,
+		Items: []outbound.OrderItem{{
+			OrderItemID: uuid.New(),
+			ProductID:   uuid.New(),
+			SKU:         "SKU-1",
+			Name:        "Product",
+			Quantity:    2,
+			UnitPrice:   600,
+			LineTotal:   1200,
+			Currency:    "USD",
+		}},
+	}
+
+	tests := []struct {
+		name         string
+		context      context.Context
+		orderID      string
+		setupMock    func(m *mockCheckoutService)
+		statusWant   int
+		responseCode string
+	}{
+		{
+			name:         "missing claims",
+			context:      transport.WithRequestID(context.Background(), "req-1"),
+			orderID:      orderID.String(),
+			statusWant:   http.StatusUnauthorized,
+			responseCode: "unauthorized",
+		},
+		{
+			name:         "invalid order id",
+			context:      withClaimsAndRequestID(userID),
+			orderID:      "invalid-order-id",
+			statusWant:   http.StatusBadRequest,
+			responseCode: string(checkout.CheckoutErrorCodeInvalidArgument),
+		},
+		{
+			name:    "maps not found",
+			context: withClaimsAndRequestID(userID),
+			orderID: orderID.String(),
+			setupMock: func(m *mockCheckoutService) {
+				m.On("GetOrder", testifymock.Anything, testifymock.Anything).
+					Return(outbound.Order{}, &checkout.CheckoutError{Code: checkout.CheckoutErrorCodeCartNotFound, Err: outbound.ErrOrderNotFound}).
+					Once()
+			},
+			statusWant:   http.StatusNotFound,
+			responseCode: string(checkout.CheckoutErrorCodeCartNotFound),
+		},
+		{
+			name:    "maps ownership mismatch as not found",
+			context: withClaimsAndRequestID(userID),
+			orderID: orderID.String(),
+			setupMock: func(m *mockCheckoutService) {
+				m.On("GetOrder", testifymock.Anything, testifymock.Anything).
+					Return(outbound.Order{}, outbound.ErrOrderNotFound).
+					Once()
+			},
+			statusWant:   http.StatusNotFound,
+			responseCode: string(checkout.CheckoutErrorCodeCartNotFound),
+		},
+		{
+			name:    "success",
+			context: withClaimsAndRequestID(userID),
+			orderID: orderID.String(),
+			setupMock: func(m *mockCheckoutService) {
+				m.On("GetOrder", testifymock.Anything, testifymock.MatchedBy(func(input checkout.GetOrderInput) bool {
+					return input.UserID == userID && input.OrderID == orderID
+				})).
+					Return(successOrder, nil).
+					Once()
+			},
+			statusWant: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := newMockCheckoutService(t)
+			if tt.setupMock != nil {
+				tt.setupMock(service)
+			}
+
+			handler := NewOrderHandler(nil, 0, service)
+
+			req := httptest.NewRequest(http.MethodGet, "/v1/orders/"+tt.orderID, nil).WithContext(tt.context)
+			rr := httptest.NewRecorder()
+
+			handler.GetOrderById(rr, req, dto.OrderId(tt.orderID))
+
+			require.Equal(t, tt.statusWant, rr.Code)
+
+			if tt.responseCode == "" {
+				var payload dto.Order
+				require.NoError(t, json.NewDecoder(rr.Body).Decode(&payload))
+				require.Equal(t, successOrder.OrderID.String(), payload.OrderId)
+				require.Equal(t, successOrder.UserID.String(), payload.UserId)
+				return
+			}
+
+			var payload struct {
+				Code          string `json:"code"`
+				CorrelationID string `json:"correlationId"`
+			}
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&payload))
+			require.Equal(t, tt.responseCode, payload.Code)
+			require.Equal(t, "req-1", payload.CorrelationID)
+
+			if tt.setupMock == nil {
+				service.AssertNotCalled(t, "GetOrder", testifymock.Anything, testifymock.Anything)
+			}
+		})
+	}
+}
+
 type readinessCheckerStub struct {
 	err error
 }
@@ -232,6 +354,13 @@ func newMockCheckoutService(t *testing.T) *mockCheckoutService {
 }
 
 func (m *mockCheckoutService) Checkout(ctx context.Context, input checkout.CheckoutInput) (outbound.Order, error) {
+	args := m.Called(ctx, input)
+
+	order, _ := args.Get(0).(outbound.Order)
+	return order, args.Error(1)
+}
+
+func (m *mockCheckoutService) GetOrder(ctx context.Context, input checkout.GetOrderInput) (outbound.Order, error) {
 	args := m.Called(ctx, input)
 
 	order, _ := args.Get(0).(outbound.Order)
