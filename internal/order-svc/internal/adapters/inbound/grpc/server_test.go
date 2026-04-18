@@ -255,6 +255,160 @@ func TestOrderServerCreateOrder(t *testing.T) {
 	}
 }
 
+func TestOrderServerGetOrder(t *testing.T) {
+	claimsUserID := uuid.New()
+	otherUserID := uuid.New()
+	orderID := uuid.New()
+
+	successOrder := outbound.Order{
+		OrderID:     orderID,
+		UserID:      claimsUserID,
+		Status:      outbound.OrderStatusAwaitingPayment,
+		Currency:    "USD",
+		TotalAmount: 1000,
+		Items: []outbound.OrderItem{{
+			OrderItemID: uuid.New(),
+			ProductID:   uuid.New(),
+			SKU:         "SKU-1",
+			Name:        "Product",
+			Quantity:    1,
+			UnitPrice:   1000,
+			LineTotal:   1000,
+			Currency:    "USD",
+		}},
+	}
+
+	tests := []struct {
+		name         string
+		ctx          context.Context
+		request      *orderv1.GetOrderRequest
+		setupMock    func(m *mockCheckoutService)
+		codeWant     codes.Code
+		messageWant  string
+		successCheck func(t *testing.T, resp *orderv1.GetOrderResponse)
+	}{
+		{
+			name: "auth required",
+			ctx:  context.Background(),
+			request: &orderv1.GetOrderRequest{
+				UserId:  claimsUserID.String(),
+				OrderId: orderID.String(),
+			},
+			codeWant:    codes.Unauthenticated,
+			messageWant: "missing auth claims",
+		},
+		{
+			name: "invalid user id",
+			ctx:  withClaims(claimsUserID),
+			request: &orderv1.GetOrderRequest{
+				UserId:  "  ",
+				OrderId: orderID.String(),
+			},
+			codeWant:    codes.InvalidArgument,
+			messageWant: "invalid user id",
+		},
+		{
+			name: "ownership guard on request user id",
+			ctx:  withClaims(claimsUserID),
+			request: &orderv1.GetOrderRequest{
+				UserId:  otherUserID.String(),
+				OrderId: orderID.String(),
+			},
+			codeWant:    codes.NotFound,
+			messageWant: string(checkout.CheckoutErrorCodeCartNotFound),
+		},
+		{
+			name: "invalid order id",
+			ctx:  withClaims(claimsUserID),
+			request: &orderv1.GetOrderRequest{
+				UserId:  claimsUserID.String(),
+				OrderId: "",
+			},
+			codeWant:    codes.InvalidArgument,
+			messageWant: "invalid order id",
+		},
+		{
+			name: "maps not found",
+			ctx:  withClaims(claimsUserID),
+			request: &orderv1.GetOrderRequest{
+				UserId:  claimsUserID.String(),
+				OrderId: orderID.String(),
+			},
+			setupMock: func(m *mockCheckoutService) {
+				m.On("GetOrder", testifymock.Anything, testifymock.Anything).
+					Return(outbound.Order{}, &checkout.CheckoutError{Code: checkout.CheckoutErrorCodeCartNotFound, Err: outbound.ErrOrderNotFound}).
+					Once()
+			},
+			codeWant:    codes.NotFound,
+			messageWant: string(checkout.CheckoutErrorCodeCartNotFound),
+		},
+		{
+			name: "maps ownership mismatch as not found",
+			ctx:  withClaims(claimsUserID),
+			request: &orderv1.GetOrderRequest{
+				UserId:  claimsUserID.String(),
+				OrderId: orderID.String(),
+			},
+			setupMock: func(m *mockCheckoutService) {
+				m.On("GetOrder", testifymock.Anything, testifymock.Anything).
+					Return(outbound.Order{}, outbound.ErrOrderNotFound).
+					Once()
+			},
+			codeWant:    codes.NotFound,
+			messageWant: string(checkout.CheckoutErrorCodeCartNotFound),
+		},
+		{
+			name: "success",
+			ctx:  withClaims(claimsUserID),
+			request: &orderv1.GetOrderRequest{
+				UserId:  claimsUserID.String(),
+				OrderId: orderID.String(),
+			},
+			setupMock: func(m *mockCheckoutService) {
+				m.On("GetOrder", testifymock.Anything, testifymock.MatchedBy(func(input checkout.GetOrderInput) bool {
+					return input.UserID == claimsUserID && input.OrderID == orderID
+				})).
+					Return(successOrder, nil).
+					Once()
+			},
+			codeWant: codes.OK,
+			successCheck: func(t *testing.T, resp *orderv1.GetOrderResponse) {
+				require.NotNil(t, resp)
+				require.NotNil(t, resp.GetOrder())
+				require.Equal(t, successOrder.OrderID.String(), resp.GetOrder().GetOrderId())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checkoutMock := newMockCheckoutService(t)
+			if tt.setupMock != nil {
+				tt.setupMock(checkoutMock)
+			}
+
+			server := NewOrderServer(checkoutMock, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+			response, err := server.GetOrder(tt.ctx, tt.request)
+			if tt.codeWant == codes.OK {
+				require.NoError(t, err)
+				if tt.successCheck != nil {
+					tt.successCheck(t, response)
+				}
+				return
+			}
+
+			require.Error(t, err)
+			require.Equal(t, tt.codeWant, status.Code(err))
+			require.Equal(t, tt.messageWant, status.Convert(err).Message())
+
+			if tt.setupMock == nil {
+				checkoutMock.AssertNotCalled(t, "GetOrder", testifymock.Anything, testifymock.Anything)
+			}
+		})
+	}
+}
+
 type grpcHarness struct {
 	client   orderv1.OrderServiceClient
 	verifier *testTokenVerifier
@@ -340,6 +494,13 @@ func newMockCheckoutService(t *testing.T) *mockCheckoutService {
 }
 
 func (m *mockCheckoutService) Checkout(ctx context.Context, input checkout.CheckoutInput) (outbound.Order, error) {
+	args := m.Called(ctx, input)
+
+	order, _ := args.Get(0).(outbound.Order)
+	return order, args.Error(1)
+}
+
+func (m *mockCheckoutService) GetOrder(ctx context.Context, input checkout.GetOrderInput) (outbound.Order, error) {
 	args := m.Called(ctx, input)
 
 	order, _ := args.Get(0).(outbound.Order)

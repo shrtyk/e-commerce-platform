@@ -70,6 +70,7 @@ type OrderServer struct {
 
 type checkoutService interface {
 	Checkout(ctx context.Context, input checkout.CheckoutInput) (outbound.Order, error)
+	GetOrder(ctx context.Context, input checkout.GetOrderInput) (outbound.Order, error)
 }
 
 func NewOrderServer(checkoutService checkoutService, logger *slog.Logger) *OrderServer {
@@ -115,8 +116,36 @@ func (s *OrderServer) CreateOrder(ctx context.Context, req *orderv1.CreateOrderR
 	return &orderv1.CreateOrderResponse{Order: mapProtoOrder(order)}, nil
 }
 
-func (s *OrderServer) GetOrder(context.Context, *orderv1.GetOrderRequest) (*orderv1.GetOrderResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetOrder not implemented")
+func (s *OrderServer) GetOrder(ctx context.Context, req *orderv1.GetOrderRequest) (*orderv1.GetOrderResponse, error) {
+	claims, ok := transport.ClaimsFromContext(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "missing auth claims")
+	}
+
+	if s.checkoutService == nil {
+		return nil, status.Error(codes.Internal, "checkout service is not configured")
+	}
+
+	requestedUserID, err := toUserID(req.GetUserId())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid user id")
+	}
+
+	if requestedUserID != claims.UserID {
+		return nil, status.Error(codes.NotFound, string(checkout.CheckoutErrorCodeCartNotFound))
+	}
+
+	requestedOrderID, err := toOrderID(req.GetOrderId())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid order id")
+	}
+
+	order, err := s.checkoutService.GetOrder(ctx, checkout.GetOrderInput{UserID: requestedUserID, OrderID: requestedOrderID})
+	if err != nil {
+		return nil, mapGetOrderGRPCError(err)
+	}
+
+	return &orderv1.GetOrderResponse{Order: mapProtoOrder(order)}, nil
 }
 
 func mapCheckoutGRPCError(err error) error {
@@ -192,6 +221,36 @@ func toUserID(raw string) (uuid.UUID, error) {
 	}
 
 	return parsed, nil
+}
+
+func toOrderID(raw string) (uuid.UUID, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return uuid.Nil, errors.New("missing order id")
+	}
+
+	parsed, err := uuid.Parse(trimmed)
+	if err != nil || parsed == uuid.Nil {
+		return uuid.Nil, errors.New("invalid order id")
+	}
+
+	return parsed, nil
+}
+
+func mapGetOrderGRPCError(err error) error {
+	code := checkout.CodeOf(err)
+	switch code {
+	case checkout.CheckoutErrorCodeInvalidArgument:
+		return status.Error(codes.InvalidArgument, string(code))
+	case checkout.CheckoutErrorCodeCartNotFound:
+		return status.Error(codes.NotFound, string(code))
+	default:
+		if errors.Is(err, outbound.ErrOrderNotFound) {
+			return status.Error(codes.NotFound, string(checkout.CheckoutErrorCodeCartNotFound))
+		}
+
+		return status.Error(codes.Internal, string(checkout.CheckoutErrorCodeInternal))
+	}
 }
 
 type grpcTokenVerifier struct {
