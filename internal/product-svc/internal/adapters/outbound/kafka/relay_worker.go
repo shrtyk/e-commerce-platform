@@ -11,8 +11,10 @@ import (
 
 type outboxRepository interface {
 	ClaimPending(ctx context.Context, params commonoutbox.ClaimPendingParams) ([]commonoutbox.Record, error)
+	ClaimStaleInProgress(ctx context.Context, params commonoutbox.ClaimStaleInProgressParams) ([]commonoutbox.Record, error)
 	MarkPublished(ctx context.Context, params commonoutbox.MarkPublishedParams) error
-	MarkFailed(ctx context.Context, params commonoutbox.MarkFailedParams) error
+	MarkRetryableFailure(ctx context.Context, params commonoutbox.MarkRetryableFailureParams) error
+	MarkDead(ctx context.Context, params commonoutbox.MarkDeadParams) error
 }
 
 type outboxPublisher interface {
@@ -24,6 +26,8 @@ type RelayConfig struct {
 	Interval         time.Duration
 	RetryBaseBackoff time.Duration
 	RetryMaxBackoff  time.Duration
+	WorkerID         string
+	StaleLockTTL     time.Duration
 }
 
 func (c RelayConfig) Validate() error {
@@ -45,6 +49,14 @@ func (c RelayConfig) Validate() error {
 
 	if c.RetryBaseBackoff > c.RetryMaxBackoff {
 		return fmt.Errorf("retry base backoff must be <= retry max backoff")
+	}
+
+	if c.WorkerID == "" {
+		return fmt.Errorf("worker id is required")
+	}
+
+	if c.StaleLockTTL <= 0 {
+		return fmt.Errorf("stale lock ttl must be positive")
 	}
 
 	return nil
@@ -127,12 +139,24 @@ func (w *RelayWorker) Tick(ctx context.Context) error {
 	now := w.now().UTC()
 
 	claimed, err := w.repository.ClaimPending(ctx, commonoutbox.ClaimPendingParams{
-		Limit:  w.config.BatchSize,
-		Before: now,
+		Limit:    w.config.BatchSize,
+		Before:   now,
+		LockedBy: w.config.WorkerID,
 	})
 	if err != nil {
 		return fmt.Errorf("claim pending outbox records: %w", err)
 	}
+
+	staleClaimed, err := w.repository.ClaimStaleInProgress(ctx, commonoutbox.ClaimStaleInProgressParams{
+		Limit:       w.config.BatchSize,
+		StaleBefore: now.Add(-w.config.StaleLockTTL),
+		LockedBy:    w.config.WorkerID,
+	})
+	if err != nil {
+		return fmt.Errorf("claim stale outbox records: %w", err)
+	}
+
+	claimed = append(claimed, staleClaimed...)
 
 	for _, record := range claimed {
 		if err := ctx.Err(); err != nil {
@@ -153,12 +177,32 @@ func (w *RelayWorker) publishOne(ctx context.Context, record commonoutbox.Record
 			return nil
 		}
 
-		nextAttemptAt := now.Add(w.backoffForAttempt(record.Attempt + 1))
+		nextAttempt := record.Attempt + 1
+		if nextAttempt >= record.MaxAttempts {
+			if markErr := w.repository.MarkDead(ctx, commonoutbox.MarkDeadParams{
+				ID:         record.ID,
+				ClaimToken: record.LockedAt.UTC(),
+				LockedBy:   w.config.WorkerID,
+				Attempt:    nextAttempt,
+				LastError:  err.Error(),
+			}); markErr != nil {
+				if errors.Is(markErr, context.Canceled) || errors.Is(markErr, context.DeadlineExceeded) || ctx.Err() != nil {
+					return nil
+				}
 
-		if markErr := w.repository.MarkFailed(ctx, commonoutbox.MarkFailedParams{
+				return fmt.Errorf("mark outbox record dead: %w", markErr)
+			}
+
+			return nil
+		}
+
+		nextAttemptAt := now.Add(w.backoffForAttempt(nextAttempt))
+
+		if markErr := w.repository.MarkRetryableFailure(ctx, commonoutbox.MarkRetryableFailureParams{
 			ID:            record.ID,
 			ClaimToken:    record.LockedAt.UTC(),
-			Attempt:       record.Attempt + 1,
+			LockedBy:      w.config.WorkerID,
+			Attempt:       nextAttempt,
 			NextAttemptAt: nextAttemptAt,
 			LastError:     err.Error(),
 		}); markErr != nil {
@@ -166,7 +210,7 @@ func (w *RelayWorker) publishOne(ctx context.Context, record commonoutbox.Record
 				return nil
 			}
 
-			return fmt.Errorf("mark outbox record failed: %w", markErr)
+			return fmt.Errorf("mark outbox record retryable failure: %w", markErr)
 		}
 
 		return nil
@@ -175,6 +219,7 @@ func (w *RelayWorker) publishOne(ctx context.Context, record commonoutbox.Record
 	if err := w.repository.MarkPublished(ctx, commonoutbox.MarkPublishedParams{
 		ID:          record.ID,
 		ClaimToken:  record.LockedAt.UTC(),
+		LockedBy:    w.config.WorkerID,
 		PublishedAt: now,
 	}); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {

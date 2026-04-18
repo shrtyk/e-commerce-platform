@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
@@ -19,6 +20,8 @@ type Relay struct {
 	Interval         time.Duration `env:"INTERVAL" env-default:"500ms"`
 	RetryBaseBackoff time.Duration `env:"RETRY_BASE_BACKOFF" env-default:"1s"`
 	RetryMaxBackoff  time.Duration `env:"RETRY_MAX_BACKOFF" env-default:"30s"`
+	WorkerID         string        `env:"WORKER_ID" env-default:"product-svc-relay-1"`
+	StaleLockTTL     time.Duration `env:"STALE_LOCK_TTL" env-default:"30s"`
 }
 
 func MustLoad() Config {
@@ -48,6 +51,14 @@ func MustLoad() Config {
 
 	if cfg.Relay.RetryBaseBackoff > cfg.Relay.RetryMaxBackoff {
 		panic(fmt.Errorf("field \"Relay.RetryBaseBackoff\" must be less than or equal to Relay.RetryMaxBackoff"))
+	}
+
+	if strings.TrimSpace(cfg.Relay.WorkerID) == "" {
+		panic(fmt.Errorf("field \"Relay.WorkerID\" must be non-empty"))
+	}
+
+	if cfg.Relay.StaleLockTTL <= 0 {
+		panic(fmt.Errorf("field \"Relay.StaleLockTTL\" must be positive"))
 	}
 
 	return cfg

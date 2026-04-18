@@ -25,7 +25,6 @@ INSERT INTO
     key,
     payload,
     headers,
-    attempt,
     status
   )
 VALUES
@@ -38,15 +37,14 @@ VALUES
     $6,
     $7,
     $8,
-    0,
     $9
   )
 RETURNING
-  id, event_id, event_name, aggregate_type, aggregate_id, topic, key, payload, headers, attempt, status, last_error, next_attempt_at, locked_at, published_at, created_at, updated_at
+  id, event_id, event_name, aggregate_type, aggregate_id, topic, key, payload, headers, attempt, status, last_error, next_attempt_at, locked_at, locked_by, published_at, max_attempts, created_at, updated_at
 `
 
 type AppendOutboxRecordParams struct {
-	EventID       string
+	EventID       uuid.UUID
 	EventName     string
 	AggregateType string
 	AggregateID   string
@@ -54,7 +52,7 @@ type AppendOutboxRecordParams struct {
 	Key           []byte
 	Payload       []byte
 	Headers       json.RawMessage
-	Status        string
+	Status        interface{}
 }
 
 func (q *Queries) AppendOutboxRecord(ctx context.Context, arg AppendOutboxRecordParams) (OutboxRecord, error) {
@@ -85,7 +83,9 @@ func (q *Queries) AppendOutboxRecord(ctx context.Context, arg AppendOutboxRecord
 		&i.LastError,
 		&i.NextAttemptAt,
 		&i.LockedAt,
+		&i.LockedBy,
 		&i.PublishedAt,
+		&i.MaxAttempts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -93,48 +93,134 @@ func (q *Queries) AppendOutboxRecord(ctx context.Context, arg AppendOutboxRecord
 }
 
 const claimPendingOutboxRecords = `-- name: ClaimPendingOutboxRecords :many
-UPDATE outbox_records
+WITH candidates AS (
+  SELECT
+    o.id
+  FROM
+    outbox_records AS o
+  WHERE
+    o.status = 'pending'
+    AND o.next_attempt_at <= $3
+  ORDER BY
+    o.next_attempt_at,
+    o.created_at,
+    o.id
+  LIMIT
+    $4
+  FOR UPDATE
+    SKIP LOCKED
+)
+UPDATE outbox_records AS o
 SET
   status = 'in_progress',
   locked_at = $1,
+  locked_by = $2,
   updated_at = $1
+FROM
+  candidates
 WHERE
-  id IN (
-    SELECT
-      o.id
-    FROM
-      outbox_records AS o
-    WHERE
-      (
-        o.status IN ('pending', 'failed')
-        AND COALESCE(o.next_attempt_at, '-infinity'::timestamptz) <= $2
-      )
-      OR (
-        o.status = 'in_progress'
-        AND o.locked_at IS NOT NULL
-        AND o.locked_at <= $3
-      )
-    ORDER BY
-      o.created_at,
-      o.id
-    LIMIT
-      $4 FOR UPDATE SKIP LOCKED
-  )
+  o.id = candidates.id
 RETURNING
-  id, event_id, event_name, aggregate_type, aggregate_id, topic, key, payload, headers, attempt, status, last_error, next_attempt_at, locked_at, published_at, created_at, updated_at
+  o.id, o.event_id, o.event_name, o.aggregate_type, o.aggregate_id, o.topic, o.key, o.payload, o.headers, o.attempt, o.status, o.last_error, o.next_attempt_at, o.locked_at, o.locked_by, o.published_at, o.max_attempts, o.created_at, o.updated_at
 `
 
 type ClaimPendingOutboxRecordsParams struct {
-	ClaimedAt   sql.NullTime
-	Before      sql.NullTime
-	StaleBefore sql.NullTime
-	LimitCount  int32
+	ClaimedAt  sql.NullTime
+	LockedBy   sql.NullString
+	Before     time.Time
+	LimitCount int32
 }
 
 func (q *Queries) ClaimPendingOutboxRecords(ctx context.Context, arg ClaimPendingOutboxRecordsParams) ([]OutboxRecord, error) {
 	rows, err := q.db.QueryContext(ctx, claimPendingOutboxRecords,
 		arg.ClaimedAt,
+		arg.LockedBy,
 		arg.Before,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OutboxRecord
+	for rows.Next() {
+		var i OutboxRecord
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventID,
+			&i.EventName,
+			&i.AggregateType,
+			&i.AggregateID,
+			&i.Topic,
+			&i.Key,
+			&i.Payload,
+			&i.Headers,
+			&i.Attempt,
+			&i.Status,
+			&i.LastError,
+			&i.NextAttemptAt,
+			&i.LockedAt,
+			&i.LockedBy,
+			&i.PublishedAt,
+			&i.MaxAttempts,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimStaleInProgressOutboxRecords = `-- name: ClaimStaleInProgressOutboxRecords :many
+WITH candidates AS (
+  SELECT
+    o.id
+  FROM
+    outbox_records AS o
+  WHERE
+    o.status = 'in_progress'
+    AND o.locked_at <= $3
+  ORDER BY
+    o.locked_at,
+    o.created_at,
+    o.id
+  LIMIT
+    $4
+  FOR UPDATE
+    SKIP LOCKED
+)
+UPDATE outbox_records AS o
+SET
+  locked_at = $1,
+  locked_by = $2,
+  updated_at = $1
+FROM
+  candidates
+WHERE
+  o.id = candidates.id
+RETURNING
+  o.id, o.event_id, o.event_name, o.aggregate_type, o.aggregate_id, o.topic, o.key, o.payload, o.headers, o.attempt, o.status, o.last_error, o.next_attempt_at, o.locked_at, o.locked_by, o.published_at, o.max_attempts, o.created_at, o.updated_at
+`
+
+type ClaimStaleInProgressOutboxRecordsParams struct {
+	ClaimedAt   sql.NullTime
+	LockedBy    sql.NullString
+	StaleBefore sql.NullTime
+	LimitCount  int32
+}
+
+func (q *Queries) ClaimStaleInProgressOutboxRecords(ctx context.Context, arg ClaimStaleInProgressOutboxRecordsParams) ([]OutboxRecord, error) {
+	rows, err := q.db.QueryContext(ctx, claimStaleInProgressOutboxRecords,
+		arg.ClaimedAt,
+		arg.LockedBy,
 		arg.StaleBefore,
 		arg.LimitCount,
 	)
@@ -160,7 +246,9 @@ func (q *Queries) ClaimPendingOutboxRecords(ctx context.Context, arg ClaimPendin
 			&i.LastError,
 			&i.NextAttemptAt,
 			&i.LockedAt,
+			&i.LockedBy,
 			&i.PublishedAt,
+			&i.MaxAttempts,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -177,37 +265,39 @@ func (q *Queries) ClaimPendingOutboxRecords(ctx context.Context, arg ClaimPendin
 	return items, nil
 }
 
-const markOutboxRecordFailed = `-- name: MarkOutboxRecordFailed :execrows
+const markOutboxRecordDead = `-- name: MarkOutboxRecordDead :execrows
 UPDATE outbox_records
 SET
-  status = 'failed',
+  status = 'dead',
   attempt = $1,
   next_attempt_at = $2,
   last_error = $3,
   locked_at = NULL,
-  updated_at = $4
+  locked_by = NULL,
+  updated_at = $2
 WHERE
-  id = $5
+  id = $4
   AND status = 'in_progress'
+  AND locked_by = $5
   AND locked_at = $6
 `
 
-type MarkOutboxRecordFailedParams struct {
-	Attempt       int32
-	NextAttemptAt sql.NullTime
-	LastError     string
-	UpdatedAt     time.Time
-	ID            uuid.UUID
-	ClaimToken    sql.NullTime
+type MarkOutboxRecordDeadParams struct {
+	Attempt    int32
+	UpdatedAt  time.Time
+	LastError  sql.NullString
+	ID         uuid.UUID
+	LockedBy   sql.NullString
+	ClaimToken sql.NullTime
 }
 
-func (q *Queries) MarkOutboxRecordFailed(ctx context.Context, arg MarkOutboxRecordFailedParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, markOutboxRecordFailed,
+func (q *Queries) MarkOutboxRecordDead(ctx context.Context, arg MarkOutboxRecordDeadParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markOutboxRecordDead,
 		arg.Attempt,
-		arg.NextAttemptAt,
-		arg.LastError,
 		arg.UpdatedAt,
+		arg.LastError,
 		arg.ID,
+		arg.LockedBy,
 		arg.ClaimToken,
 	)
 	if err != nil {
@@ -222,21 +312,72 @@ SET
   status = 'published',
   published_at = $1,
   locked_at = NULL,
+  locked_by = NULL,
   updated_at = $1
 WHERE
   id = $2
   AND status = 'in_progress'
-  AND locked_at = $3
+  AND locked_by = $3
+  AND locked_at = $4
 `
 
 type MarkOutboxRecordPublishedParams struct {
 	PublishedAt sql.NullTime
 	ID          uuid.UUID
+	LockedBy    sql.NullString
 	ClaimToken  sql.NullTime
 }
 
 func (q *Queries) MarkOutboxRecordPublished(ctx context.Context, arg MarkOutboxRecordPublishedParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, markOutboxRecordPublished, arg.PublishedAt, arg.ID, arg.ClaimToken)
+	result, err := q.db.ExecContext(ctx, markOutboxRecordPublished,
+		arg.PublishedAt,
+		arg.ID,
+		arg.LockedBy,
+		arg.ClaimToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markOutboxRecordRetryableFailure = `-- name: MarkOutboxRecordRetryableFailure :execrows
+UPDATE outbox_records
+SET
+  status = 'pending',
+  attempt = $1,
+  next_attempt_at = $2,
+  last_error = $3,
+  locked_at = NULL,
+  locked_by = NULL,
+  updated_at = $4
+WHERE
+  id = $5
+  AND status = 'in_progress'
+  AND locked_by = $6
+  AND locked_at = $7
+`
+
+type MarkOutboxRecordRetryableFailureParams struct {
+	Attempt       int32
+	NextAttemptAt time.Time
+	LastError     sql.NullString
+	UpdatedAt     time.Time
+	ID            uuid.UUID
+	LockedBy      sql.NullString
+	ClaimToken    sql.NullTime
+}
+
+func (q *Queries) MarkOutboxRecordRetryableFailure(ctx context.Context, arg MarkOutboxRecordRetryableFailureParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markOutboxRecordRetryableFailure,
+		arg.Attempt,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.LockedBy,
+		arg.ClaimToken,
+	)
 	if err != nil {
 		return 0, err
 	}

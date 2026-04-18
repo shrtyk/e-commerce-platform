@@ -17,10 +17,12 @@ import (
 )
 
 type stubQuerier struct {
-	appendFunc        func(ctx context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error)
-	claimPendingFunc  func(ctx context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
-	markPublishedFunc func(ctx context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error)
-	markFailedFunc    func(ctx context.Context, arg sqlc.MarkOutboxRecordFailedParams) (int64, error)
+	appendFunc               func(ctx context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error)
+	claimPendingFunc         func(ctx context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
+	claimStaleInProgressFunc func(ctx context.Context, arg sqlc.ClaimStaleInProgressOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
+	markPublishedFunc        func(ctx context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error)
+	markRetryableFailureFunc func(ctx context.Context, arg sqlc.MarkOutboxRecordRetryableFailureParams) (int64, error)
+	markDeadFunc             func(ctx context.Context, arg sqlc.MarkOutboxRecordDeadParams) (int64, error)
 }
 
 func (s stubQuerier) AppendOutboxRecord(ctx context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error) {
@@ -39,6 +41,14 @@ func (s stubQuerier) ClaimPendingOutboxRecords(ctx context.Context, arg sqlc.Cla
 	return s.claimPendingFunc(ctx, arg)
 }
 
+func (s stubQuerier) ClaimStaleInProgressOutboxRecords(ctx context.Context, arg sqlc.ClaimStaleInProgressOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
+	if s.claimStaleInProgressFunc == nil {
+		return nil, fmt.Errorf("unexpected ClaimStaleInProgressOutboxRecords call")
+	}
+
+	return s.claimStaleInProgressFunc(ctx, arg)
+}
+
 func (s stubQuerier) MarkOutboxRecordPublished(ctx context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error) {
 	if s.markPublishedFunc == nil {
 		return 0, fmt.Errorf("unexpected MarkOutboxRecordPublished call")
@@ -47,46 +57,53 @@ func (s stubQuerier) MarkOutboxRecordPublished(ctx context.Context, arg sqlc.Mar
 	return s.markPublishedFunc(ctx, arg)
 }
 
-func (s stubQuerier) MarkOutboxRecordFailed(ctx context.Context, arg sqlc.MarkOutboxRecordFailedParams) (int64, error) {
-	if s.markFailedFunc == nil {
-		return 0, fmt.Errorf("unexpected MarkOutboxRecordFailed call")
+func (s stubQuerier) MarkOutboxRecordRetryableFailure(ctx context.Context, arg sqlc.MarkOutboxRecordRetryableFailureParams) (int64, error) {
+	if s.markRetryableFailureFunc == nil {
+		return 0, fmt.Errorf("unexpected MarkOutboxRecordRetryableFailure call")
 	}
 
-	return s.markFailedFunc(ctx, arg)
+	return s.markRetryableFailureFunc(ctx, arg)
+}
+
+func (s stubQuerier) MarkOutboxRecordDead(ctx context.Context, arg sqlc.MarkOutboxRecordDeadParams) (int64, error) {
+	if s.markDeadFunc == nil {
+		return 0, fmt.Errorf("unexpected MarkOutboxRecordDead call")
+	}
+
+	return s.markDeadFunc(ctx, arg)
 }
 
 func TestRepositoryAppend(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
+	eventID := uuid.New()
 
 	tests := []struct {
-		name        string
-		record      commonoutbox.Record
-		setup       func(*stubQuerier)
-		errIs       error
-		errContains string
+		name   string
+		record commonoutbox.Record
+		setup  func(*stubQuerier)
+		errIs  error
 	}{
 		{
 			name: "success",
 			record: commonoutbox.Record{
-				EventID:       "evt-1",
+				EventID:       eventID.String(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
-				Topic:         "catalog.product.events",
+				Topic:         "catalog.events",
 				Key:           []byte("product-1"),
 				Payload:       []byte("payload"),
-				Headers:       map[string]string{"event_name": "catalog.product.created"},
+				Headers:       map[string]string{"eventName": "catalog.product.created"},
 				Status:        commonoutbox.StatusPending,
 			},
 			setup: func(q *stubQuerier) {
 				q.appendFunc = func(_ context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error) {
-					require.Equal(t, "evt-1", arg.EventID)
-					require.Equal(t, string(commonoutbox.StatusPending), arg.Status)
+					require.Equal(t, eventID, arg.EventID)
 
 					var headers map[string]string
 					err := json.Unmarshal(arg.Headers, &headers)
 					require.NoError(t, err)
-					require.Equal(t, "catalog.product.created", headers["event_name"])
+					require.Equal(t, "catalog.product.created", headers["eventName"])
 
 					return sqlc.OutboxRecord{
 						ID:            uuid.New(),
@@ -98,8 +115,9 @@ func TestRepositoryAppend(t *testing.T) {
 						Key:           arg.Key,
 						Payload:       arg.Payload,
 						Headers:       arg.Headers,
-						Attempt:       0,
-						Status:        string(commonoutbox.StatusPending),
+						Status:        commonoutbox.StatusPending,
+						NextAttemptAt: now,
+						MaxAttempts:   20,
 						CreatedAt:     now,
 						UpdatedAt:     now,
 					}, nil
@@ -114,11 +132,11 @@ func TestRepositoryAppend(t *testing.T) {
 		{
 			name: "idempotency conflict",
 			record: commonoutbox.Record{
-				EventID:       "evt-1",
+				EventID:       eventID.String(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
-				Topic:         "catalog.product.events",
+				Topic:         "catalog.events",
 				Payload:       []byte("payload"),
 				Status:        commonoutbox.StatusPending,
 			},
@@ -128,6 +146,18 @@ func TestRepositoryAppend(t *testing.T) {
 				}
 			},
 			errIs: commonoutbox.ErrIdempotencyConflict,
+		},
+		{
+			name: "invalid event id",
+			record: commonoutbox.Record{
+				EventID:       "not-uuid",
+				EventName:     "catalog.product.created",
+				AggregateType: "product",
+				AggregateID:   "product-1",
+				Topic:         "catalog.events",
+				Payload:       []byte("payload"),
+				Status:        commonoutbox.StatusPending,
+			},
 		},
 	}
 
@@ -140,14 +170,16 @@ func TestRepositoryAppend(t *testing.T) {
 
 			repo := NewRepositoryFromQuerier(queries)
 			created, err := repo.Append(context.Background(), tt.record)
-			if tt.errIs != nil || tt.errContains != "" {
+			if tt.errIs != nil {
 				require.Error(t, err)
-				if tt.errIs != nil {
-					require.ErrorIs(t, err, tt.errIs)
-				}
-				if tt.errContains != "" {
-					require.ErrorContains(t, err, tt.errContains)
-				}
+				require.ErrorIs(t, err, tt.errIs)
+				require.Zero(t, created)
+				return
+			}
+
+			if tt.name == "invalid event id" {
+				require.Error(t, err)
+				require.ErrorContains(t, err, "parse event id")
 				require.Zero(t, created)
 				return
 			}
@@ -155,335 +187,195 @@ func TestRepositoryAppend(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEqual(t, uuid.Nil, created.ID)
 			require.Equal(t, commonoutbox.StatusPending, created.Status)
+			require.Equal(t, 20, created.MaxAttempts)
 		})
 	}
 }
 
 func TestRepositoryClaimPending(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	before := now.Add(2 * time.Second)
-	claimedAtStart := time.Now().UTC()
 
-	queries := &stubQuerier{
-		claimPendingFunc: func(_ context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
-			require.Equal(t, int32(2), arg.LimitCount)
-			require.True(t, arg.Before.Valid)
-			require.Equal(t, before, arg.Before.Time)
-			require.True(t, arg.ClaimedAt.Valid)
-			require.True(t, arg.StaleBefore.Valid)
-			require.WithinDuration(t, arg.ClaimedAt.Time.Add(-claimLockTTL), arg.StaleBefore.Time, 2*time.Millisecond)
-			require.False(t, arg.ClaimedAt.Time.Before(claimedAtStart))
+	queries := &stubQuerier{}
+	queries.claimPendingFunc = func(_ context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
+		require.Equal(t, int32(2), arg.LimitCount)
+		require.Equal(t, "worker-1", arg.LockedBy.String)
+		require.Equal(t, now, arg.Before)
+		require.True(t, arg.ClaimedAt.Valid)
 
-			headers, err := json.Marshal(map[string]string{"event_name": "catalog.product.created"})
-			require.NoError(t, err)
+		headers, err := json.Marshal(map[string]string{"eventName": "catalog.product.created"})
+		require.NoError(t, err)
 
-			return []sqlc.OutboxRecord{{
-				ID:            uuid.New(),
-				EventID:       "evt-1",
-				EventName:     "catalog.product.created",
-				AggregateType: "product",
-				AggregateID:   "product-1",
-				Topic:         "catalog.product.events",
-				Payload:       []byte("payload"),
-				Headers:       headers,
-				Attempt:       1,
-				Status:        string(commonoutbox.StatusInProgress),
-				LockedAt:      sql.NullTime{Time: arg.ClaimedAt.Time, Valid: true},
-				CreatedAt:     now,
-				UpdatedAt:     now,
-			}}, nil
-		},
+		return []sqlc.OutboxRecord{{
+			ID:            uuid.New(),
+			EventID:       uuid.New(),
+			EventName:     "catalog.product.created",
+			AggregateType: "product",
+			AggregateID:   "product-1",
+			Topic:         "catalog.events",
+			Payload:       []byte("payload"),
+			Headers:       headers,
+			Attempt:       1,
+			Status:        commonoutbox.StatusInProgress,
+			LockedAt:      sql.NullTime{Time: arg.ClaimedAt.Time, Valid: true},
+			LockedBy:      sql.NullString{String: arg.LockedBy.String, Valid: true},
+			NextAttemptAt: now,
+			MaxAttempts:   20,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}}, nil
 	}
 
 	repo := NewRepositoryFromQuerier(queries)
-	records, err := repo.ClaimPending(context.Background(), commonoutbox.ClaimPendingParams{Limit: 2, Before: before})
+	records, err := repo.ClaimPending(context.Background(), commonoutbox.ClaimPendingParams{Limit: 2, Before: now, LockedBy: "worker-1"})
 	require.NoError(t, err)
 	require.Len(t, records, 1)
-	require.Equal(t, commonoutbox.StatusInProgress, records[0].Status)
-	require.Equal(t, "catalog.product.created", records[0].Headers["event_name"])
+	require.Equal(t, "worker-1", records[0].LockedBy)
+	require.Equal(t, "catalog.product.created", records[0].Headers["eventName"])
 }
 
-func TestRepositoryClaimPendingDoesNotReclaimFreshInProgress(t *testing.T) {
+func TestRepositoryClaimStaleInProgress(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	before := now.Add(2 * time.Second)
 
-	staleCandidateID := uuid.New()
-	freshInProgressID := uuid.New()
+	queries := &stubQuerier{}
+	queries.claimStaleInProgressFunc = func(_ context.Context, arg sqlc.ClaimStaleInProgressOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
+		require.Equal(t, int32(1), arg.LimitCount)
+		require.Equal(t, "worker-2", arg.LockedBy.String)
+		require.True(t, arg.StaleBefore.Valid)
 
+		return []sqlc.OutboxRecord{{
+			ID:            uuid.New(),
+			EventID:       uuid.New(),
+			EventName:     "catalog.product.created",
+			AggregateType: "product",
+			AggregateID:   "product-2",
+			Topic:         "catalog.events",
+			Payload:       []byte("payload"),
+			Headers:       []byte(`{"eventName":"catalog.product.created"}`),
+			Attempt:       2,
+			Status:        commonoutbox.StatusInProgress,
+			LockedAt:      sql.NullTime{Time: now, Valid: true},
+			LockedBy:      sql.NullString{String: "worker-2", Valid: true},
+			NextAttemptAt: now,
+			MaxAttempts:   20,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}}, nil
+	}
+
+	repo := NewRepositoryFromQuerier(queries)
+	records, err := repo.ClaimStaleInProgress(context.Background(), commonoutbox.ClaimStaleInProgressParams{Limit: 1, StaleBefore: now, LockedBy: "worker-2"})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Equal(t, "worker-2", records[0].LockedBy)
+}
+
+func TestRepositoryMarkOperationsUseOwnershipGuard(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	id := uuid.New()
+	claimToken := now.Add(-time.Second)
+
+	queries := &stubQuerier{}
+
+	queries.markPublishedFunc = func(_ context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error) {
+		require.Equal(t, id, arg.ID)
+		require.Equal(t, "worker-1", arg.LockedBy.String)
+		require.Equal(t, claimToken, arg.ClaimToken.Time)
+		require.Equal(t, now, arg.PublishedAt.Time)
+		return 1, nil
+	}
+
+	queries.markRetryableFailureFunc = func(_ context.Context, arg sqlc.MarkOutboxRecordRetryableFailureParams) (int64, error) {
+		require.Equal(t, id, arg.ID)
+		require.Equal(t, "worker-1", arg.LockedBy.String)
+		require.Equal(t, claimToken, arg.ClaimToken.Time)
+		require.Equal(t, int32(3), arg.Attempt)
+		require.Equal(t, now.Add(time.Second), arg.NextAttemptAt)
+		require.Equal(t, "broker down", arg.LastError.String)
+		return 1, nil
+	}
+
+	queries.markDeadFunc = func(_ context.Context, arg sqlc.MarkOutboxRecordDeadParams) (int64, error) {
+		require.Equal(t, id, arg.ID)
+		require.Equal(t, "worker-1", arg.LockedBy.String)
+		require.Equal(t, claimToken, arg.ClaimToken.Time)
+		require.Equal(t, int32(20), arg.Attempt)
+		require.Equal(t, "fatal", arg.LastError.String)
+		return 1, nil
+	}
+
+	repo := NewRepositoryFromQuerier(queries)
+
+	err := repo.MarkPublished(context.Background(), commonoutbox.MarkPublishedParams{
+		ID:          id,
+		ClaimToken:  claimToken,
+		LockedBy:    "worker-1",
+		PublishedAt: now,
+	})
+	require.NoError(t, err)
+
+	err = repo.MarkRetryableFailure(context.Background(), commonoutbox.MarkRetryableFailureParams{
+		ID:            id,
+		ClaimToken:    claimToken,
+		LockedBy:      "worker-1",
+		Attempt:       3,
+		NextAttemptAt: now.Add(time.Second),
+		LastError:     "broker down",
+	})
+	require.NoError(t, err)
+
+	err = repo.MarkDead(context.Background(), commonoutbox.MarkDeadParams{
+		ID:         id,
+		ClaimToken: claimToken,
+		LockedBy:   "worker-1",
+		Attempt:    20,
+		LastError:  "fatal",
+	})
+	require.NoError(t, err)
+}
+
+func TestRepositoryMarkOperationsConflict(t *testing.T) {
 	queries := &stubQuerier{
-		claimPendingFunc: func(_ context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
-			require.True(t, arg.ClaimedAt.Valid)
-			require.True(t, arg.StaleBefore.Valid)
-
-			reclaimedLockedAt := arg.StaleBefore.Time.Add(-time.Millisecond)
-			freshLockedAt := arg.StaleBefore.Time.Add(time.Millisecond)
-
-			require.True(t, reclaimedLockedAt.Before(arg.StaleBefore.Time))
-			require.True(t, freshLockedAt.After(arg.StaleBefore.Time))
-
-			headers, err := json.Marshal(map[string]string{"event_name": "catalog.product.created"})
-			require.NoError(t, err)
-
-			// Emulate DB stale branch behavior: return only reclaimed record.
-			return []sqlc.OutboxRecord{{
-				ID:            staleCandidateID,
-				EventID:       "evt-stale",
-				EventName:     "catalog.product.created",
-				AggregateType: "product",
-				AggregateID:   "product-stale",
-				Topic:         "catalog.product.events",
-				Payload:       []byte("payload"),
-				Headers:       headers,
-				Attempt:       2,
-				Status:        string(commonoutbox.StatusInProgress),
-				LockedAt:      sql.NullTime{Time: reclaimedLockedAt, Valid: true},
-				CreatedAt:     now,
-				UpdatedAt:     now,
-			}}, nil
+		markPublishedFunc: func(_ context.Context, _ sqlc.MarkOutboxRecordPublishedParams) (int64, error) {
+			return 0, nil
+		},
+		markRetryableFailureFunc: func(_ context.Context, _ sqlc.MarkOutboxRecordRetryableFailureParams) (int64, error) {
+			return 0, nil
+		},
+		markDeadFunc: func(_ context.Context, _ sqlc.MarkOutboxRecordDeadParams) (int64, error) {
+			return 0, nil
 		},
 	}
 
 	repo := NewRepositoryFromQuerier(queries)
-	records, err := repo.ClaimPending(context.Background(), commonoutbox.ClaimPendingParams{Limit: 2, Before: before})
-	require.NoError(t, err)
-	require.Len(t, records, 1)
-	require.Equal(t, staleCandidateID, records[0].ID)
-	require.NotEqual(t, freshInProgressID, records[0].ID)
+	now := time.Now().UTC()
+	id := uuid.New()
+
+	err := repo.MarkPublished(context.Background(), commonoutbox.MarkPublishedParams{ID: id, ClaimToken: now, LockedBy: "worker-1", PublishedAt: now})
+	require.ErrorIs(t, err, commonoutbox.ErrPublishConflict)
+
+	err = repo.MarkRetryableFailure(context.Background(), commonoutbox.MarkRetryableFailureParams{ID: id, ClaimToken: now, LockedBy: "worker-1", Attempt: 1, NextAttemptAt: now.Add(time.Second), LastError: "err"})
+	require.ErrorIs(t, err, commonoutbox.ErrPublishConflict)
+
+	err = repo.MarkDead(context.Background(), commonoutbox.MarkDeadParams{ID: id, ClaimToken: now, LockedBy: "worker-1", Attempt: 1, LastError: "err"})
+	require.ErrorIs(t, err, commonoutbox.ErrPublishConflict)
 }
 
-func TestRepositoryClaimPendingInvalidParams(t *testing.T) {
-	repo := NewRepositoryFromQuerier(&stubQuerier{})
-	_, err := repo.ClaimPending(context.Background(), commonoutbox.ClaimPendingParams{})
+func TestRepositoryWrapsErrors(t *testing.T) {
+	queries := &stubQuerier{
+		claimPendingFunc: func(_ context.Context, _ sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
+			return nil, errors.New("db down")
+		},
+		claimStaleInProgressFunc: func(_ context.Context, _ sqlc.ClaimStaleInProgressOutboxRecordsParams) ([]sqlc.OutboxRecord, error) {
+			return nil, errors.New("db stale down")
+		},
+	}
+
+	repo := NewRepositoryFromQuerier(queries)
+	_, err := repo.ClaimPending(context.Background(), commonoutbox.ClaimPendingParams{Limit: 1, Before: time.Now().UTC(), LockedBy: "worker-1"})
 	require.Error(t, err)
-	require.ErrorIs(t, err, commonoutbox.ErrInvalidClaimParams)
-}
+	require.ErrorContains(t, err, "claim pending outbox records")
 
-func TestRepositoryMarkPublished(t *testing.T) {
-	id := uuid.New()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-
-	tests := []struct {
-		name        string
-		setup       func(*stubQuerier)
-		params      commonoutbox.MarkPublishedParams
-		errIs       error
-		errContains string
-	}{
-		{
-			name: "success",
-			params: commonoutbox.MarkPublishedParams{
-				ID:          id,
-				ClaimToken:  now.Add(-time.Second),
-				PublishedAt: now,
-			},
-			setup: func(q *stubQuerier) {
-				q.markPublishedFunc = func(_ context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error) {
-					require.Equal(t, id, arg.ID)
-					require.True(t, arg.ClaimToken.Valid)
-					require.Equal(t, now.Add(-time.Second), arg.ClaimToken.Time)
-					require.True(t, arg.PublishedAt.Valid)
-					return 1, nil
-				}
-			},
-		},
-		{
-			name:   "invalid params",
-			params: commonoutbox.MarkPublishedParams{},
-			errIs:  commonoutbox.ErrInvalidMarkPublishedParams,
-		},
-		{
-			name: "conflict",
-			params: commonoutbox.MarkPublishedParams{
-				ID:          id,
-				ClaimToken:  now.Add(-time.Second),
-				PublishedAt: now,
-			},
-			setup: func(q *stubQuerier) {
-				q.markPublishedFunc = func(_ context.Context, _ sqlc.MarkOutboxRecordPublishedParams) (int64, error) {
-					return 0, nil
-				}
-			},
-			errIs: commonoutbox.ErrPublishConflict,
-		},
-		{
-			name: "stale token rejected after reclaim",
-			params: commonoutbox.MarkPublishedParams{
-				ID:          id,
-				ClaimToken:  now.Add(-2 * time.Second),
-				PublishedAt: now,
-			},
-			setup: func(q *stubQuerier) {
-				q.markPublishedFunc = func(_ context.Context, _ sqlc.MarkOutboxRecordPublishedParams) (int64, error) {
-					return 0, nil
-				}
-			},
-			errIs: commonoutbox.ErrPublishConflict,
-		},
-		{
-			name: "current token can finalize",
-			params: commonoutbox.MarkPublishedParams{
-				ID:          id,
-				ClaimToken:  now.Add(-500 * time.Millisecond),
-				PublishedAt: now,
-			},
-			setup: func(q *stubQuerier) {
-				q.markPublishedFunc = func(_ context.Context, _ sqlc.MarkOutboxRecordPublishedParams) (int64, error) {
-					return 1, nil
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			queries := &stubQuerier{}
-			if tt.setup != nil {
-				tt.setup(queries)
-			}
-
-			repo := NewRepositoryFromQuerier(queries)
-			err := repo.MarkPublished(context.Background(), tt.params)
-			if tt.errIs != nil || tt.errContains != "" {
-				require.Error(t, err)
-				if tt.errIs != nil {
-					require.ErrorIs(t, err, tt.errIs)
-				}
-				if tt.errContains != "" {
-					require.ErrorContains(t, err, tt.errContains)
-				}
-				return
-			}
-
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestRepositoryMarkFailed(t *testing.T) {
-	id := uuid.New()
-	next := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
-
-	tests := []struct {
-		name   string
-		setup  func(*stubQuerier)
-		params commonoutbox.MarkFailedParams
-		errIs  error
-	}{
-		{
-			name: "success",
-			params: commonoutbox.MarkFailedParams{
-				ID:            id,
-				ClaimToken:    next.Add(-time.Minute),
-				Attempt:       2,
-				NextAttemptAt: next,
-				LastError:     "broker unavailable",
-			},
-			setup: func(q *stubQuerier) {
-				q.markFailedFunc = func(_ context.Context, arg sqlc.MarkOutboxRecordFailedParams) (int64, error) {
-					now := time.Now().UTC()
-					require.True(t, arg.ClaimToken.Valid)
-					require.Equal(t, next.Add(-time.Minute), arg.ClaimToken.Time)
-					require.Equal(t, int32(2), arg.Attempt)
-					require.Equal(t, "broker unavailable", arg.LastError)
-					require.True(t, arg.NextAttemptAt.Valid)
-					require.Equal(t, next, arg.NextAttemptAt.Time)
-					require.NotEqual(t, next, arg.UpdatedAt)
-					require.True(t, arg.UpdatedAt.Before(now) || arg.UpdatedAt.Equal(now))
-					return 1, nil
-				}
-			},
-		},
-		{
-			name:   "invalid params",
-			params: commonoutbox.MarkFailedParams{},
-			errIs:  commonoutbox.ErrInvalidMarkFailedParams,
-		},
-		{
-			name: "conflict",
-			params: commonoutbox.MarkFailedParams{
-				ID:            id,
-				ClaimToken:    next.Add(-time.Minute),
-				Attempt:       1,
-				NextAttemptAt: next,
-				LastError:     "broker unavailable",
-			},
-			setup: func(q *stubQuerier) {
-				q.markFailedFunc = func(_ context.Context, _ sqlc.MarkOutboxRecordFailedParams) (int64, error) {
-					return 0, nil
-				}
-			},
-			errIs: commonoutbox.ErrPublishConflict,
-		},
-		{
-			name: "stale token rejected after reclaim",
-			params: commonoutbox.MarkFailedParams{
-				ID:            id,
-				ClaimToken:    next.Add(-2 * time.Minute),
-				Attempt:       1,
-				NextAttemptAt: next,
-				LastError:     "broker unavailable",
-			},
-			setup: func(q *stubQuerier) {
-				q.markFailedFunc = func(_ context.Context, _ sqlc.MarkOutboxRecordFailedParams) (int64, error) {
-					return 0, nil
-				}
-			},
-			errIs: commonoutbox.ErrPublishConflict,
-		},
-		{
-			name: "current token can finalize",
-			params: commonoutbox.MarkFailedParams{
-				ID:            id,
-				ClaimToken:    next.Add(-time.Minute),
-				Attempt:       1,
-				NextAttemptAt: next,
-				LastError:     "broker unavailable",
-			},
-			setup: func(q *stubQuerier) {
-				q.markFailedFunc = func(_ context.Context, _ sqlc.MarkOutboxRecordFailedParams) (int64, error) {
-					return 1, nil
-				}
-			},
-		},
-		{
-			name: "query error wrapped",
-			params: commonoutbox.MarkFailedParams{
-				ID:            id,
-				ClaimToken:    next.Add(-time.Minute),
-				Attempt:       1,
-				NextAttemptAt: next,
-				LastError:     "broker unavailable",
-			},
-			setup: func(q *stubQuerier) {
-				q.markFailedFunc = func(_ context.Context, _ sqlc.MarkOutboxRecordFailedParams) (int64, error) {
-					return 0, errors.New("db down")
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			queries := &stubQuerier{}
-			if tt.setup != nil {
-				tt.setup(queries)
-			}
-
-			repo := NewRepositoryFromQuerier(queries)
-			err := repo.MarkFailed(context.Background(), tt.params)
-			if tt.errIs != nil {
-				require.Error(t, err)
-				require.ErrorIs(t, err, tt.errIs)
-				return
-			}
-
-			if tt.name == "query error wrapped" {
-				require.Error(t, err)
-				require.ErrorContains(t, err, "mark outbox record failed")
-				return
-			}
-
-			require.NoError(t, err)
-		})
-	}
+	_, err = repo.ClaimStaleInProgress(context.Background(), commonoutbox.ClaimStaleInProgressParams{Limit: 1, StaleBefore: time.Now().UTC(), LockedBy: "worker-1"})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "claim stale outbox records")
 }

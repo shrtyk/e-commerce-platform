@@ -22,7 +22,7 @@ type Currency struct {
 
 type OutboxRecord struct {
 	ID            uuid.UUID
-	EventID       string
+	EventID       uuid.UUID
 	EventName     string
 	AggregateType string
 	AggregateID   string
@@ -31,11 +31,13 @@ type OutboxRecord struct {
 	Payload       []byte
 	Headers       json.RawMessage
 	Attempt       int32
-	Status        string
-	LastError     string
-	NextAttemptAt sql.NullTime
+	Status        interface{}
+	LastError     sql.NullString
+	NextAttemptAt time.Time
 	LockedAt      sql.NullTime
+	LockedBy      sql.NullString
 	PublishedAt   sql.NullTime
+	MaxAttempts   int32
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }

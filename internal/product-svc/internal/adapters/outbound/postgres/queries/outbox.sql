@@ -9,7 +9,6 @@ INSERT INTO
     key,
     payload,
     headers,
-    attempt,
     status
   )
 VALUES
@@ -22,44 +21,71 @@ VALUES
     sqlc.narg (key),
     sqlc.arg (payload),
     sqlc.arg (headers),
-    0,
     sqlc.arg (status)
   )
 RETURNING
   *;
 
 -- name: ClaimPendingOutboxRecords :many
-UPDATE outbox_records
+WITH candidates AS (
+  SELECT
+    o.id
+  FROM
+    outbox_records AS o
+  WHERE
+    o.status = 'pending'
+    AND o.next_attempt_at <= sqlc.arg (before)
+  ORDER BY
+    o.next_attempt_at,
+    o.created_at,
+    o.id
+  LIMIT
+    sqlc.arg (limit_count)
+  FOR UPDATE
+    SKIP LOCKED
+)
+UPDATE outbox_records AS o
 SET
   status = 'in_progress',
   locked_at = sqlc.arg (claimed_at),
+  locked_by = sqlc.arg (locked_by),
   updated_at = sqlc.arg (claimed_at)
+FROM
+  candidates
 WHERE
-  id IN (
-    SELECT
-      o.id
-    FROM
-      outbox_records AS o
-    WHERE
-      (
-        o.status IN ('pending', 'failed')
-        AND COALESCE(o.next_attempt_at, '-infinity'::timestamptz) <= sqlc.arg (before)
-      )
-      OR (
-        o.status = 'in_progress'
-        AND o.locked_at IS NOT NULL
-        AND o.locked_at <= sqlc.arg (stale_before)
-      )
-    ORDER BY
-      o.created_at,
-      o.id
-    LIMIT
-      sqlc.arg (limit_count)
-    FOR UPDATE
-      SKIP LOCKED
-  )
+  o.id = candidates.id
 RETURNING
-  *;
+  o.*;
+
+-- name: ClaimStaleInProgressOutboxRecords :many
+WITH candidates AS (
+  SELECT
+    o.id
+  FROM
+    outbox_records AS o
+  WHERE
+    o.status = 'in_progress'
+    AND o.locked_at <= sqlc.arg (stale_before)
+  ORDER BY
+    o.locked_at,
+    o.created_at,
+    o.id
+  LIMIT
+    sqlc.arg (limit_count)
+  FOR UPDATE
+    SKIP LOCKED
+)
+UPDATE outbox_records AS o
+SET
+  locked_at = sqlc.arg (claimed_at),
+  locked_by = sqlc.arg (locked_by),
+  updated_at = sqlc.arg (claimed_at)
+FROM
+  candidates
+WHERE
+  o.id = candidates.id
+RETURNING
+  o.*;
 
 -- name: MarkOutboxRecordPublished :execrows
 UPDATE outbox_records
@@ -67,22 +93,42 @@ SET
   status = 'published',
   published_at = sqlc.arg (published_at),
   locked_at = NULL,
+  locked_by = NULL,
   updated_at = sqlc.arg (published_at)
 WHERE
   id = sqlc.arg (id)
   AND status = 'in_progress'
+  AND locked_by = sqlc.arg (locked_by)
   AND locked_at = sqlc.arg (claim_token);
 
--- name: MarkOutboxRecordFailed :execrows
+-- name: MarkOutboxRecordRetryableFailure :execrows
 UPDATE outbox_records
 SET
-  status = 'failed',
+  status = 'pending',
   attempt = sqlc.arg (attempt),
   next_attempt_at = sqlc.arg (next_attempt_at),
   last_error = sqlc.arg (last_error),
   locked_at = NULL,
+  locked_by = NULL,
   updated_at = sqlc.arg (updated_at)
 WHERE
   id = sqlc.arg (id)
   AND status = 'in_progress'
+  AND locked_by = sqlc.arg (locked_by)
+  AND locked_at = sqlc.arg (claim_token);
+
+-- name: MarkOutboxRecordDead :execrows
+UPDATE outbox_records
+SET
+  status = 'dead',
+  attempt = sqlc.arg (attempt),
+  next_attempt_at = sqlc.arg (updated_at),
+  last_error = sqlc.arg (last_error),
+  locked_at = NULL,
+  locked_by = NULL,
+  updated_at = sqlc.arg (updated_at)
+WHERE
+  id = sqlc.arg (id)
+  AND status = 'in_progress'
+  AND locked_by = sqlc.arg (locked_by)
   AND locked_at = sqlc.arg (claim_token);

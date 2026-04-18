@@ -14,7 +14,7 @@ const (
 	StatusPending    Status = "pending"
 	StatusInProgress Status = "in_progress"
 	StatusPublished  Status = "published"
-	StatusFailed     Status = "failed"
+	StatusDead       Status = "dead"
 )
 
 type Record struct {
@@ -31,10 +31,12 @@ type Record struct {
 	Headers map[string]string
 
 	Attempt       int
+	MaxAttempts   int
 	Status        Status
 	LastError     string
 	NextAttemptAt time.Time
 	LockedAt      time.Time
+	LockedBy      string
 	PublishedAt   time.Time
 
 	CreatedAt time.Time
@@ -43,7 +45,7 @@ type Record struct {
 
 func (s Status) IsValid() bool {
 	switch s {
-	case StatusPending, StatusInProgress, StatusPublished, StatusFailed:
+	case StatusPending, StatusInProgress, StatusPublished, StatusDead:
 		return true
 	default:
 		return false
@@ -55,9 +57,7 @@ func (s Status) CanTransitionTo(next Status) bool {
 	case StatusPending:
 		return next == StatusInProgress
 	case StatusInProgress:
-		return next == StatusPublished || next == StatusFailed
-	case StatusFailed:
-		return next == StatusInProgress
+		return next == StatusPublished || next == StatusPending || next == StatusDead
 	default:
 		return false
 	}
@@ -96,11 +96,15 @@ func (r Record) ValidateForAppend() error {
 		return fmt.Errorf("attempt must be zero on append: %w", ErrInvalidRecord)
 	}
 
+	if r.MaxAttempts < 0 {
+		return fmt.Errorf("max attempts must be non-negative on append: %w", ErrInvalidRecord)
+	}
+
 	if r.Status != StatusPending {
 		return fmt.Errorf("status must be pending on append: %w", ErrInvalidRecord)
 	}
 
-	if r.LastError != "" || !r.NextAttemptAt.IsZero() || !r.LockedAt.IsZero() || !r.PublishedAt.IsZero() || !r.CreatedAt.IsZero() || !r.UpdatedAt.IsZero() {
+	if r.LastError != "" || !r.NextAttemptAt.IsZero() || !r.LockedAt.IsZero() || strings.TrimSpace(r.LockedBy) != "" || !r.PublishedAt.IsZero() || !r.CreatedAt.IsZero() || !r.UpdatedAt.IsZero() {
 		return fmt.Errorf("record contains adapter-managed metadata: %w", ErrInvalidRecord)
 	}
 

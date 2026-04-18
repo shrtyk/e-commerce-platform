@@ -13,6 +13,7 @@ import (
 type Querier interface {
 	AppendOutboxRecord(ctx context.Context, arg AppendOutboxRecordParams) (OutboxRecord, error)
 	ClaimPendingOutboxRecords(ctx context.Context, arg ClaimPendingOutboxRecordsParams) ([]OutboxRecord, error)
+	ClaimStaleInProgressOutboxRecords(ctx context.Context, arg ClaimStaleInProgressOutboxRecordsParams) ([]OutboxRecord, error)
 	CreateProduct(ctx context.Context, arg CreateProductParams) (CreateProductRow, error)
 	CreateStockRecord(ctx context.Context, arg CreateStockRecordParams) (StockRecord, error)
 	DeleteProduct(ctx context.Context, productID uuid.UUID) (Product, error)
@@ -20,8 +21,9 @@ type Querier interface {
 	GetProductBySKU(ctx context.Context, sku string) (GetProductBySKURow, error)
 	GetStockRecordByProductID(ctx context.Context, productID uuid.UUID) (StockRecord, error)
 	ListProducts(ctx context.Context, arg ListProductsParams) ([]ListProductsRow, error)
-	MarkOutboxRecordFailed(ctx context.Context, arg MarkOutboxRecordFailedParams) (int64, error)
+	MarkOutboxRecordDead(ctx context.Context, arg MarkOutboxRecordDeadParams) (int64, error)
 	MarkOutboxRecordPublished(ctx context.Context, arg MarkOutboxRecordPublishedParams) (int64, error)
+	MarkOutboxRecordRetryableFailure(ctx context.Context, arg MarkOutboxRecordRetryableFailureParams) (int64, error)
 	UpdateProduct(ctx context.Context, arg UpdateProductParams) (UpdateProductRow, error)
 	UpdateStockRecord(ctx context.Context, arg UpdateStockRecordParams) (StockRecord, error)
 }

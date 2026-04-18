@@ -13,9 +13,11 @@ import (
 )
 
 type repositoryStub struct {
-	claimPendingFunc  func(ctx context.Context, params commonoutbox.ClaimPendingParams) ([]commonoutbox.Record, error)
-	markPublishedFunc func(ctx context.Context, params commonoutbox.MarkPublishedParams) error
-	markFailedFunc    func(ctx context.Context, params commonoutbox.MarkFailedParams) error
+	claimPendingFunc         func(ctx context.Context, params commonoutbox.ClaimPendingParams) ([]commonoutbox.Record, error)
+	claimStaleInProgressFunc func(ctx context.Context, params commonoutbox.ClaimStaleInProgressParams) ([]commonoutbox.Record, error)
+	markPublishedFunc        func(ctx context.Context, params commonoutbox.MarkPublishedParams) error
+	markRetryableFailureFunc func(ctx context.Context, params commonoutbox.MarkRetryableFailureParams) error
+	markDeadFunc             func(ctx context.Context, params commonoutbox.MarkDeadParams) error
 }
 
 func (s *repositoryStub) ClaimPending(ctx context.Context, params commonoutbox.ClaimPendingParams) ([]commonoutbox.Record, error) {
@@ -26,6 +28,14 @@ func (s *repositoryStub) ClaimPending(ctx context.Context, params commonoutbox.C
 	return s.claimPendingFunc(ctx, params)
 }
 
+func (s *repositoryStub) ClaimStaleInProgress(ctx context.Context, params commonoutbox.ClaimStaleInProgressParams) ([]commonoutbox.Record, error) {
+	if s.claimStaleInProgressFunc == nil {
+		return nil, fmt.Errorf("unexpected ClaimStaleInProgress call")
+	}
+
+	return s.claimStaleInProgressFunc(ctx, params)
+}
+
 func (s *repositoryStub) MarkPublished(ctx context.Context, params commonoutbox.MarkPublishedParams) error {
 	if s.markPublishedFunc == nil {
 		return fmt.Errorf("unexpected MarkPublished call")
@@ -34,12 +44,20 @@ func (s *repositoryStub) MarkPublished(ctx context.Context, params commonoutbox.
 	return s.markPublishedFunc(ctx, params)
 }
 
-func (s *repositoryStub) MarkFailed(ctx context.Context, params commonoutbox.MarkFailedParams) error {
-	if s.markFailedFunc == nil {
-		return fmt.Errorf("unexpected MarkFailed call")
+func (s *repositoryStub) MarkRetryableFailure(ctx context.Context, params commonoutbox.MarkRetryableFailureParams) error {
+	if s.markRetryableFailureFunc == nil {
+		return fmt.Errorf("unexpected MarkRetryableFailure call")
 	}
 
-	return s.markFailedFunc(ctx, params)
+	return s.markRetryableFailureFunc(ctx, params)
+}
+
+func (s *repositoryStub) MarkDead(ctx context.Context, params commonoutbox.MarkDeadParams) error {
+	if s.markDeadFunc == nil {
+		return fmt.Errorf("unexpected MarkDead call")
+	}
+
+	return s.markDeadFunc(ctx, params)
 }
 
 type publisherStub struct {
@@ -67,54 +85,18 @@ func TestRelayConfigValidate(t *testing.T) {
 				Interval:         500 * time.Millisecond,
 				RetryBaseBackoff: time.Second,
 				RetryMaxBackoff:  30 * time.Second,
+				WorkerID:         "worker-1",
+				StaleLockTTL:     30 * time.Second,
 			},
 			wantOK: true,
 		},
-		{
-			name: "invalid batch size",
-			cfg: RelayConfig{
-				BatchSize:        0,
-				Interval:         500 * time.Millisecond,
-				RetryBaseBackoff: time.Second,
-				RetryMaxBackoff:  30 * time.Second,
-			},
-		},
-		{
-			name: "invalid interval",
-			cfg: RelayConfig{
-				BatchSize:        10,
-				Interval:         0,
-				RetryBaseBackoff: time.Second,
-				RetryMaxBackoff:  30 * time.Second,
-			},
-		},
-		{
-			name: "invalid retry base backoff",
-			cfg: RelayConfig{
-				BatchSize:        10,
-				Interval:         time.Second,
-				RetryBaseBackoff: 0,
-				RetryMaxBackoff:  30 * time.Second,
-			},
-		},
-		{
-			name: "invalid retry max backoff",
-			cfg: RelayConfig{
-				BatchSize:        10,
-				Interval:         time.Second,
-				RetryBaseBackoff: time.Second,
-				RetryMaxBackoff:  0,
-			},
-		},
-		{
-			name: "invalid retry window",
-			cfg: RelayConfig{
-				BatchSize:        10,
-				Interval:         time.Second,
-				RetryBaseBackoff: 2 * time.Second,
-				RetryMaxBackoff:  time.Second,
-			},
-		},
+		{name: "invalid batch size", cfg: RelayConfig{BatchSize: 0, Interval: time.Second, RetryBaseBackoff: time.Second, RetryMaxBackoff: 30 * time.Second, WorkerID: "worker-1", StaleLockTTL: time.Second}},
+		{name: "invalid interval", cfg: RelayConfig{BatchSize: 10, Interval: 0, RetryBaseBackoff: time.Second, RetryMaxBackoff: 30 * time.Second, WorkerID: "worker-1", StaleLockTTL: time.Second}},
+		{name: "invalid retry base", cfg: RelayConfig{BatchSize: 10, Interval: time.Second, RetryBaseBackoff: 0, RetryMaxBackoff: 30 * time.Second, WorkerID: "worker-1", StaleLockTTL: time.Second}},
+		{name: "invalid retry max", cfg: RelayConfig{BatchSize: 10, Interval: time.Second, RetryBaseBackoff: time.Second, RetryMaxBackoff: 0, WorkerID: "worker-1", StaleLockTTL: time.Second}},
+		{name: "invalid retry window", cfg: RelayConfig{BatchSize: 10, Interval: time.Second, RetryBaseBackoff: 2 * time.Second, RetryMaxBackoff: time.Second, WorkerID: "worker-1", StaleLockTTL: time.Second}},
+		{name: "missing worker id", cfg: RelayConfig{BatchSize: 10, Interval: time.Second, RetryBaseBackoff: time.Second, RetryMaxBackoff: 30 * time.Second, StaleLockTTL: time.Second}},
+		{name: "invalid stale lock ttl", cfg: RelayConfig{BatchSize: 10, Interval: time.Second, RetryBaseBackoff: time.Second, RetryMaxBackoff: 30 * time.Second, WorkerID: "worker-1", StaleLockTTL: 0}},
 	}
 
 	for _, tt := range tests {
@@ -132,114 +114,144 @@ func TestRelayConfigValidate(t *testing.T) {
 
 func TestRelayWorkerTick(t *testing.T) {
 	now := time.Date(2026, time.January, 10, 12, 0, 0, 0, time.UTC)
+	lockedAt := now.Add(-time.Second)
 
 	tests := []struct {
-		name             string
-		record           commonoutbox.Record
-		claimPendingErr  error
-		publishErr       error
-		markPublishedErr error
-		markFailedErr    error
-		errContains      string
-		assertFn         func(t *testing.T, markPublished []commonoutbox.MarkPublishedParams, markFailed []commonoutbox.MarkFailedParams)
+		name               string
+		pending            []commonoutbox.Record
+		stale              []commonoutbox.Record
+		claimPendingErr    error
+		claimStaleErr      error
+		publishErr         error
+		markPublishedErr   error
+		markRetryableErr   error
+		markDeadErr        error
+		errContains        string
+		expectPublished    int
+		expectRetryable    int
+		expectDead         int
+		retryAttempt       int
+		retryNextAttemptAt time.Time
 	}{
 		{
-			name: "mark published when publish success",
-			record: commonoutbox.Record{
-				ID:       uuid.New(),
-				Attempt:  0,
-				LockedAt: now,
-			},
-			assertFn: func(t *testing.T, markPublished []commonoutbox.MarkPublishedParams, markFailed []commonoutbox.MarkFailedParams) {
-				require.Len(t, markPublished, 1)
-				require.Len(t, markFailed, 0)
-				require.Equal(t, now, markPublished[0].ClaimToken)
-				require.Equal(t, now, markPublished[0].PublishedAt)
-			},
+			name:            "published when publish success",
+			pending:         []commonoutbox.Record{{ID: uuid.New(), Attempt: 0, MaxAttempts: 20, LockedAt: lockedAt}},
+			expectPublished: 1,
+		},
+		{name: "claim pending error", claimPendingErr: errors.New("db unavailable"), errContains: "claim pending outbox records"},
+		{
+			name:          "claim stale error",
+			pending:       []commonoutbox.Record{{ID: uuid.New(), Attempt: 0, MaxAttempts: 20, LockedAt: lockedAt}},
+			claimStaleErr: errors.New("db stale unavailable"),
+			errContains:   "claim stale outbox records",
 		},
 		{
-			name: "return error when claim pending fails",
-			record: commonoutbox.Record{
-				ID:       uuid.New(),
-				Attempt:  0,
-				LockedAt: now,
-			},
-			claimPendingErr: errors.New("db unavailable"),
-			errContains:     "claim pending outbox records",
-			assertFn: func(t *testing.T, markPublished []commonoutbox.MarkPublishedParams, markFailed []commonoutbox.MarkFailedParams) {
-				require.Len(t, markPublished, 0)
-				require.Len(t, markFailed, 0)
-			},
+			name:               "retryable failure",
+			pending:            []commonoutbox.Record{{ID: uuid.New(), Attempt: 2, MaxAttempts: 20, LockedAt: lockedAt}},
+			publishErr:         errors.New("broker unavailable"),
+			expectRetryable:    1,
+			retryAttempt:       3,
+			retryNextAttemptAt: now.Add(4 * time.Second),
 		},
 		{
-			name: "mark failed with next attempt when publish fails",
-			record: commonoutbox.Record{
-				ID:       uuid.New(),
-				Attempt:  2,
-				LockedAt: now,
-			},
+			name:               "retryable failure conflict bubbles",
+			pending:            []commonoutbox.Record{{ID: uuid.New(), Attempt: 1, MaxAttempts: 20, LockedAt: lockedAt}},
+			publishErr:         errors.New("broker unavailable"),
+			markRetryableErr:   commonoutbox.ErrPublishConflict,
+			errContains:        "mark outbox record retryable failure",
+			expectRetryable:    1,
+			retryAttempt:       2,
+			retryNextAttemptAt: now.Add(2 * time.Second),
+		},
+		{
+			name:               "retryable failure mark error bubbles",
+			pending:            []commonoutbox.Record{{ID: uuid.New(), Attempt: 0, MaxAttempts: 20, LockedAt: lockedAt}},
+			publishErr:         errors.New("broker unavailable"),
+			markRetryableErr:   errors.New("store error"),
+			errContains:        "mark outbox record retryable failure",
+			expectRetryable:    1,
+			retryAttempt:       1,
+			retryNextAttemptAt: now.Add(1 * time.Second),
+		},
+		{
+			name:       "dead when attempts exhausted",
+			pending:    []commonoutbox.Record{{ID: uuid.New(), Attempt: 4, MaxAttempts: 5, LockedAt: lockedAt}},
 			publishErr: errors.New("broker unavailable"),
-			assertFn: func(t *testing.T, markPublished []commonoutbox.MarkPublishedParams, markFailed []commonoutbox.MarkFailedParams) {
-				require.Len(t, markPublished, 0)
-				require.Len(t, markFailed, 1)
-				require.Equal(t, 3, markFailed[0].Attempt)
-				require.Equal(t, now.Add(4*time.Second), markFailed[0].NextAttemptAt)
-				require.Contains(t, markFailed[0].LastError, "broker unavailable")
-			},
+			expectDead: 1,
 		},
 		{
-			name: "return error when mark published fails",
-			record: commonoutbox.Record{
-				ID:       uuid.New(),
-				Attempt:  1,
-				LockedAt: now,
-			},
-			markPublishedErr: errors.New("mark published failed"),
+			name:        "dead mark conflict bubbles",
+			pending:     []commonoutbox.Record{{ID: uuid.New(), Attempt: 2, MaxAttempts: 3, LockedAt: lockedAt}},
+			publishErr:  errors.New("broker unavailable"),
+			markDeadErr: commonoutbox.ErrPublishConflict,
+			errContains: "mark outbox record dead",
+			expectDead:  1,
+		},
+		{
+			name:        "dead mark error bubbles",
+			pending:     []commonoutbox.Record{{ID: uuid.New(), Attempt: 2, MaxAttempts: 3, LockedAt: lockedAt}},
+			publishErr:  errors.New("broker unavailable"),
+			markDeadErr: errors.New("store dead error"),
+			errContains: "mark outbox record dead",
+			expectDead:  1,
+		},
+		{
+			name:            "stale reclaim record published",
+			stale:           []commonoutbox.Record{{ID: uuid.New(), Attempt: 0, MaxAttempts: 20, LockedAt: lockedAt}},
+			expectPublished: 1,
+		},
+		{
+			name:             "mark published ownership conflict bubbles",
+			pending:          []commonoutbox.Record{{ID: uuid.New(), Attempt: 0, MaxAttempts: 20, LockedAt: lockedAt}},
+			markPublishedErr: commonoutbox.ErrPublishConflict,
 			errContains:      "mark outbox record published",
-			assertFn: func(t *testing.T, markPublished []commonoutbox.MarkPublishedParams, markFailed []commonoutbox.MarkFailedParams) {
-				require.Len(t, markPublished, 1)
-				require.Len(t, markFailed, 0)
-			},
+			expectPublished:  1,
 		},
 		{
-			name: "return error when mark failed fails",
-			record: commonoutbox.Record{
-				ID:       uuid.New(),
-				Attempt:  1,
-				LockedAt: now,
-			},
-			publishErr:    errors.New("broker unavailable"),
-			markFailedErr: errors.New("mark failed error"),
-			errContains:   "mark outbox record failed",
-			assertFn: func(t *testing.T, markPublished []commonoutbox.MarkPublishedParams, markFailed []commonoutbox.MarkFailedParams) {
-				require.Len(t, markPublished, 0)
-				require.Len(t, markFailed, 1)
-			},
+			name:             "stale reclaim publish conflict bubbles",
+			stale:            []commonoutbox.Record{{ID: uuid.New(), Attempt: 0, MaxAttempts: 20, LockedAt: lockedAt}},
+			markPublishedErr: commonoutbox.ErrPublishConflict,
+			errContains:      "mark outbox record published",
+			expectPublished:  1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var markPublished []commonoutbox.MarkPublishedParams
-			var markFailed []commonoutbox.MarkFailedParams
+			var markRetryable []commonoutbox.MarkRetryableFailureParams
+			var markDead []commonoutbox.MarkDeadParams
 
 			repo := &repositoryStub{
 				claimPendingFunc: func(_ context.Context, params commonoutbox.ClaimPendingParams) ([]commonoutbox.Record, error) {
 					require.Equal(t, 50, params.Limit)
 					require.Equal(t, now, params.Before)
+					require.Equal(t, "worker-1", params.LockedBy)
 					if tt.claimPendingErr != nil {
 						return nil, tt.claimPendingErr
 					}
-
-					return []commonoutbox.Record{tt.record}, nil
+					return tt.pending, nil
+				},
+				claimStaleInProgressFunc: func(_ context.Context, params commonoutbox.ClaimStaleInProgressParams) ([]commonoutbox.Record, error) {
+					require.Equal(t, 50, params.Limit)
+					require.Equal(t, now.Add(-30*time.Second), params.StaleBefore)
+					require.Equal(t, "worker-1", params.LockedBy)
+					if tt.claimStaleErr != nil {
+						return nil, tt.claimStaleErr
+					}
+					return tt.stale, nil
 				},
 				markPublishedFunc: func(_ context.Context, params commonoutbox.MarkPublishedParams) error {
 					markPublished = append(markPublished, params)
 					return tt.markPublishedErr
 				},
-				markFailedFunc: func(_ context.Context, params commonoutbox.MarkFailedParams) error {
-					markFailed = append(markFailed, params)
-					return tt.markFailedErr
+				markRetryableFailureFunc: func(_ context.Context, params commonoutbox.MarkRetryableFailureParams) error {
+					markRetryable = append(markRetryable, params)
+					return tt.markRetryableErr
+				},
+				markDeadFunc: func(_ context.Context, params commonoutbox.MarkDeadParams) error {
+					markDead = append(markDead, params)
+					return tt.markDeadErr
 				},
 			}
 
@@ -252,6 +264,8 @@ func TestRelayWorkerTick(t *testing.T) {
 				Interval:         time.Second,
 				RetryBaseBackoff: time.Second,
 				RetryMaxBackoff:  10 * time.Second,
+				WorkerID:         "worker-1",
+				StaleLockTTL:     30 * time.Second,
 			})
 			require.NoError(t, err)
 			worker.now = func() time.Time { return now }
@@ -264,118 +278,26 @@ func TestRelayWorkerTick(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			tt.assertFn(t, markPublished, markFailed)
-		})
-	}
-}
+			require.Len(t, markPublished, tt.expectPublished)
+			require.Len(t, markRetryable, tt.expectRetryable)
+			require.Len(t, markDead, tt.expectDead)
 
-func TestRelayWorkerTickRetryScheduling(t *testing.T) {
-	now := time.Date(2026, time.January, 10, 12, 0, 0, 0, time.UTC)
-
-	tests := []struct {
-		name             string
-		attempt          int
-		wantAttempt      int
-		wantNextAttempt  time.Time
-		retryBaseBackoff time.Duration
-		retryMaxBackoff  time.Duration
-	}{
-		{
-			name:             "zero attempt starts from base backoff",
-			attempt:          0,
-			wantAttempt:      1,
-			wantNextAttempt:  now.Add(1 * time.Second),
-			retryBaseBackoff: 1 * time.Second,
-			retryMaxBackoff:  10 * time.Second,
-		},
-		{
-			name:             "low negative attempt uses base backoff",
-			attempt:          -1,
-			wantAttempt:      0,
-			wantNextAttempt:  now.Add(1 * time.Second),
-			retryBaseBackoff: 1 * time.Second,
-			retryMaxBackoff:  10 * time.Second,
-		},
-		{
-			name:             "high attempt is capped by max backoff",
-			attempt:          10,
-			wantAttempt:      11,
-			wantNextAttempt:  now.Add(10 * time.Second),
-			retryBaseBackoff: 1 * time.Second,
-			retryMaxBackoff:  10 * time.Second,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var markFailed []commonoutbox.MarkFailedParams
-
-			repo := &repositoryStub{
-				claimPendingFunc: func(_ context.Context, params commonoutbox.ClaimPendingParams) ([]commonoutbox.Record, error) {
-					require.Equal(t, 50, params.Limit)
-					require.Equal(t, now, params.Before)
-
-					return []commonoutbox.Record{{
-						ID:       uuid.New(),
-						Attempt:  tt.attempt,
-						LockedAt: now,
-					}}, nil
-				},
-				markPublishedFunc: func(_ context.Context, _ commonoutbox.MarkPublishedParams) error {
-					return nil
-				},
-				markFailedFunc: func(_ context.Context, params commonoutbox.MarkFailedParams) error {
-					markFailed = append(markFailed, params)
-					return nil
-				},
+			if tt.expectPublished > 0 {
+				require.Equal(t, "worker-1", markPublished[0].LockedBy)
+				require.Equal(t, lockedAt, markPublished[0].ClaimToken)
+				require.Equal(t, now, markPublished[0].PublishedAt)
 			}
 
-			publisher := &publisherStub{publishFunc: func(_ context.Context, _ commonoutbox.Record) error {
-				return errors.New("broker unavailable")
-			}}
+			if tt.expectRetryable > 0 {
+				require.Equal(t, "worker-1", markRetryable[0].LockedBy)
+				require.Equal(t, tt.retryAttempt, markRetryable[0].Attempt)
+				require.Equal(t, tt.retryNextAttemptAt, markRetryable[0].NextAttemptAt)
+			}
 
-			worker, err := NewRelayWorker(repo, publisher, RelayConfig{
-				BatchSize:        50,
-				Interval:         time.Second,
-				RetryBaseBackoff: tt.retryBaseBackoff,
-				RetryMaxBackoff:  tt.retryMaxBackoff,
-			})
-			require.NoError(t, err)
-			worker.now = func() time.Time { return now }
-
-			err = worker.Tick(context.Background())
-			require.NoError(t, err)
-			require.Len(t, markFailed, 1)
-			require.Equal(t, tt.wantAttempt, markFailed[0].Attempt)
-			require.Equal(t, tt.wantNextAttempt, markFailed[0].NextAttemptAt)
+			if tt.expectDead > 0 {
+				require.Equal(t, "worker-1", markDead[0].LockedBy)
+				require.Equal(t, tt.pending[0].Attempt+1, markDead[0].Attempt)
+			}
 		})
 	}
-}
-
-func TestRelayWorkerRunStopsOnContextCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	repo := &repositoryStub{
-		claimPendingFunc: func(_ context.Context, _ commonoutbox.ClaimPendingParams) ([]commonoutbox.Record, error) {
-			cancel()
-			return nil, nil
-		},
-		markPublishedFunc: func(_ context.Context, _ commonoutbox.MarkPublishedParams) error {
-			return nil
-		},
-		markFailedFunc: func(_ context.Context, _ commonoutbox.MarkFailedParams) error {
-			return nil
-		},
-	}
-
-	worker, err := NewRelayWorker(repo, &publisherStub{}, RelayConfig{
-		BatchSize:        10,
-		Interval:         5 * time.Millisecond,
-		RetryBaseBackoff: time.Second,
-		RetryMaxBackoff:  time.Minute,
-	})
-	require.NoError(t, err)
-
-	err = worker.Run(ctx)
-	require.NoError(t, err)
 }

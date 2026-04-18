@@ -1,7 +1,7 @@
 -- name: GetProductByID :one
 SELECT
-  sqlc.embed (products),
-  sqlc.embed (currencies)
+  sqlc.embed(products),
+  sqlc.embed(currencies)
 FROM
   products
   JOIN currencies ON products.currency_id = currencies.id
@@ -10,8 +10,8 @@ WHERE
 
 -- name: GetProductBySKU :one
 SELECT
-  sqlc.embed (products),
-  sqlc.embed (currencies)
+  sqlc.embed(products),
+  sqlc.embed(currencies)
 FROM
   products
   JOIN currencies ON products.currency_id = currencies.id
@@ -20,8 +20,8 @@ WHERE
 
 -- name: ListProducts :many
 SELECT
-  sqlc.embed (products),
-  sqlc.embed (currencies)
+  sqlc.embed(products),
+  sqlc.embed(currencies)
 FROM
   products
   JOIN currencies ON products.currency_id = currencies.id
@@ -59,8 +59,8 @@ WITH
       *
   )
 SELECT
-  sqlc.embed (products),
-  sqlc.embed (currencies)
+  sqlc.embed(products),
+  sqlc.embed(currencies)
 FROM
   created
   JOIN products ON products.product_id = created.product_id
@@ -85,8 +85,8 @@ WITH
       *
   )
 SELECT
-  sqlc.embed (products),
-  sqlc.embed (currencies)
+  sqlc.embed(products),
+  sqlc.embed(currencies)
 FROM
   updated
   JOIN products ON products.product_id = updated.product_id

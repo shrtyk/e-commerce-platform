@@ -83,6 +83,8 @@ func main() {
 		Interval:         cfg.Relay.Interval,
 		RetryBaseBackoff: cfg.Relay.RetryBaseBackoff,
 		RetryMaxBackoff:  cfg.Relay.RetryMaxBackoff,
+		WorkerID:         cfg.Relay.WorkerID,
+		StaleLockTTL:     cfg.Relay.StaleLockTTL,
 	})
 	if err != nil {
 		panic(fmt.Errorf("create outbox relay worker: %w", err))

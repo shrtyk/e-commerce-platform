@@ -15,7 +15,11 @@ const createStockRecord = `-- name: CreateStockRecord :one
 INSERT INTO
   stock_records (product_id, quantity, reserved)
 VALUES
-  ($1, $2, $3)
+  (
+    $1,
+    $2,
+    $3
+  )
 RETURNING
   stock_record_id, product_id, quantity, reserved, available, created_at, updated_at
 `
@@ -66,8 +70,7 @@ func (q *Queries) GetStockRecordByProductID(ctx context.Context, productID uuid.
 }
 
 const updateStockRecord = `-- name: UpdateStockRecord :one
-UPDATE
-  stock_records
+UPDATE stock_records
 SET
   quantity = $1,
   reserved = $2,

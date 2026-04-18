@@ -13,30 +13,31 @@ import (
 )
 
 const createProduct = `-- name: CreateProduct :one
-WITH created AS (
-  INSERT INTO
-    products (
-      sku,
-      name,
-      description,
-      price,
-      currency_id,
-      category_id,
-      status
-    )
-  VALUES
-    (
-      $1,
-      $2,
-      $3,
-      $4,
-      $5,
-      $6,
-      $7
-    )
-  RETURNING
-    product_id, sku, name, description, price, currency_id, category_id, status, created_at, updated_at
-)
+WITH
+  created AS (
+    INSERT INTO
+      products (
+        sku,
+        name,
+        description,
+        price,
+        currency_id,
+        category_id,
+        status
+      )
+    VALUES
+      (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7
+      )
+    RETURNING
+      product_id, sku, name, description, price, currency_id, category_id, status, created_at, updated_at
+  )
 SELECT
   products.product_id, products.sku, products.name, products.description, products.price, products.currency_id, products.category_id, products.status, products.created_at, products.updated_at,
   currencies.id, currencies.code, currencies.name, currencies.symbol, currencies.decimals
@@ -261,23 +262,23 @@ func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]L
 }
 
 const updateProduct = `-- name: UpdateProduct :one
-WITH updated AS (
-  UPDATE
-    products
-  SET
-    sku = $1,
-    name = $2,
-    description = $3,
-    price = $4,
-    currency_id = $5,
-    category_id = $6,
-    status = $7,
-    updated_at = NOW()
-  WHERE
-    products.product_id = $8
-  RETURNING
-    product_id, sku, name, description, price, currency_id, category_id, status, created_at, updated_at
-)
+WITH
+  updated AS (
+    UPDATE products
+    SET
+      sku = $1,
+      name = $2,
+      description = $3,
+      price = $4,
+      currency_id = $5,
+      category_id = $6,
+      status = $7,
+      updated_at = NOW()
+    WHERE
+      products.product_id = $8
+    RETURNING
+      product_id, sku, name, description, price, currency_id, category_id, status, created_at, updated_at
+  )
 SELECT
   products.product_id, products.sku, products.name, products.description, products.price, products.currency_id, products.category_id, products.status, products.created_at, products.updated_at,
   currencies.id, currencies.code, currencies.name, currencies.symbol, currencies.decimals

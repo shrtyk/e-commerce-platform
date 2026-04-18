@@ -18,7 +18,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "valid",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -45,7 +45,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "missing event name",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				AggregateType: "product",
 				AggregateID:   "product-1",
 				Topic:         "catalog.events.v1",
@@ -57,7 +57,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "missing aggregate type",
 			record: Record{
-				EventID:     "evt-1",
+				EventID:     uuid.NewString(),
 				EventName:   "catalog.product.created",
 				AggregateID: "product-1",
 				Topic:       "catalog.events.v1",
@@ -69,7 +69,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "missing aggregate id",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				Topic:         "catalog.events.v1",
@@ -81,7 +81,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "missing topic",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -93,7 +93,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "missing payload",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -105,7 +105,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "append rejects non-zero attempt",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -119,7 +119,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "headers contain empty key",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -135,7 +135,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "append rejects last error",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -149,7 +149,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "append rejects next attempt timestamp",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -163,7 +163,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "append rejects locked timestamp",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -177,7 +177,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "append rejects published timestamp",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -191,7 +191,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "append rejects created timestamp",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -205,7 +205,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "append rejects updated timestamp",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -220,7 +220,7 @@ func TestRecordValidateForAppend(t *testing.T) {
 			name: "append rejects adapter managed fields",
 			record: Record{
 				ID:            uuid.New(),
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
@@ -233,13 +233,13 @@ func TestRecordValidateForAppend(t *testing.T) {
 		{
 			name: "append requires pending status",
 			record: Record{
-				EventID:       "evt-1",
+				EventID:       uuid.NewString(),
 				EventName:     "catalog.product.created",
 				AggregateType: "product",
 				AggregateID:   "product-1",
 				Topic:         "catalog.events.v1",
 				Payload:       []byte("payload"),
-				Status:        StatusFailed,
+				Status:        StatusDead,
 			},
 			want: ErrInvalidRecord,
 		},
@@ -268,7 +268,7 @@ func TestStatusIsValid(t *testing.T) {
 		{name: "pending", status: StatusPending, ok: true},
 		{name: "in progress", status: StatusInProgress, ok: true},
 		{name: "published", status: StatusPublished, ok: true},
-		{name: "failed", status: StatusFailed, ok: true},
+		{name: "dead", status: StatusDead, ok: true},
 		{name: "empty", status: Status(""), ok: false},
 		{name: "unknown", status: Status("unknown"), ok: false},
 	}
@@ -289,10 +289,10 @@ func TestStatusCanTransitionTo(t *testing.T) {
 	}{
 		{name: "pending to in progress", from: StatusPending, to: StatusInProgress, ok: true},
 		{name: "in progress to published", from: StatusInProgress, to: StatusPublished, ok: true},
-		{name: "in progress to failed", from: StatusInProgress, to: StatusFailed, ok: true},
-		{name: "failed to in progress", from: StatusFailed, to: StatusInProgress, ok: true},
+		{name: "in progress to pending", from: StatusInProgress, to: StatusPending, ok: true},
+		{name: "in progress to dead", from: StatusInProgress, to: StatusDead, ok: true},
 		{name: "pending to published", from: StatusPending, to: StatusPublished, ok: false},
-		{name: "published to failed", from: StatusPublished, to: StatusFailed, ok: false},
+		{name: "published to dead", from: StatusPublished, to: StatusDead, ok: false},
 		{name: "unknown source", from: Status("unknown"), to: StatusPending, ok: false},
 	}
 
