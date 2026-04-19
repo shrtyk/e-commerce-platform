@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -339,6 +341,19 @@ func TestOrderHandlerGetOrderById(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInt64ToAPIIntOverflowHandling(t *testing.T) {
+	if strconv.IntSize == 64 {
+		value, err := int64ToAPIInt(math.MaxInt64)
+		require.NoError(t, err)
+		require.Equal(t, int(math.MaxInt64), value)
+		return
+	}
+
+	_, err := int64ToAPIInt(math.MaxInt64)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "overflows api int")
 }
 
 type readinessCheckerStub struct {

@@ -3,8 +3,9 @@ package http
 import (
 	"context"
 	"errors"
-	"math"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -109,8 +110,14 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mappedOrder, err := mapOrderDTO(result)
+	if err != nil {
+		h.writeError(w, r, commonerrors.InternalError(string(checkout.CheckoutErrorCodeInternal)))
+		return
+	}
+
 	render.Status(r, http.StatusAccepted)
-	render.JSON(w, r, mapOrderDTO(result))
+	render.JSON(w, r, mappedOrder)
 }
 
 func (h *OrderHandler) GetOrderById(w http.ResponseWriter, r *http.Request, orderID dto.OrderId) {
@@ -137,8 +144,14 @@ func (h *OrderHandler) GetOrderById(w http.ResponseWriter, r *http.Request, orde
 		return
 	}
 
+	mappedOrder, err := mapOrderDTO(order)
+	if err != nil {
+		h.writeError(w, r, commonerrors.InternalError(string(checkout.CheckoutErrorCodeInternal)))
+		return
+	}
+
 	render.Status(r, http.StatusOK)
-	render.JSON(w, r, mapOrderDTO(order))
+	render.JSON(w, r, mappedOrder)
 }
 
 func (h *OrderHandler) HandleOpenAPIError(w http.ResponseWriter, r *http.Request, _ error) {
@@ -185,9 +198,24 @@ func mapGetOrderHTTPError(err error) error {
 	return commonerrors.InternalError(string(checkout.CheckoutErrorCodeInternal))
 }
 
-func mapOrderDTO(order outbound.Order) dto.Order {
+func mapOrderDTO(order outbound.Order) (dto.Order, error) {
 	items := make([]dto.OrderItem, 0, len(order.Items))
 	for _, item := range order.Items {
+		quantity, err := int32ToAPIInt(item.Quantity)
+		if err != nil {
+			return dto.Order{}, fmt.Errorf("map order item quantity: %w", err)
+		}
+
+		unitPrice, err := int64ToAPIInt(item.UnitPrice)
+		if err != nil {
+			return dto.Order{}, fmt.Errorf("map order item unit price: %w", err)
+		}
+
+		lineTotal, err := int64ToAPIInt(item.LineTotal)
+		if err != nil {
+			return dto.Order{}, fmt.Errorf("map order item line total: %w", err)
+		}
+
 		sku := item.SKU
 		name := item.Name
 		currency := item.Currency
@@ -196,11 +224,16 @@ func mapOrderDTO(order outbound.Order) dto.Order {
 			ProductId: item.ProductID.String(),
 			Sku:       &sku,
 			Name:      &name,
-			Quantity:  toInt(item.Quantity),
-			UnitPrice: toInt(item.UnitPrice),
-			LineTotal: toInt(item.LineTotal),
+			Quantity:  quantity,
+			UnitPrice: unitPrice,
+			LineTotal: lineTotal,
 			Currency:  &currency,
 		})
+	}
+
+	totalAmount, err := int64ToAPIInt(order.TotalAmount)
+	if err != nil {
+		return dto.Order{}, fmt.Errorf("map order total amount: %w", err)
 	}
 
 	return dto.Order{
@@ -208,19 +241,31 @@ func mapOrderDTO(order outbound.Order) dto.Order {
 		UserId:      order.UserID.String(),
 		Status:      dto.OrderStatus(order.Status),
 		Currency:    order.Currency,
-		TotalAmount: toInt(order.TotalAmount),
+		TotalAmount: totalAmount,
 		Items:       items,
-	}
+	}, nil
 }
 
-func toInt[T ~int64 | ~int32](value T) int {
-	if int64(value) > math.MaxInt {
-		return math.MaxInt
+func int64ToAPIInt(value int64) (int, error) {
+	if strconv.IntSize == 64 {
+		return int(value), nil
 	}
 
-	if int64(value) < math.MinInt {
-		return math.MinInt
+	if value > int64(^uint32(0)>>1) || value < -int64(^uint32(0)>>1)-1 {
+		return 0, fmt.Errorf("int64 value %d overflows api int", value)
 	}
 
-	return int(value)
+	return int(value), nil
+}
+
+func int32ToAPIInt(value int32) (int, error) {
+	if strconv.IntSize == 64 {
+		return int(value), nil
+	}
+
+	if value > int32(^uint32(0)>>1) || value < -int32(^uint32(0)>>1)-1 {
+		return 0, fmt.Errorf("int32 value %d overflows api int", value)
+	}
+
+	return int(value), nil
 }
