@@ -662,6 +662,7 @@ SET
   updated_at = NOW()
 WHERE
   order_id = $1
+  AND stock_stage = 'succeeded'
   AND payment_stage IN ('requested', 'failed')
 RETURNING
   order_id, stock_stage, payment_stage, last_error_code, created_at, updated_at
@@ -688,6 +689,7 @@ SET
   updated_at = NOW()
 WHERE
   order_id = $1
+  AND stock_stage = 'succeeded'
   AND payment_stage IN ('not_started', 'requested')
 RETURNING
   order_id, stock_stage, payment_stage, last_error_code, created_at, updated_at
@@ -714,6 +716,7 @@ SET
   updated_at = NOW()
 WHERE
   order_id = $1
+  AND stock_stage = 'succeeded'
   AND payment_stage IN ('requested', 'succeeded')
 RETURNING
   order_id, stock_stage, payment_stage, last_error_code, created_at, updated_at

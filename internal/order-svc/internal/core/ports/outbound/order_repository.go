@@ -12,6 +12,7 @@ var (
 	ErrOrderAlreadyExists           = errors.New("order already exists")
 	ErrOrderIdempotencyConflict     = errors.New("order idempotency conflict")
 	ErrOrderInvalidStatusTransition = errors.New("order invalid status transition")
+	ErrOrderUnsafeCreateWithItems   = errors.New("order create with items requires transactional repository")
 )
 
 //mockery:generate: true

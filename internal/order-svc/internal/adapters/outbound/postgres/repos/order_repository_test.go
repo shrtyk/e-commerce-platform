@@ -95,7 +95,7 @@ func TestOrderRepositoryGetByUserIDAndIdempotencyKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &OrderRepository{queries: tt.stub}
+			repo := NewOrderRepositoryFromTransactionalQuerier(tt.stub)
 
 			order, err := repo.GetByUserIDAndIdempotencyKey(context.Background(), userID, idempotencyKey)
 			if tt.errIs != nil || tt.errPrefix != "" {
@@ -122,7 +122,7 @@ func TestOrderRepositoryCreateWithItemsDuplicateIdempotency(t *testing.T) {
 	orderID := uuid.New()
 	userID := uuid.New()
 
-	repo := &OrderRepository{queries: stubQuerier{
+	repo := NewOrderRepositoryFromTransactionalQuerier(stubQuerier{
 		order: orderQuerierStub{
 			createOrderFunc: func(_ context.Context, arg sqlc.CreateOrderParams) (sqlc.Order, error) {
 				require.Equal(t, orderID, arg.OrderID)
@@ -169,7 +169,7 @@ func TestOrderRepositoryCreateWithItemsDuplicateIdempotency(t *testing.T) {
 				}, nil
 			},
 		},
-	}}
+	})
 
 	order, err := repo.CreateWithItems(context.Background(), outbound.CreateOrderInput{
 		OrderID:        orderID,
@@ -202,7 +202,7 @@ func TestOrderRepositoryCreateWithItemsStopsOnItemError(t *testing.T) {
 	sagaCalled := false
 	idempotencyCalled := false
 
-	repo := &OrderRepository{queries: stubQuerier{
+	repo := NewOrderRepositoryFromTransactionalQuerier(stubQuerier{
 		order: orderQuerierStub{
 			createOrderFunc: func(_ context.Context, _ sqlc.CreateOrderParams) (sqlc.Order, error) {
 				return sqlc.Order{OrderID: orderID, UserID: userID}, nil
@@ -223,7 +223,7 @@ func TestOrderRepositoryCreateWithItemsStopsOnItemError(t *testing.T) {
 				return sqlc.OrderSagaState{}, nil
 			},
 		},
-	}}
+	})
 
 	order, err := repo.CreateWithItems(context.Background(), outbound.CreateOrderInput{
 		OrderID:        orderID,
@@ -248,6 +248,16 @@ func TestOrderRepositoryCreateWithItemsStopsOnItemError(t *testing.T) {
 	require.Zero(t, order)
 	require.False(t, sagaCalled)
 	require.False(t, idempotencyCalled)
+}
+
+func TestOrderRepositoryCreateWithItemsRequiresTransactionalRepository(t *testing.T) {
+	repo := NewOrderRepositoryFromQuerier(stubQuerier{})
+
+	created, err := repo.CreateWithItems(context.Background(), outbound.CreateOrderInput{})
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, outbound.ErrOrderUnsafeCreateWithItems)
+	require.Zero(t, created)
 }
 
 func TestOrderRepositoryCreateWithItemsTransactionPaths(t *testing.T) {
@@ -491,7 +501,7 @@ func TestOrderRepositoryGetByID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &OrderRepository{queries: tt.stub}
+			repo := NewOrderRepositoryFromTransactionalQuerier(tt.stub)
 
 			order, err := repo.GetByID(context.Background(), orderID)
 			if tt.errIs != nil || tt.errPrefix != "" {
@@ -519,7 +529,7 @@ func TestOrderRepositoryAppendStatusHistory(t *testing.T) {
 	from := outbound.OrderStatusPending
 	reason := "stock_reserved"
 
-	repo := &OrderRepository{queries: stubQuerier{
+	repo := NewOrderRepositoryFromTransactionalQuerier(stubQuerier{
 		itemsHistory: itemsHistoryQuerierStub{
 			appendOrderStatusHistoryFunc: func(_ context.Context, arg sqlc.AppendOrderStatusHistoryParams) (sqlc.OrderStatusHistory, error) {
 				require.Equal(t, orderID, arg.OrderID)
@@ -539,7 +549,7 @@ func TestOrderRepositoryAppendStatusHistory(t *testing.T) {
 				}, nil
 			},
 		},
-	}}
+	})
 
 	history, err := repo.AppendStatusHistory(
 		context.Background(),
@@ -561,7 +571,7 @@ func TestOrderRepositoryAppendStatusHistory(t *testing.T) {
 func TestOrderRepositoryTransitionStatusInvalidCurrentStatus(t *testing.T) {
 	orderID := uuid.New()
 
-	repo := &OrderRepository{queries: stubQuerier{
+	repo := NewOrderRepositoryFromTransactionalQuerier(stubQuerier{
 		order: orderQuerierStub{
 			getOrderByIDFunc: func(_ context.Context, gotOrderID uuid.UUID) (sqlc.Order, error) {
 				require.Equal(t, orderID, gotOrderID)
@@ -571,7 +581,7 @@ func TestOrderRepositoryTransitionStatusInvalidCurrentStatus(t *testing.T) {
 				return sqlc.Order{}, sql.ErrNoRows
 			},
 		},
-	}}
+	})
 
 	updated, err := repo.TransitionStatus(
 		context.Background(),
@@ -586,7 +596,7 @@ func TestOrderRepositoryTransitionStatusInvalidCurrentStatus(t *testing.T) {
 }
 
 func TestOrderRepositoryTransitionStatusOrderNotFound(t *testing.T) {
-	repo := &OrderRepository{queries: stubQuerier{
+	repo := NewOrderRepositoryFromTransactionalQuerier(stubQuerier{
 		order: orderQuerierStub{
 			getOrderByIDFunc: func(_ context.Context, _ uuid.UUID) (sqlc.Order, error) {
 				return sqlc.Order{}, sql.ErrNoRows
@@ -595,7 +605,7 @@ func TestOrderRepositoryTransitionStatusOrderNotFound(t *testing.T) {
 				return sqlc.Order{}, sql.ErrNoRows
 			},
 		},
-	}}
+	})
 
 	updated, err := repo.TransitionStatus(
 		context.Background(),
@@ -610,7 +620,7 @@ func TestOrderRepositoryTransitionStatusOrderNotFound(t *testing.T) {
 }
 
 func TestOrderRepositoryTransitionStatusCheckExistsError(t *testing.T) {
-	repo := &OrderRepository{queries: stubQuerier{
+	repo := NewOrderRepositoryFromTransactionalQuerier(stubQuerier{
 		order: orderQuerierStub{
 			getOrderByIDFunc: func(_ context.Context, _ uuid.UUID) (sqlc.Order, error) {
 				return sqlc.Order{}, sql.ErrConnDone
@@ -619,7 +629,7 @@ func TestOrderRepositoryTransitionStatusCheckExistsError(t *testing.T) {
 				return sqlc.Order{}, sql.ErrNoRows
 			},
 		},
-	}}
+	})
 
 	updated, err := repo.TransitionStatus(
 		context.Background(),
@@ -637,7 +647,7 @@ func TestOrderRepositoryTransitionStatusCheckExistsError(t *testing.T) {
 func TestOrderRepositoryTransitionStatusSuccess(t *testing.T) {
 	orderID := uuid.New()
 
-	repo := &OrderRepository{queries: stubQuerier{
+	repo := NewOrderRepositoryFromTransactionalQuerier(stubQuerier{
 		order: orderQuerierStub{
 			transitionOrderStatusFunc: func(_ context.Context, arg sqlc.TransitionOrderStatusParams) (sqlc.Order, error) {
 				require.Equal(t, orderID, arg.OrderID)
@@ -647,7 +657,7 @@ func TestOrderRepositoryTransitionStatusSuccess(t *testing.T) {
 				return sqlc.Order{OrderID: orderID, Status: sqlc.OrderStatus(outbound.OrderStatusAwaitingStock)}, nil
 			},
 		},
-	}}
+	})
 
 	updated, err := repo.TransitionStatus(
 		context.Background(),
@@ -664,7 +674,7 @@ func TestOrderRepositoryTransitionStatusSuccess(t *testing.T) {
 func TestOrderRepositoryAppendStatusHistoryNullMapping(t *testing.T) {
 	orderID := uuid.New()
 
-	repo := &OrderRepository{queries: stubQuerier{
+	repo := NewOrderRepositoryFromTransactionalQuerier(stubQuerier{
 		itemsHistory: itemsHistoryQuerierStub{
 			appendOrderStatusHistoryFunc: func(_ context.Context, arg sqlc.AppendOrderStatusHistoryParams) (sqlc.OrderStatusHistory, error) {
 				require.False(t, arg.FromStatus.Valid)
@@ -677,7 +687,7 @@ func TestOrderRepositoryAppendStatusHistoryNullMapping(t *testing.T) {
 				}, nil
 			},
 		},
-	}}
+	})
 
 	history, err := repo.AppendStatusHistory(context.Background(), orderID, nil, outbound.OrderStatusPending, nil)
 
@@ -685,4 +695,30 @@ func TestOrderRepositoryAppendStatusHistoryNullMapping(t *testing.T) {
 	require.Nil(t, history.FromStatus)
 	require.Nil(t, history.ReasonCode)
 	require.Equal(t, outbound.OrderStatusPending, history.ToStatus)
+}
+
+func TestMapOrderWriteErrForeignKeyMapping(t *testing.T) {
+	tests := []struct {
+		name       string
+		constraint string
+		wantErr    error
+	}{
+		{name: "order items fk maps to not found", constraint: "order_items_order_id_fkey", wantErr: outbound.ErrOrderNotFound},
+		{name: "saga state fk maps to not found", constraint: "order_saga_state_order_id_fkey", wantErr: outbound.ErrOrderNotFound},
+		{name: "idempotency fk maps to not found", constraint: "order_checkout_idempotency_order_id_fkey", wantErr: outbound.ErrOrderNotFound},
+		{name: "status history fk maps to not found", constraint: "order_status_history_order_id_fkey", wantErr: outbound.ErrOrderNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mapOrderWriteErr(&pgconn.PgError{Code: "23503", ConstraintName: tt.constraint})
+			require.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestMapOrderWriteErrUnknownForeignKeyPassthrough(t *testing.T) {
+	original := &pgconn.PgError{Code: "23503", ConstraintName: "some_other_fk"}
+	mapped := mapOrderWriteErr(original)
+	require.ErrorIs(t, mapped, original)
 }

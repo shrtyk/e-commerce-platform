@@ -16,6 +16,8 @@ import (
 type OrderRepository struct {
 	db      *sql.DB
 	queries sqlc.Querier
+
+	allowUnsafeCreateWithItems bool
 }
 
 func NewOrderRepository(db *sql.DB) *OrderRepository {
@@ -26,11 +28,19 @@ func NewOrderRepositoryFromQuerier(queries sqlc.Querier) *OrderRepository {
 	return &OrderRepository{queries: queries}
 }
 
+func NewOrderRepositoryFromTransactionalQuerier(queries sqlc.Querier) *OrderRepository {
+	return &OrderRepository{queries: queries, allowUnsafeCreateWithItems: true}
+}
+
 func NewOrderRepositoryFromTx(tx *sql.Tx) *OrderRepository {
-	return NewOrderRepositoryFromQuerier(sqlc.New(tx))
+	return NewOrderRepositoryFromTransactionalQuerier(sqlc.New(tx))
 }
 
 func (r *OrderRepository) CreateWithItems(ctx context.Context, input outbound.CreateOrderInput) (outbound.Order, error) {
+	if r.db == nil && !r.allowUnsafeCreateWithItems {
+		return outbound.Order{}, outbound.ErrOrderUnsafeCreateWithItems
+	}
+
 	if r.db == nil {
 		return r.createWithItems(ctx, r.queries, input)
 	}
@@ -240,7 +250,13 @@ func mapOrderWriteErr(err error) error {
 	if ok {
 		switch pgErr.Code {
 		case "23503":
-			return outbound.ErrOrderNotFound
+			switch pgErr.ConstraintName {
+			case "order_items_order_id_fkey",
+				"order_saga_state_order_id_fkey",
+				"order_checkout_idempotency_order_id_fkey",
+				"order_status_history_order_id_fkey":
+				return outbound.ErrOrderNotFound
+			}
 		case "23505":
 			switch pgErr.ConstraintName {
 			case "orders_pkey":

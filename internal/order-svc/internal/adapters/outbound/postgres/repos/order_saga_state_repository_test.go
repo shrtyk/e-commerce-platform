@@ -381,6 +381,15 @@ func TestOrderSagaStateRepositoryTransitionSemanticsPostgres(t *testing.T) {
 			wantErr: outbound.ErrOrderSagaStateInvalidTransition,
 		},
 		{
+			name:         "payment requested requires stock succeeded",
+			initialStock: outbound.SagaStageRequested,
+			initialPay:   outbound.SagaStageNotStarted,
+			call: func(repo *OrderSagaStateRepository, ctx context.Context, orderID uuid.UUID) (outbound.SagaState, error) {
+				return repo.TransitionPaymentStageToRequested(ctx, orderID)
+			},
+			wantErr: outbound.ErrOrderSagaStateInvalidTransition,
+		},
+		{
 			name:         "payment reopen forbidden",
 			initialStock: outbound.SagaStageRequested,
 			initialPay:   outbound.SagaStageSucceeded,

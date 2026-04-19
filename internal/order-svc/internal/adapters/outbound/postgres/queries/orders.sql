@@ -160,6 +160,7 @@ SET
   updated_at = NOW()
 WHERE
   order_id = sqlc.arg (order_id)
+  AND stock_stage = 'succeeded'
   AND payment_stage IN ('not_started', 'requested')
 RETURNING
   *;
@@ -171,6 +172,7 @@ SET
   updated_at = NOW()
 WHERE
   order_id = sqlc.arg (order_id)
+  AND stock_stage = 'succeeded'
   AND payment_stage IN ('requested', 'succeeded')
 RETURNING
   *;
@@ -182,6 +184,7 @@ SET
   updated_at = NOW()
 WHERE
   order_id = sqlc.arg (order_id)
+  AND stock_stage = 'succeeded'
   AND payment_stage IN ('requested', 'failed')
 RETURNING
   *;
