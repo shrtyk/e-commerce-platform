@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/google/uuid"
@@ -57,6 +58,11 @@ func (a *CheckoutSnapshotRepository) GetCheckoutSnapshot(ctx context.Context, us
 			return outbound.CheckoutSnapshot{}, errors.New("cart get checkout snapshot: invalid item money payload")
 		}
 
+		quantity, quantityErr := int64ToInt32(item.GetQuantity())
+		if quantityErr != nil {
+			return outbound.CheckoutSnapshot{}, fmt.Errorf("cart get checkout snapshot: %w", quantityErr)
+		}
+
 		productResponse, productErr := a.catalogClient.GetProductBySKU(ctx, &catalogv1.GetProductBySKURequest{Sku: item.GetSku()})
 		if productErr != nil {
 			if status.Code(productErr) == codes.NotFound {
@@ -80,7 +86,7 @@ func (a *CheckoutSnapshotRepository) GetCheckoutSnapshot(ctx context.Context, us
 			ProductID: productID,
 			SKU:       item.GetSku(),
 			Name:      item.GetName(),
-			Quantity:  int32(item.GetQuantity()),
+			Quantity:  quantity,
 			UnitPrice: unitPrice.GetAmount(),
 			LineTotal: lineTotal.GetAmount(),
 			Currency:  lineTotal.GetCurrency(),
@@ -196,7 +202,19 @@ func (a *CheckoutPaymentService) InitiatePayment(ctx context.Context, input outb
 		return outbound.ErrPaymentDeclined
 	}
 
+	if attempt.GetStatus() != paymentv1.PaymentStatus_PAYMENT_STATUS_SUCCEEDED {
+		return outbound.ErrPaymentConflict
+	}
+
 	return nil
+}
+
+func int64ToInt32(v int64) (int32, error) {
+	if v < math.MinInt32 || v > math.MaxInt32 {
+		return 0, fmt.Errorf("quantity out of int32 range: %d", v)
+	}
+
+	return int32(v), nil
 }
 
 var _ outbound.CheckoutSnapshotRepository = (*CheckoutSnapshotRepository)(nil)
