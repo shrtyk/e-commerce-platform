@@ -23,7 +23,10 @@ const (
 	orderAggregateType         = "order"
 	orderEventSchemaVersion    = "1"
 	outboxHeaderIdempotencyKey = "idempotencyKey"
+	replayNonTerminalRetries   = 3
 )
+
+const replayNonTerminalRetryDelay = 10 * time.Millisecond
 
 type TransactionRepos struct {
 	Orders    outbound.OrderRepository
@@ -129,29 +132,14 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 		CausationID:   strings.TrimSpace(input.CausationID),
 	})
 
-	existing, err := s.orders.GetByUserIDAndIdempotencyKey(ctx, input.UserID, idempotencyKey)
-	if err == nil {
-		if guardErr := s.idempotencyGuard.ValidateCheckoutIdempotency(
-			ctx,
-			outbound.ValidateCheckoutIdempotencyInput{
-				UserID:         input.UserID,
-				IdempotencyKey: idempotencyKey,
-				Payload: outbound.CheckoutIdempotencyPayload{
-					PaymentMethod: normalizePaymentMethod(input.PaymentMethod),
-				},
-			},
-		); guardErr != nil {
-			return outbound.Order{}, wrapCode(mapCheckoutCode(guardErr), "validate checkout idempotency payload", guardErr)
-		}
+	normalizedPaymentMethod := normalizePaymentMethod(input.PaymentMethod)
 
-		return existing, nil
+	existing, found, err := s.replayExistingOrderIfPresent(ctx, input.UserID, idempotencyKey, normalizedPaymentMethod)
+	if err != nil {
+		return outbound.Order{}, err
 	}
-	if !errors.Is(err, outbound.ErrOrderNotFound) {
-		return outbound.Order{}, wrapCode(
-			CheckoutErrorCodeInternal,
-			"get order by user id and idempotency key",
-			err,
-		)
+	if found {
+		return existing, nil
 	}
 
 	snapshot, err := s.snapshots.GetCheckoutSnapshot(ctx, input.UserID)
@@ -171,10 +159,31 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 		ctx,
 		input.UserID,
 		idempotencyKey,
-		normalizePaymentMethod(input.PaymentMethod),
+		normalizedPaymentMethod,
 		snapshot,
 	)
 	if err != nil {
+		if errors.Is(err, outbound.ErrOrderIdempotencyConflict) {
+			replayedOrder, foundReplay, replayErr := s.replayExistingOrderIfPresent(
+				ctx,
+				input.UserID,
+				idempotencyKey,
+				normalizedPaymentMethod,
+			)
+			if replayErr != nil {
+				return outbound.Order{}, replayErr
+			}
+			if foundReplay {
+				return replayedOrder, nil
+			}
+
+			return outbound.Order{}, wrapCode(
+				CheckoutErrorCodeWrongIdempotencyKeyPayload,
+				"replay order after idempotency conflict",
+				outbound.ErrOrderIdempotencyConflict,
+			)
+		}
+
 		return outbound.Order{}, err
 	}
 
@@ -198,16 +207,41 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 	}
 
 	if _, err := s.transitionStockStage(ctx, createdOrder.OrderID, domain.SagaStageSucceeded); err != nil {
-		return outbound.Order{}, err
+		code := mapCheckoutCode(err)
+		if compErr := s.compensatePostStockReservationFailure(ctx, order, reserveStockInput, code); compErr != nil {
+			return outbound.Order{}, &CheckoutError{
+				Code: code,
+				Err:  fmt.Errorf("transition stock stage to succeeded: %w", errors.Join(err, compErr)),
+			}
+		}
+
+		return outbound.Order{}, wrapCode(code, "transition stock stage to succeeded", err)
 	}
 
-	order, err = s.transitionOrderStatus(ctx, order, domain.OrderStatusAwaitingPayment, nil)
+	nextOrder, err := s.transitionOrderStatus(ctx, order, domain.OrderStatusAwaitingPayment, nil)
 	if err != nil {
-		return outbound.Order{}, err
+		code := mapCheckoutCode(err)
+		if compErr := s.compensatePostStockReservationFailure(ctx, order, reserveStockInput, code); compErr != nil {
+			return outbound.Order{}, &CheckoutError{
+				Code: code,
+				Err:  fmt.Errorf("transition order status to awaiting payment: %w", errors.Join(err, compErr)),
+			}
+		}
+
+		return outbound.Order{}, wrapCode(code, "transition order status to awaiting payment", err)
 	}
+	order = nextOrder
 
 	if _, err := s.transitionPaymentStage(ctx, createdOrder.OrderID, domain.SagaStageRequested); err != nil {
-		return outbound.Order{}, err
+		code := mapCheckoutCode(err)
+		if compErr := s.compensatePaymentFailure(ctx, order, reserveStockInput, code); compErr != nil {
+			return outbound.Order{}, &CheckoutError{
+				Code: code,
+				Err:  fmt.Errorf("transition payment stage to requested: %w", errors.Join(err, compErr)),
+			}
+		}
+
+		return outbound.Order{}, wrapCode(code, "transition payment stage to requested", err)
 	}
 
 	if err := s.payment.InitiatePayment(ctx, toInitiatePaymentInput(order)); err != nil {
@@ -227,6 +261,88 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 	}
 
 	return order, nil
+}
+
+func (s *Service) replayExistingOrderIfPresent(
+	ctx context.Context,
+	userID uuid.UUID,
+	idempotencyKey string,
+	paymentMethod string,
+) (outbound.Order, bool, error) {
+	existing, err := s.orders.GetByUserIDAndIdempotencyKey(ctx, userID, idempotencyKey)
+	if err != nil {
+		if errors.Is(err, outbound.ErrOrderNotFound) {
+			return outbound.Order{}, false, nil
+		}
+
+		return outbound.Order{}, false, wrapCode(
+			CheckoutErrorCodeInternal,
+			"get order by user id and idempotency key",
+			err,
+		)
+	}
+
+	if guardErr := s.idempotencyGuard.ValidateCheckoutIdempotency(
+		ctx,
+		outbound.ValidateCheckoutIdempotencyInput{
+			UserID:         userID,
+			IdempotencyKey: idempotencyKey,
+			Payload: outbound.CheckoutIdempotencyPayload{
+				PaymentMethod: paymentMethod,
+			},
+		},
+	); guardErr != nil {
+		return outbound.Order{}, false, wrapCode(mapCheckoutCode(guardErr), "validate checkout idempotency payload", guardErr)
+	}
+
+	if !isReplayableIdempotentStatus(existing.Status) {
+		for range replayNonTerminalRetries {
+			if err := sleepWithContext(ctx, replayNonTerminalRetryDelay); err != nil {
+				return outbound.Order{}, false, wrapCode(
+					CheckoutErrorCodeInternal,
+					"wait before replaying non-terminal order",
+					err,
+				)
+			}
+
+			reloaded, getErr := s.orders.GetByUserIDAndIdempotencyKey(ctx, userID, idempotencyKey)
+			if getErr != nil {
+				if errors.Is(getErr, outbound.ErrOrderNotFound) {
+					return outbound.Order{}, false, nil
+				}
+
+				return outbound.Order{}, false, wrapCode(
+					CheckoutErrorCodeInternal,
+					"reload order by user id and idempotency key",
+					getErr,
+				)
+			}
+
+			if isReplayableIdempotentStatus(reloaded.Status) {
+				return reloaded, true, nil
+			}
+		}
+
+		return outbound.Order{}, false, wrapCode(
+			CheckoutErrorCodeConflict,
+			"replay non-terminal order is blocked",
+			outbound.ErrOrderInvalidStatusTransition,
+		)
+	}
+
+	return existing, true, nil
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *Service) GetOrder(ctx context.Context, input GetOrderInput) (outbound.Order, error) {
@@ -282,15 +398,16 @@ func (s *Service) compensatePaymentFailure(
 	releaseStockInput outbound.ReserveStockInput,
 	code CheckoutErrorCode,
 ) error {
+	var compensationErr error
+
 	if _, err := s.transitionPaymentStage(ctx, order.OrderID, domain.SagaStageFailed); err != nil {
-		return err
+		compensationErr = errors.Join(compensationErr, fmt.Errorf("transition payment stage to failed during compensation: %w", err))
 	}
 
 	if _, err := s.saga.SetLastErrorCode(ctx, order.OrderID, string(code)); err != nil {
-		return wrapCode(mapCheckoutCode(err), "set order saga last error code", err)
+		wrapped := wrapCode(mapCheckoutCode(err), "set order saga last error code", err)
+		compensationErr = errors.Join(compensationErr, fmt.Errorf("set order saga last error code during payment compensation: %w", wrapped))
 	}
-
-	var compensationErr error
 
 	reason := string(code)
 	if _, err := s.transitionOrderStatus(ctx, order, domain.OrderStatusCancelled, &reason); err != nil {
@@ -299,6 +416,39 @@ func (s *Service) compensatePaymentFailure(
 
 	if err := s.stockRelease.ReleaseStock(ctx, toReleaseStockInput(releaseStockInput)); err != nil {
 		compensationErr = errors.Join(compensationErr, fmt.Errorf("release stock after payment failure: %w", err))
+	}
+
+	if compensationErr != nil {
+		return compensationErr
+	}
+
+	return nil
+}
+
+func (s *Service) compensatePostStockReservationFailure(
+	ctx context.Context,
+	order outbound.Order,
+	releaseStockInput outbound.ReserveStockInput,
+	code CheckoutErrorCode,
+) error {
+	var compensationErr error
+
+	if _, err := s.transitionStockStage(ctx, order.OrderID, domain.SagaStageFailed); err != nil {
+		compensationErr = errors.Join(compensationErr, fmt.Errorf("transition stock stage to failed during compensation: %w", err))
+	}
+
+	if _, err := s.saga.SetLastErrorCode(ctx, order.OrderID, string(code)); err != nil {
+		wrapped := wrapCode(mapCheckoutCode(err), "set order saga last error code", err)
+		compensationErr = errors.Join(compensationErr, fmt.Errorf("set order saga last error code during stock compensation: %w", wrapped))
+	}
+
+	reason := string(code)
+	if _, err := s.transitionOrderStatus(ctx, order, domain.OrderStatusCancelled, &reason); err != nil {
+		compensationErr = errors.Join(compensationErr, fmt.Errorf("cancel order after stock reservation failure: %w", err))
+	}
+
+	if err := s.stockRelease.ReleaseStock(ctx, toReleaseStockInput(releaseStockInput)); err != nil {
+		compensationErr = errors.Join(compensationErr, fmt.Errorf("release stock after stock reservation failure: %w", err))
 	}
 
 	if compensationErr != nil {
@@ -831,6 +981,15 @@ func normalizePaymentMethod(paymentMethod *string) string {
 	}
 
 	return strings.ToLower(strings.TrimSpace(*paymentMethod))
+}
+
+func isReplayableIdempotentStatus(status outbound.OrderStatus) bool {
+	switch status {
+	case outbound.OrderStatusAwaitingPayment, outbound.OrderStatusConfirmed, outbound.OrderStatusCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 type noopCheckoutIdempotencyGuard struct{}

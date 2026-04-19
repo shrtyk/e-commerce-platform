@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -21,7 +23,9 @@ import (
 	commonv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1"
 	orderv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/order/v1"
 	paymentv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1"
+	commonoutbox "github.com/shrtyk/e-commerce-platform/internal/common/outbox"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/inbound/http/dto"
+	adapteroutbox "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/postgres/outbox"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/testhelper"
 )
 
@@ -176,6 +180,50 @@ func TestCreateOrderHTTPCompensatesOnPaymentFailure(t *testing.T) {
 
 	releaseCalls := stack.CatalogServer.ReleaseCalls()
 	require.Len(t, releaseCalls, 1)
+}
+
+func TestCreateOrderHTTPTreatsNonTerminalPaymentStatusAsConflict(t *testing.T) {
+	stack := newCleanOrderStack(t)
+
+	userID := uuid.New()
+	token := testhelper.MintAccessToken(t, userID)
+	stack.CartServer.SetSnapshot(&cartv1.CheckoutSnapshot{
+		UserId:   userID.String(),
+		Currency: "USD",
+		Items: []*cartv1.CartItem{{
+			Sku:       "SKU-INT-PROC",
+			Name:      "Processing Product",
+			Quantity:  1,
+			UnitPrice: &commonv1.Money{Amount: 1900, Currency: "USD"},
+			LineTotal: &commonv1.Money{Amount: 1900, Currency: "USD"},
+		}},
+		TotalAmount: &commonv1.Money{Amount: 1900, Currency: "USD"},
+	})
+	stack.CatalogServer.UpsertProduct(testhelper.CatalogProduct{
+		ProductID: uuid.NewString(),
+		SKU:       "SKU-INT-PROC",
+		Name:      "Processing Product",
+		Price:     1900,
+		Currency:  "USD",
+	})
+	stack.PaymentServer.SetResult(&paymentv1.PaymentAttempt{
+		PaymentAttemptId: uuid.NewString(),
+		Status:           paymentv1.PaymentStatus_PAYMENT_STATUS_PROCESSING,
+		ProviderName:     "card",
+		Amount:           &commonv1.Money{Amount: 1900, Currency: "USD"},
+	}, nil)
+
+	httpErr := createOrderHTTPError(t, stack, token, "idem-payment-processing", dto.CreateOrderRequest{PaymentMethod: stringPtr("card")}, http.StatusConflict)
+	require.Equal(t, "CONFLICT", httpErr.Code)
+
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM orders WHERE status = 'cancelled'`))
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM outbox_records WHERE event_name = 'order.created'`))
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM outbox_records WHERE event_name = 'order.cancelled'`))
+
+	saga := readSingleSagaStateRow(t, stack.DB)
+	require.Equal(t, "succeeded", saga.StockStage)
+	require.Equal(t, "failed", saga.PaymentStage)
+	require.Equal(t, "CONFLICT", saga.LastErrorCode.String)
 }
 
 func TestCreateOrderGRPCPersistsOrder(t *testing.T) {
@@ -373,6 +421,57 @@ func TestCreateOrderGRPCCompensatesOnPaymentFailure(t *testing.T) {
 	require.Equal(t, int64(1800), items[0].LineTotal)
 }
 
+func TestCreateOrderGRPCTreatsNonTerminalPaymentStatusAsConflict(t *testing.T) {
+	stack, client := newCleanOrderGRPCStack(t)
+
+	userID := uuid.New()
+	token := testhelper.MintAccessToken(t, userID)
+	productID := uuid.NewString()
+	stack.CartServer.SetSnapshot(&cartv1.CheckoutSnapshot{
+		UserId:   userID.String(),
+		Currency: "USD",
+		Items: []*cartv1.CartItem{{
+			Sku:       "SKU-GRPC-PROC",
+			Name:      "Processing Product",
+			Quantity:  1,
+			UnitPrice: &commonv1.Money{Amount: 1900, Currency: "USD"},
+			LineTotal: &commonv1.Money{Amount: 1900, Currency: "USD"},
+		}},
+		TotalAmount: &commonv1.Money{Amount: 1900, Currency: "USD"},
+	})
+	stack.CatalogServer.UpsertProduct(testhelper.CatalogProduct{
+		ProductID: productID,
+		SKU:       "SKU-GRPC-PROC",
+		Name:      "Processing Product",
+		Price:     1900,
+		Currency:  "USD",
+	})
+	stack.PaymentServer.SetResult(&paymentv1.PaymentAttempt{
+		PaymentAttemptId: uuid.NewString(),
+		Status:           paymentv1.PaymentStatus_PAYMENT_STATUS_PROCESSING,
+		ProviderName:     "card",
+		Amount:           &commonv1.Money{Amount: 1900, Currency: "USD"},
+	}, nil)
+
+	_, err := client.CreateOrder(grpcAuthContext(token), &orderv1.CreateOrderRequest{
+		UserId:         userID.String(),
+		PaymentMethod:  "card",
+		IdempotencyKey: "idem-grpc-payment-processing",
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.Aborted, status.Code(err))
+	require.Equal(t, "CONFLICT", status.Convert(err).Message())
+
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM orders WHERE status = 'cancelled'`))
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM outbox_records WHERE event_name = 'order.created'`))
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM outbox_records WHERE event_name = 'order.cancelled'`))
+
+	saga := readSingleSagaStateRow(t, stack.DB)
+	require.Equal(t, "succeeded", saga.StockStage)
+	require.Equal(t, "failed", saga.PaymentStage)
+	require.Equal(t, "CONFLICT", saga.LastErrorCode.String)
+}
+
 func TestGetOrderGRPCReturnsOrderAndNotFound(t *testing.T) {
 	stack, client := newCleanOrderGRPCStack(t)
 
@@ -431,6 +530,247 @@ func TestGetOrderGRPCReturnsOrderAndNotFound(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, codes.NotFound, status.Code(err))
 	require.Equal(t, "CART_NOT_FOUND", status.Convert(err).Message())
+}
+
+func TestGetOrderHTTPCoversAuthOwnershipAndValidation(t *testing.T) {
+	stack := newCleanOrderStack(t)
+
+	ownerID := uuid.New()
+	ownerToken := testhelper.MintAccessToken(t, ownerID)
+	otherToken := testhelper.MintAccessToken(t, uuid.New())
+
+	stack.CartServer.SetSnapshot(&cartv1.CheckoutSnapshot{
+		UserId:   ownerID.String(),
+		Currency: "USD",
+		Items: []*cartv1.CartItem{{
+			Sku:       "SKU-HTTP-GET-1",
+			Name:      "HTTP Get Product",
+			Quantity:  1,
+			UnitPrice: &commonv1.Money{Amount: 1700, Currency: "USD"},
+			LineTotal: &commonv1.Money{Amount: 1700, Currency: "USD"},
+		}},
+		TotalAmount: &commonv1.Money{Amount: 1700, Currency: "USD"},
+	})
+	stack.CatalogServer.UpsertProduct(testhelper.CatalogProduct{
+		ProductID: uuid.NewString(),
+		SKU:       "SKU-HTTP-GET-1",
+		Name:      "HTTP Get Product",
+		Price:     1700,
+		Currency:  "USD",
+	})
+
+	created := createOrderHTTP(t, stack, ownerToken, "idem-http-get", dto.CreateOrderRequest{PaymentMethod: stringPtr("card")}, http.StatusAccepted)
+
+	happy := getOrderHTTP(t, stack, ownerToken, created.OrderId, http.StatusOK)
+	require.Equal(t, created.OrderId, happy.OrderId)
+	require.Equal(t, ownerID.String(), happy.UserId)
+	require.Equal(t, dto.AwaitingPayment, happy.Status)
+
+	notFoundForOtherUser := getOrderHTTPError(t, stack, otherToken, created.OrderId, http.StatusNotFound)
+	require.Equal(t, "CART_NOT_FOUND", notFoundForOtherUser.Code)
+
+	missingAuthReq := testhelper.HTTPJSONRequest(t, http.MethodGet, "/v1/orders/"+created.OrderId, "", nil)
+	missingAuthRes := httptest.NewRecorder()
+	stack.HTTPHandler.ServeHTTP(missingAuthRes, missingAuthReq)
+	require.Equal(t, http.StatusUnauthorized, missingAuthRes.Code)
+
+	invalidAuthReq := testhelper.HTTPJSONRequest(t, http.MethodGet, "/v1/orders/"+created.OrderId, "not-a-jwt", nil)
+	invalidAuthRes := httptest.NewRecorder()
+	stack.HTTPHandler.ServeHTTP(invalidAuthRes, invalidAuthReq)
+	require.Equal(t, http.StatusUnauthorized, invalidAuthRes.Code)
+
+	invalidUUID := getOrderHTTPError(t, stack, ownerToken, "not-a-uuid", http.StatusBadRequest)
+	require.Equal(t, "INVALID_ARGUMENT", invalidUUID.Code)
+}
+
+func TestCreateOrderHTTPIdempotencyRaceCreatesSingleOrder(t *testing.T) {
+	stack := newCleanOrderStack(t)
+
+	userID := uuid.New()
+	token := testhelper.MintAccessToken(t, userID)
+	stack.CartServer.SetSnapshot(&cartv1.CheckoutSnapshot{
+		UserId:   userID.String(),
+		Currency: "USD",
+		Items: []*cartv1.CartItem{{
+			Sku:       "SKU-HTTP-RACE-1",
+			Name:      "Race Product",
+			Quantity:  1,
+			UnitPrice: &commonv1.Money{Amount: 900, Currency: "USD"},
+			LineTotal: &commonv1.Money{Amount: 900, Currency: "USD"},
+		}},
+		TotalAmount: &commonv1.Money{Amount: 900, Currency: "USD"},
+	})
+	stack.CatalogServer.UpsertProduct(testhelper.CatalogProduct{
+		ProductID: uuid.NewString(),
+		SKU:       "SKU-HTTP-RACE-1",
+		Name:      "Race Product",
+		Price:     900,
+		Currency:  "USD",
+	})
+
+	const attempts = 8
+	const idemKey = "idem-http-race"
+
+	type raceResult struct {
+		status    int
+		orderID   string
+		errCode   string
+		decodeErr error
+	}
+
+	start := make(chan struct{})
+	results := make(chan raceResult, attempts)
+	var wg sync.WaitGroup
+
+	for range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+
+			req := testhelper.HTTPJSONRequest(t, http.MethodPost, "/v1/orders", token, dto.CreateOrderRequest{PaymentMethod: stringPtr("card")})
+			req.Header.Set("Idempotency-Key", idemKey)
+
+			res := httptest.NewRecorder()
+			stack.HTTPHandler.ServeHTTP(res, req)
+
+			result := raceResult{status: res.Code}
+			if res.Code == http.StatusAccepted {
+				var order dto.Order
+				result.decodeErr = json.NewDecoder(res.Body).Decode(&order)
+				result.orderID = order.OrderId
+			} else {
+				var errResp dto.ErrorResponse
+				result.decodeErr = json.NewDecoder(res.Body).Decode(&errResp)
+				result.errCode = errResp.Code
+			}
+
+			results <- result
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var createdOrderID string
+	for result := range results {
+		require.NoError(t, result.decodeErr)
+		require.Equal(t, http.StatusAccepted, result.status)
+		require.Empty(t, result.errCode)
+		require.NotEmpty(t, result.orderID)
+
+		if createdOrderID == "" {
+			createdOrderID = result.orderID
+		}
+		require.Equal(t, createdOrderID, result.orderID)
+	}
+
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM orders`))
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM order_checkout_idempotency`))
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM outbox_records WHERE event_name = 'order.created'`))
+	require.Len(t, stack.PaymentServer.Requests(), 1)
+}
+
+func TestOutboxRepositoryClaimAndOwnershipSemanticsUnderContention(t *testing.T) {
+	stack := newCleanOrderStack(t)
+	repo := adapteroutbox.NewRepository(stack.DB)
+
+	for i := 0; i < 3; i++ {
+		_, err := repo.Append(context.Background(), commonoutbox.Record{
+			EventID:       uuid.NewString(),
+			EventName:     "order.created",
+			AggregateType: "order",
+			AggregateID:   uuid.NewString(),
+			Topic:         "order.events",
+			Payload:       []byte{byte('a' + i)},
+			Headers:       map[string]string{"source": "integration"},
+			Status:        commonoutbox.StatusPending,
+		})
+		require.NoError(t, err)
+	}
+
+	type claimResult struct {
+		worker  string
+		records []commonoutbox.Record
+		err     error
+	}
+
+	start := make(chan struct{})
+	results := make(chan claimResult, 2)
+	var wg sync.WaitGroup
+
+	workers := []string{"worker-a", "worker-b"}
+	for _, worker := range workers {
+		workerName := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+
+			records, err := repo.ClaimPending(context.Background(), commonoutbox.ClaimPendingParams{
+				Limit:    2,
+				Before:   time.Now().UTC().Add(time.Second),
+				LockedBy: workerName,
+			})
+
+			results <- claimResult{worker: workerName, records: records, err: err}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	claimedByWorker := make(map[string][]commonoutbox.Record, 2)
+	claimedIDs := make(map[uuid.UUID]string, 3)
+	for result := range results {
+		require.NoError(t, result.err)
+		claimedByWorker[result.worker] = result.records
+		for _, record := range result.records {
+			owner, exists := claimedIDs[record.ID]
+			require.Falsef(t, exists, "record %s claimed twice by %s and %s", record.ID, owner, result.worker)
+			claimedIDs[record.ID] = result.worker
+		}
+	}
+
+	require.Len(t, claimedIDs, 3)
+
+	var ownerWorker string
+	var ownerRecord commonoutbox.Record
+	for worker, records := range claimedByWorker {
+		if len(records) == 0 {
+			continue
+		}
+
+		ownerWorker = worker
+		ownerRecord = records[0]
+		break
+	}
+	require.NotEmpty(t, ownerWorker)
+
+	intruderWorker := "worker-a"
+	if ownerWorker == intruderWorker {
+		intruderWorker = "worker-b"
+	}
+
+	err := repo.MarkPublished(context.Background(), commonoutbox.MarkPublishedParams{
+		ID:          ownerRecord.ID,
+		ClaimToken:  ownerRecord.LockedAt,
+		LockedBy:    intruderWorker,
+		PublishedAt: time.Now().UTC(),
+	})
+	require.ErrorIs(t, err, commonoutbox.ErrPublishConflict)
+
+	err = repo.MarkPublished(context.Background(), commonoutbox.MarkPublishedParams{
+		ID:          ownerRecord.ID,
+		ClaimToken:  ownerRecord.LockedAt,
+		LockedBy:    ownerWorker,
+		PublishedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, countRows(t, stack.DB, `SELECT COUNT(*) FROM outbox_records WHERE status = 'published'`))
 }
 
 type orderRow struct {
@@ -496,6 +836,30 @@ func createOrderHTTPError(t *testing.T, stack *testhelper.TestStack, token strin
 	t.Helper()
 	req := testhelper.HTTPJSONRequest(t, http.MethodPost, "/v1/orders", token, body)
 	req.Header.Set("Idempotency-Key", idempotencyKey)
+	res := httptest.NewRecorder()
+	stack.HTTPHandler.ServeHTTP(res, req)
+	require.Equal(t, expectedStatus, res.Code)
+
+	var result dto.ErrorResponse
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&result))
+	return result
+}
+
+func getOrderHTTP(t *testing.T, stack *testhelper.TestStack, token string, orderID string, expectedStatus int) dto.Order {
+	t.Helper()
+	req := testhelper.HTTPJSONRequest(t, http.MethodGet, "/v1/orders/"+orderID, token, nil)
+	res := httptest.NewRecorder()
+	stack.HTTPHandler.ServeHTTP(res, req)
+	require.Equal(t, expectedStatus, res.Code)
+
+	var result dto.Order
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&result))
+	return result
+}
+
+func getOrderHTTPError(t *testing.T, stack *testhelper.TestStack, token string, orderID string, expectedStatus int) dto.ErrorResponse {
+	t.Helper()
+	req := testhelper.HTTPJSONRequest(t, http.MethodGet, "/v1/orders/"+orderID, token, nil)
 	res := httptest.NewRecorder()
 	stack.HTTPHandler.ServeHTTP(res, req)
 	require.Equal(t, expectedStatus, res.Code)
