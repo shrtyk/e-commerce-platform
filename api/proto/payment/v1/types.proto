@@ -3,6 +3,7 @@ syntax = "proto3";
 package ecommerce.payment.v1;
 
 import "common/v1/money.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1;paymentv1";
 
@@ -22,4 +23,14 @@ message PaymentAttempt {
   string provider_name = 5;
   string provider_reference = 6;
   string idempotency_key = 7;
+  // Stable flow id propagated across synchronous calls and emitted events for this payment lifecycle.
+  string correlation_id = 8;
+  // Direct trigger id (request/event) that produced this payment attempt state change.
+  string causation_id = 9;
+  // Populated only when status = PAYMENT_STATUS_FAILED; empty for initiated/processing/succeeded.
+  string failure_code = 10;
+  // Human-readable diagnostics for failed attempts; empty unless status = PAYMENT_STATUS_FAILED.
+  string failure_message = 11;
+  // Processing completion timestamp; set for terminal statuses (succeeded/failed), unset for non-terminal statuses.
+  google.protobuf.Timestamp processed_at = 12;
 }

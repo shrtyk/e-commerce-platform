@@ -259,6 +259,7 @@ paths:
         - `INTERNAL` → `CheckoutErrorCode.INTERNAL`
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -335,6 +336,17 @@ components:
         Must be non-empty and at most 255 characters.
         Same authenticated user + same key + same logical request payload must resolve to the same logical checkout result.
         Same authenticated user + same key + different logical request payload must be rejected.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: |
+        Optional caller-provided correlation identifier for end-to-end tracing.
+        If omitted, gateway/service may generate one.
       schema:
         type: string
         minLength: 1
@@ -600,7 +612,9 @@ components:
       properties:
         paymentMethod:
           type: string
-          description: Placeholder for the initial payment method selection model.
+          description: |
+            Placeholder for initial payment method selection model.
+            Contract mapping: forwarded as-is to internal payment proto field `ecommerce.payment.v1.InitiatePaymentRequest.provider_name`.
           minLength: 1
           maxLength: 50
           x-oapi-codegen-extra-tags:

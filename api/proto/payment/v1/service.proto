@@ -14,8 +14,12 @@ service PaymentService {
 message InitiatePaymentRequest {
   string order_id = 1;
   ecommerce.common.v1.Money amount = 2;
+  // OpenAPI public `paymentMethod` maps to this field.
   string provider_name = 3;
   string idempotency_key = 4;
+  string correlation_id = 5;
+  // Carries triggering event/request id when this call is caused by prior action in saga chain.
+  string causation_id = 6;
 }
 
 message InitiatePaymentResponse {

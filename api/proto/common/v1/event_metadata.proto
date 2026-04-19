@@ -14,4 +14,5 @@ message EventMetadata {
   string correlation_id = 5;
   string causation_id = 6;
   string schema_version = 7;
+  string idempotency_key = 8;
 }

@@ -143,6 +143,8 @@ components:
             type: string
           schemaVersion:
             type: string
+          idempotencyKey:
+            type: string
   messages:
     ProductCreated:
       name: catalog.product.created
@@ -438,10 +440,15 @@ components:
           type: string
         status:
           type: string
+          description: Payment status mapped from ecommerce.payment.v1.PaymentStatus.
+          enum:
+            - initiated
+            - processing
         amount:
           $ref: '#/components/schemas/Money'
         providerName:
           type: string
+
     PaymentResultPayload:
       type: object
       properties:
@@ -453,6 +460,9 @@ components:
           type: string
         status:
           type: string
+          description: Payment status mapped from ecommerce.payment.v1.PaymentStatus for payment.succeeded event.
+          enum:
+            - succeeded
         amount:
           $ref: '#/components/schemas/Money'
         providerName:
@@ -473,6 +483,9 @@ components:
           type: string
         status:
           type: string
+          description: Payment status mapped from ecommerce.payment.v1.PaymentStatus for payment.failed event.
+          enum:
+            - failed
         amount:
           $ref: '#/components/schemas/Money'
         providerName:
@@ -550,6 +563,8 @@ components:
         correlationId:
           type: string
         causationId:
+          type: string
+        idempotencyKey:
           type: string
         schemaVersion:
           type: string
