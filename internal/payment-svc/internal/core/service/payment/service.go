@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -16,7 +17,18 @@ var (
 	ErrInvalidPaymentInput     = errors.New("payment invalid payment input")
 
 	errPaymentAttemptsRepoRequired = errors.New("payment attempts repository is required")
+	errEventPublisherRequired      = errors.New("event publisher is required")
 	errPaymentProviderRequired     = errors.New("payment provider is required")
+)
+
+const (
+	paymentInitiatedEventName = "payment.initiated"
+	paymentSucceededEventName = "payment.succeeded"
+	paymentFailedEventName    = "payment.failed"
+
+	paymentEventsTopic    = "payment.events"
+	paymentEventVersionV1 = "1"
+	paymentAggregateType  = "payment_attempt"
 )
 
 type InitiatePaymentInput struct {
@@ -60,9 +72,15 @@ func (s *Service) InitiatePayment(
 		return InitiatePaymentResult{}, errPaymentAttemptsRepoRequired
 	}
 
+	if s.publisher == nil {
+		return InitiatePaymentResult{}, errEventPublisherRequired
+	}
+
 	if s.provider == nil {
 		return InitiatePaymentResult{}, errPaymentProviderRequired
 	}
+
+	createdNewAttempt := false
 
 	attempt, err := s.paymentAttempts.CreateInitiated(ctx, outbound.CreatePaymentAttemptInput{
 		OrderID:        input.OrderID,
@@ -88,6 +106,14 @@ func (s *Service) InitiatePayment(
 			return InitiatePaymentResult{}, fmt.Errorf("create payment attempt: %w", ErrInvalidPaymentInput)
 		default:
 			return InitiatePaymentResult{}, fmt.Errorf("create payment attempt: %w", err)
+		}
+	} else {
+		createdNewAttempt = true
+	}
+
+	if createdNewAttempt {
+		if err := s.publishPaymentInitiated(ctx, attempt, input.IdempotencyKey); err != nil {
+			return InitiatePaymentResult{}, fmt.Errorf("publish payment initiated event: %w", err)
 		}
 	}
 
@@ -124,6 +150,10 @@ func (s *Service) InitiatePayment(
 				return InitiatePaymentResult{}, fmt.Errorf("mark payment attempt failed: %w", markErr)
 			}
 
+			if publishErr := s.publishPaymentFailed(ctx, failedAttempt, input.IdempotencyKey); publishErr != nil {
+				return InitiatePaymentResult{}, fmt.Errorf("publish payment failed event: %w", publishErr)
+			}
+
 			return InitiatePaymentResult{PaymentAttempt: failedAttempt}, nil
 		}
 
@@ -139,5 +169,89 @@ func (s *Service) InitiatePayment(
 		return InitiatePaymentResult{}, fmt.Errorf("mark payment attempt succeeded: %w", err)
 	}
 
+	if err := s.publishPaymentSucceeded(ctx, succeededAttempt, input.IdempotencyKey); err != nil {
+		return InitiatePaymentResult{}, fmt.Errorf("publish payment succeeded event: %w", err)
+	}
+
 	return InitiatePaymentResult{PaymentAttempt: succeededAttempt}, nil
+}
+
+func (s *Service) publishPaymentInitiated(ctx context.Context, attempt domain.PaymentAttempt, idempotencyKey string) error {
+	return s.publisher.Publish(ctx, domain.DomainEvent{
+		EventID:       uuid.NewString(),
+		EventName:     paymentInitiatedEventName,
+		Producer:      s.serviceName,
+		OccurredAt:    time.Now().UTC(),
+		CorrelationID: attempt.OrderID.String(),
+		CausationID:   idempotencyKey,
+		SchemaVersion: paymentEventVersionV1,
+		AggregateType: paymentAggregateType,
+		AggregateID:   attempt.PaymentAttemptID.String(),
+		Topic:         paymentEventsTopic,
+		Key:           attempt.PaymentAttemptID.String(),
+		Payload: domain.PaymentInitiatedPayload{
+			PaymentAttemptID: attempt.PaymentAttemptID.String(),
+			OrderID:          attempt.OrderID.String(),
+			Status:           attempt.Status,
+			Amount:           attempt.Amount,
+			Currency:         attempt.Currency,
+			ProviderName:     attempt.ProviderName,
+		},
+		Headers: map[string]string{"idempotencyKey": idempotencyKey},
+	})
+}
+
+func (s *Service) publishPaymentSucceeded(ctx context.Context, attempt domain.PaymentAttempt, idempotencyKey string) error {
+	return s.publisher.Publish(ctx, domain.DomainEvent{
+		EventID:       uuid.NewString(),
+		EventName:     paymentSucceededEventName,
+		Producer:      s.serviceName,
+		OccurredAt:    time.Now().UTC(),
+		CorrelationID: attempt.OrderID.String(),
+		CausationID:   idempotencyKey,
+		SchemaVersion: paymentEventVersionV1,
+		AggregateType: paymentAggregateType,
+		AggregateID:   attempt.PaymentAttemptID.String(),
+		Topic:         paymentEventsTopic,
+		Key:           attempt.PaymentAttemptID.String(),
+		Payload: domain.PaymentSucceededPayload{
+			PaymentAttemptID:  attempt.PaymentAttemptID.String(),
+			OrderID:           attempt.OrderID.String(),
+			Status:            attempt.Status,
+			Amount:            attempt.Amount,
+			Currency:          attempt.Currency,
+			ProviderName:      attempt.ProviderName,
+			ProviderReference: attempt.ProviderReference,
+			ProcessedAt:       attempt.ProcessedAt,
+		},
+		Headers: map[string]string{"idempotencyKey": idempotencyKey},
+	})
+}
+
+func (s *Service) publishPaymentFailed(ctx context.Context, attempt domain.PaymentAttempt, idempotencyKey string) error {
+	return s.publisher.Publish(ctx, domain.DomainEvent{
+		EventID:       uuid.NewString(),
+		EventName:     paymentFailedEventName,
+		Producer:      s.serviceName,
+		OccurredAt:    time.Now().UTC(),
+		CorrelationID: attempt.OrderID.String(),
+		CausationID:   idempotencyKey,
+		SchemaVersion: paymentEventVersionV1,
+		AggregateType: paymentAggregateType,
+		AggregateID:   attempt.PaymentAttemptID.String(),
+		Topic:         paymentEventsTopic,
+		Key:           attempt.PaymentAttemptID.String(),
+		Payload: domain.PaymentFailedPayload{
+			PaymentAttemptID: attempt.PaymentAttemptID.String(),
+			OrderID:          attempt.OrderID.String(),
+			Status:           attempt.Status,
+			Amount:           attempt.Amount,
+			Currency:         attempt.Currency,
+			ProviderName:     attempt.ProviderName,
+			FailureCode:      attempt.FailureCode,
+			FailureMessage:   attempt.FailureMessage,
+			ProcessedAt:      attempt.ProcessedAt,
+		},
+		Headers: map[string]string{"idempotencyKey": idempotencyKey},
+	})
 }

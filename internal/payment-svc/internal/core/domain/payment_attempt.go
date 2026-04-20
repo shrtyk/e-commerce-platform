@@ -41,6 +41,29 @@ type PaymentInitiatedPayload struct {
 	ProviderName     string
 }
 
+type PaymentSucceededPayload struct {
+	PaymentAttemptID  string
+	OrderID           string
+	Status            PaymentStatus
+	Amount            int64
+	Currency          string
+	ProviderName      string
+	ProviderReference string
+	ProcessedAt       *time.Time
+}
+
+type PaymentFailedPayload struct {
+	PaymentAttemptID string
+	OrderID          string
+	Status           PaymentStatus
+	Amount           int64
+	Currency         string
+	ProviderName     string
+	FailureCode      string
+	FailureMessage   string
+	ProcessedAt      *time.Time
+}
+
 type DomainEvent struct {
 	EventID       string
 	EventName     string

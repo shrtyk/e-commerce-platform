@@ -14,6 +14,8 @@ import (
 )
 
 const paymentInitiatedEventName = "payment.initiated"
+const paymentSucceededEventName = "payment.succeeded"
+const paymentFailedEventName = "payment.failed"
 
 type outboxRepository interface {
 	Append(ctx context.Context, record commonoutbox.Record) (commonoutbox.Record, error)
@@ -130,23 +132,70 @@ func toProtoMessage(event domain.DomainEvent) (proto.Message, error) {
 		}
 
 		return &paymentv1.PaymentInitiated{
-			Metadata: &commonv1.EventMetadata{
-				EventId:       event.EventID,
-				EventName:     event.EventName,
-				Producer:      event.Producer,
-				OccurredAt:    timestamppb.New(event.OccurredAt.UTC()),
-				CorrelationId: event.CorrelationID,
-				CausationId:   event.CausationID,
-				SchemaVersion: event.SchemaVersion,
-			},
+			Metadata:         toEventMetadata(event),
 			PaymentAttemptId: payload.PaymentAttemptID,
 			OrderId:          payload.OrderID,
 			Status:           toProtoPaymentStatus(payload.Status),
 			Amount:           &commonv1.Money{Amount: payload.Amount, Currency: payload.Currency},
 			ProviderName:     payload.ProviderName,
 		}, nil
+	case paymentSucceededEventName:
+		payload, ok := event.Payload.(domain.PaymentSucceededPayload)
+		if !ok {
+			return nil, fmt.Errorf("invalid payment succeeded payload type %T", event.Payload)
+		}
+
+		var processedAt *timestamppb.Timestamp
+		if payload.ProcessedAt != nil {
+			processedAt = timestamppb.New(payload.ProcessedAt.UTC())
+		}
+
+		return &paymentv1.PaymentSucceeded{
+			Metadata:          toEventMetadata(event),
+			PaymentAttemptId:  payload.PaymentAttemptID,
+			OrderId:           payload.OrderID,
+			Status:            toProtoPaymentStatus(payload.Status),
+			Amount:            &commonv1.Money{Amount: payload.Amount, Currency: payload.Currency},
+			ProviderName:      payload.ProviderName,
+			ProviderReference: payload.ProviderReference,
+			ProcessedAt:       processedAt,
+		}, nil
+	case paymentFailedEventName:
+		payload, ok := event.Payload.(domain.PaymentFailedPayload)
+		if !ok {
+			return nil, fmt.Errorf("invalid payment failed payload type %T", event.Payload)
+		}
+
+		var processedAt *timestamppb.Timestamp
+		if payload.ProcessedAt != nil {
+			processedAt = timestamppb.New(payload.ProcessedAt.UTC())
+		}
+
+		return &paymentv1.PaymentFailed{
+			Metadata:         toEventMetadata(event),
+			PaymentAttemptId: payload.PaymentAttemptID,
+			OrderId:          payload.OrderID,
+			Status:           toProtoPaymentStatus(payload.Status),
+			Amount:           &commonv1.Money{Amount: payload.Amount, Currency: payload.Currency},
+			ProviderName:     payload.ProviderName,
+			FailureCode:      payload.FailureCode,
+			FailureMessage:   payload.FailureMessage,
+			ProcessedAt:      processedAt,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported event name: %s", event.EventName)
+	}
+}
+
+func toEventMetadata(event domain.DomainEvent) *commonv1.EventMetadata {
+	return &commonv1.EventMetadata{
+		EventId:       event.EventID,
+		EventName:     event.EventName,
+		Producer:      event.Producer,
+		OccurredAt:    timestamppb.New(event.OccurredAt.UTC()),
+		CorrelationId: event.CorrelationID,
+		CausationId:   event.CausationID,
+		SchemaVersion: event.SchemaVersion,
 	}
 }
 

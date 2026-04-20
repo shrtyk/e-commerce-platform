@@ -14,6 +14,8 @@ import (
 	"github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/core/service/payment"
 	grpccodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type paymentService interface {
@@ -89,7 +91,7 @@ func toCreatePaymentAttemptInput(req *paymentv1.InitiatePaymentRequest) (payment
 }
 
 func toProtoPaymentAttempt(attempt domain.PaymentAttempt) *paymentv1.PaymentAttempt {
-	return &paymentv1.PaymentAttempt{
+	protoAttempt := &paymentv1.PaymentAttempt{
 		PaymentAttemptId:  attempt.PaymentAttemptID.String(),
 		OrderId:           attempt.OrderID.String(),
 		Status:            toProtoPaymentStatus(attempt.Status),
@@ -97,6 +99,39 @@ func toProtoPaymentAttempt(attempt domain.PaymentAttempt) *paymentv1.PaymentAtte
 		ProviderName:      attempt.ProviderName,
 		ProviderReference: attempt.ProviderReference,
 		IdempotencyKey:    attempt.IdempotencyKey,
+	}
+
+	setOptionalFailureFields(protoAttempt, attempt)
+
+	return protoAttempt
+}
+
+func setOptionalFailureFields(protoAttempt *paymentv1.PaymentAttempt, attempt domain.PaymentAttempt) {
+	message := protoAttempt.ProtoReflect()
+
+	if field := message.Descriptor().Fields().ByName("failure_code"); field != nil {
+		if field.Kind() == protoreflect.StringKind {
+			message.Set(field, protoreflect.ValueOfString(attempt.FailureCode))
+		}
+	}
+
+	if field := message.Descriptor().Fields().ByName("failure_message"); field != nil {
+		if field.Kind() == protoreflect.StringKind {
+			message.Set(field, protoreflect.ValueOfString(attempt.FailureMessage))
+		}
+	}
+
+	if attempt.ProcessedAt == nil {
+		return
+	}
+
+	if field := message.Descriptor().Fields().ByName("processed_at"); field != nil {
+		if field.Kind() == protoreflect.MessageKind &&
+			field.Message() != nil &&
+			field.Message().FullName() == "google.protobuf.Timestamp" {
+			processedAt := timestamppb.New(attempt.ProcessedAt.UTC())
+			message.Set(field, protoreflect.ValueOfMessage(processedAt.ProtoReflect()))
+		}
 	}
 }
 

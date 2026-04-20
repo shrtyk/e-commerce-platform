@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ import (
 	"github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/core/service/payment"
 	grpccodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestPaymentServerInitiatePayment(t *testing.T) {
@@ -32,6 +34,8 @@ func TestPaymentServerInitiatePayment(t *testing.T) {
 	})
 
 	t.Run("maps success response", func(t *testing.T) {
+		processedAt := time.Now().UTC()
+
 		server := NewPaymentServer(stubPaymentService{
 			initiatePaymentFunc: func(_ context.Context, input payment.InitiatePaymentInput) (payment.InitiatePaymentResult, error) {
 				require.Equal(t, orderID, input.OrderID)
@@ -46,6 +50,9 @@ func TestPaymentServerInitiatePayment(t *testing.T) {
 					Currency:         input.Currency,
 					ProviderName:     input.ProviderName,
 					IdempotencyKey:   input.IdempotencyKey,
+					FailureCode:      "declined",
+					FailureMessage:   "insufficient funds",
+					ProcessedAt:      &processedAt,
 				}}, nil
 			},
 		}, testLogger())
@@ -64,6 +71,26 @@ func TestPaymentServerInitiatePayment(t *testing.T) {
 		require.NotNil(t, resp)
 		require.Equal(t, attemptID.String(), resp.GetPaymentAttempt().GetPaymentAttemptId())
 		require.Equal(t, paymentv1.PaymentStatus_PAYMENT_STATUS_INITIATED, resp.GetPaymentAttempt().GetStatus())
+
+		message := resp.GetPaymentAttempt().ProtoReflect()
+
+		failureCodeField := message.Descriptor().Fields().ByName("failure_code")
+		if failureCodeField != nil {
+			require.Equal(t, "declined", message.Get(failureCodeField).String())
+		}
+
+		failureMessageField := message.Descriptor().Fields().ByName("failure_message")
+		if failureMessageField != nil {
+			require.Equal(t, "insufficient funds", message.Get(failureMessageField).String())
+		}
+
+		processedAtField := message.Descriptor().Fields().ByName("processed_at")
+		if processedAtField != nil {
+			require.True(t, message.Has(processedAtField))
+
+			gotProcessedAt := message.Get(processedAtField).Message().Interface().(*timestamppb.Timestamp)
+			require.Equal(t, processedAt.Unix(), gotProcessedAt.AsTime().Unix())
+		}
 	})
 
 	t.Run("maps duplicate to already exists", func(t *testing.T) {
