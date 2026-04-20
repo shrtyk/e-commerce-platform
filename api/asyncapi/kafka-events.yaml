@@ -126,6 +126,7 @@ components:
           - occurredAt
           - producer
           - correlationId
+          - causationId
           - schemaVersion
         properties:
           eventId:
@@ -499,7 +500,11 @@ components:
           format: date-time
     DeliveryPayload:
       type: object
+      required:
+        - metadata
       properties:
+        metadata:
+          $ref: '#/components/schemas/EventMetadata'
         deliveryRequestId:
           type: string
         sourceEventName:
@@ -512,9 +517,18 @@ components:
           type: string
         status:
           type: string
+          description: Delivery status mapped from ecommerce.notification.v1.DeliveryStatus.
+          enum:
+            - requested
+            - sent
+            - failed
     DeliveryResultPayload:
       type: object
+      required:
+        - metadata
       properties:
+        metadata:
+          $ref: '#/components/schemas/EventMetadata'
         deliveryRequestId:
           type: string
         sourceEventName:
@@ -525,12 +539,21 @@ components:
           type: string
         status:
           type: string
+          description: Delivery status mapped from ecommerce.notification.v1.DeliveryStatus.
+          enum:
+            - requested
+            - sent
+            - failed
         sentAt:
           type: string
           format: date-time
     DeliveryFailedPayload:
       type: object
+      required:
+        - metadata
       properties:
+        metadata:
+          $ref: '#/components/schemas/EventMetadata'
         deliveryRequestId:
           type: string
         sourceEventName:
@@ -541,6 +564,11 @@ components:
           type: string
         status:
           type: string
+          description: Delivery status mapped from ecommerce.notification.v1.DeliveryStatus.
+          enum:
+            - requested
+            - sent
+            - failed
         failureCode:
           type: string
         failureMessage:
@@ -550,6 +578,14 @@ components:
           format: date-time
     EventMetadata:
       type: object
+      required:
+        - eventId
+        - eventName
+        - occurredAt
+        - producer
+        - correlationId
+        - causationId
+        - schemaVersion
       properties:
         eventId:
           type: string
