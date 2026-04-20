@@ -29,6 +29,10 @@ func TestMustLoad(t *testing.T) {
 	require.Equal(t, 30*time.Second, cfg.Relay.RetryMaxBackoff)
 	require.Equal(t, "order-svc-relay-1", cfg.Relay.WorkerID)
 	require.Equal(t, 30*time.Second, cfg.Relay.StaleLockTTL)
+	require.True(t, cfg.PaymentEvents.Enabled)
+	require.Equal(t, "payment.events", cfg.PaymentEvents.Topic)
+	require.Equal(t, "order-svc-payment-events-v1", cfg.PaymentEvents.GroupID)
+	require.Equal(t, 500*time.Millisecond, cfg.PaymentEvents.PollInterval)
 }
 
 func TestMustLoadDefaults(t *testing.T) {
@@ -43,6 +47,7 @@ func TestMustLoadDefaults(t *testing.T) {
 	require.Equal(t, ":9090", cfg.Service.GRPCAddr)
 	require.False(t, cfg.Redis.Enabled)
 	require.Equal(t, 100, cfg.Relay.BatchSize)
+	require.True(t, cfg.PaymentEvents.Enabled)
 }
 
 func TestMustLoadPanicsWhenRelayInvalid(t *testing.T) {
@@ -66,6 +71,15 @@ func TestMustLoadPanicsWhenWorkerIDWhitespaceOnly(t *testing.T) {
 func TestMustLoadPanicsWhenRequiredEnvMissing(t *testing.T) {
 	setRequiredEnv(t)
 	require.NoError(t, os.Unsetenv("POSTGRES_HOST"))
+
+	require.Panics(t, func() {
+		_ = config.MustLoad()
+	})
+}
+
+func TestMustLoadPanicsWhenPaymentEventsTopicEmpty(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("PAYMENT_EVENTS_TOPIC", "  ")
 
 	require.Panics(t, func() {
 		_ = config.MustLoad()

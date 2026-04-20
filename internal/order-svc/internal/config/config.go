@@ -12,7 +12,8 @@ import (
 
 type Config struct {
 	commoncfg.Config
-	Relay Relay `env-prefix:"OUTBOX_RELAY_"`
+	Relay         Relay         `env-prefix:"OUTBOX_RELAY_"`
+	PaymentEvents PaymentEvents `env-prefix:"PAYMENT_EVENTS_"`
 }
 
 type Relay struct {
@@ -22,6 +23,13 @@ type Relay struct {
 	RetryMaxBackoff  time.Duration `env:"RETRY_MAX_BACKOFF" env-default:"30s"`
 	WorkerID         string        `env:"WORKER_ID" env-default:"order-svc-relay-1"`
 	StaleLockTTL     time.Duration `env:"STALE_LOCK_TTL" env-default:"30s"`
+}
+
+type PaymentEvents struct {
+	Enabled      bool          `env:"ENABLED" env-default:"true"`
+	Topic        string        `env:"TOPIC" env-default:"payment.events"`
+	GroupID      string        `env:"GROUP_ID" env-default:"order-svc-payment-events-v1"`
+	PollInterval time.Duration `env:"POLL_INTERVAL" env-default:"500ms"`
 }
 
 func MustLoad() Config {
@@ -59,6 +67,18 @@ func MustLoad() Config {
 
 	if cfg.Relay.StaleLockTTL <= 0 {
 		panic(fmt.Errorf("field \"Relay.StaleLockTTL\" must be positive"))
+	}
+
+	if strings.TrimSpace(cfg.PaymentEvents.Topic) == "" {
+		panic(fmt.Errorf("field \"PaymentEvents.Topic\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(cfg.PaymentEvents.GroupID) == "" {
+		panic(fmt.Errorf("field \"PaymentEvents.GroupID\" must be non-empty"))
+	}
+
+	if cfg.PaymentEvents.PollInterval <= 0 {
+		panic(fmt.Errorf("field \"PaymentEvents.PollInterval\" must be positive"))
 	}
 
 	return cfg

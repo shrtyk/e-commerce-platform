@@ -72,7 +72,7 @@ func TestCreateOrderHTTPPersistsOrder(t *testing.T) {
 
 	saga := readSagaStateRow(t, stack.DB, order.OrderId)
 	require.Equal(t, "succeeded", saga.StockStage)
-	require.Equal(t, "succeeded", saga.PaymentStage)
+	require.Equal(t, "requested", saga.PaymentStage)
 	require.False(t, saga.LastErrorCode.Valid)
 
 	history := readStatusHistoryRows(t, stack.DB, order.OrderId)
@@ -275,7 +275,7 @@ func TestCreateOrderGRPCPersistsOrder(t *testing.T) {
 
 	saga := readSagaStateRow(t, stack.DB, res.GetOrder().GetOrderId())
 	require.Equal(t, "succeeded", saga.StockStage)
-	require.Equal(t, "succeeded", saga.PaymentStage)
+	require.Equal(t, "requested", saga.PaymentStage)
 	require.False(t, saga.LastErrorCode.Valid)
 
 	history := readStatusHistoryRows(t, stack.DB, res.GetOrder().GetOrderId())

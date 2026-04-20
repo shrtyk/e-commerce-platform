@@ -27,6 +27,7 @@ import (
 	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/inbound/grpc"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/inbound/http"
+	adapterinboundkafka "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/inbound/kafka"
 	adaptercheckoutgrpc "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/checkout/grpc"
 	adapterevents "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/events"
 	adapterkafka "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/kafka"
@@ -69,6 +70,19 @@ func main() {
 		panic(fmt.Errorf("create kafka client: %w", err))
 	}
 	defer kafkaClient.Close()
+
+	var paymentEventsClient *commonkafka.Client
+	if cfg.PaymentEvents.Enabled {
+		paymentEventsClient, err = commonkafka.NewClient(
+			kgo.SeedBrokers(kafkaBrokers...),
+			kgo.ConsumerGroup(cfg.PaymentEvents.GroupID),
+			kgo.ConsumeTopics(cfg.PaymentEvents.Topic),
+		)
+		if err != nil {
+			panic(fmt.Errorf("create payment events kafka client: %w", err))
+		}
+		defer paymentEventsClient.Close()
+	}
 
 	schemaRegistryClient, err := sr.NewClient(sr.URLs(cfg.SchemaRegistry.URL))
 	if err != nil {
@@ -174,6 +188,31 @@ func main() {
 	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, db, checkoutService, tokenVerifier, tracer)
 	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, checkoutService, tokenVerifier, tracer)
 
+	var paymentEventsWorker *adapterinboundkafka.PaymentEventsWorker
+	if cfg.PaymentEvents.Enabled {
+		paymentSerde := commonkafka.NewProtoSerde(schemaRegistryClient, commonkafka.NewDescriptorSchemaProvider())
+		if err := paymentSerde.RegisterType(context.Background(), cfg.PaymentEvents.Topic, &paymentv1.PaymentSucceeded{}); err != nil {
+			panic(fmt.Errorf("register payment succeeded schema: %w", err))
+		}
+		if err := paymentSerde.RegisterType(context.Background(), cfg.PaymentEvents.Topic, &paymentv1.PaymentFailed{}); err != nil {
+			panic(fmt.Errorf("register payment failed schema: %w", err))
+		}
+
+		paymentConsumer, err := commonkafka.NewConsumer(paymentEventsClient, paymentSerde)
+		if err != nil {
+			panic(fmt.Errorf("create payment events consumer: %w", err))
+		}
+
+		paymentEventsWorker, err = adapterinboundkafka.NewPaymentEventsWorker(
+			paymentConsumer,
+			checkoutService,
+			adapterinboundkafka.PaymentEventsWorkerConfig{PollInterval: cfg.PaymentEvents.PollInterval},
+		)
+		if err != nil {
+			panic(fmt.Errorf("create payment events worker: %w", err))
+		}
+	}
+
 	app := orderapp.NewApplication(
 		&cfg,
 		handler,
@@ -183,6 +222,7 @@ func main() {
 		orderapp.WithTracerProvider(tracerProvider),
 		orderapp.WithMeterProvider(meterProvider),
 		orderapp.WithBackgroundWorker(relayWorker),
+		orderapp.WithBackgroundWorker(paymentEventsWorker),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
