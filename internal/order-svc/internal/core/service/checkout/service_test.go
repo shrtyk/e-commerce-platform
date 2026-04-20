@@ -626,7 +626,7 @@ func TestCheckoutCartErrors(t *testing.T) {
 	}
 }
 
-func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
+func TestCheckoutSuccessPathEndsAwaitingPayment(t *testing.T) {
 	t.Parallel()
 
 	userID := uuid.New()
@@ -640,6 +640,7 @@ func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
 	saga := outboundmocks.NewMockOrderSagaStateRepository(t)
 	snapshots := outboundmocks.NewMockCheckoutSnapshotRepository(t)
 	stock := outboundmocks.NewMockStockReservationService(t)
+	payment := outboundmocks.NewMockCheckoutPaymentService(t)
 	publisher := &captureEventPublisher{}
 
 	snapshots.EXPECT().
@@ -710,10 +711,6 @@ func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
 		TransitionPaymentStageToRequested(testifymock.Anything, orderID).
 		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageRequested}, nil).
 		Once()
-	saga.EXPECT().
-		TransitionPaymentStageToSucceeded(testifymock.Anything, orderID).
-		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageSucceeded}, nil).
-		Once()
 
 	stock.EXPECT().
 		ReserveStock(testifymock.Anything, testifymock.MatchedBy(func(input outbound.ReserveStockInput) bool {
@@ -722,7 +719,18 @@ func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
 		Return(nil).
 		Once()
 
-	svc := NewService(orders, saga, snapshots, stock, nil, nil).WithEventing(publisher, nil, "order-svc")
+	payment.EXPECT().
+		InitiatePayment(testifymock.Anything, testifymock.MatchedBy(func(input outbound.InitiatePaymentInput) bool {
+			return input.OrderID == orderID &&
+				input.Amount == 2500 &&
+				input.Currency == "USD" &&
+				input.IdempotencyKey == orderID.String() &&
+				input.PaymentProvider == "default"
+		})).
+		Return(nil).
+		Once()
+
+	svc := NewService(orders, saga, snapshots, stock, nil, payment).WithEventing(publisher, nil, "order-svc")
 
 	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: idempotencyKey})
 	require.NoError(t, err)
@@ -739,11 +747,112 @@ func TestCheckoutSuccessPathToAwaitingPayment(t *testing.T) {
 	saga.AssertNumberOfCalls(t, "TransitionStockStageToRequested", 1)
 	saga.AssertNumberOfCalls(t, "TransitionStockStageToSucceeded", 1)
 	saga.AssertNumberOfCalls(t, "TransitionPaymentStageToRequested", 1)
-	saga.AssertNumberOfCalls(t, "TransitionPaymentStageToSucceeded", 1)
+	saga.AssertNotCalled(t, "TransitionPaymentStageToSucceeded", testifymock.Anything, testifymock.Anything)
 	stock.AssertNumberOfCalls(t, "ReserveStock", 1)
+	payment.AssertNumberOfCalls(t, "InitiatePayment", 1)
 	saga.AssertNotCalled(t, "TransitionStockStageToFailed", testifymock.Anything, testifymock.Anything)
 	saga.AssertNotCalled(t, "TransitionPaymentStageToFailed", testifymock.Anything, testifymock.Anything)
 	saga.AssertNotCalled(t, "SetLastErrorCode", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+}
+
+func TestCheckoutPaymentInitiateSuccessDoesNotPublishOrderConfirmed(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	orderID := uuid.New()
+	now := time.Now().UTC()
+
+	orders := outboundmocks.NewMockOrderRepository(t)
+	saga := outboundmocks.NewMockOrderSagaStateRepository(t)
+	snapshots := outboundmocks.NewMockCheckoutSnapshotRepository(t)
+	stock := outboundmocks.NewMockStockReservationService(t)
+	payment := outboundmocks.NewMockCheckoutPaymentService(t)
+
+	fromPending := outbound.OrderStatusPending
+	fromAwaitingStock := outbound.OrderStatusAwaitingStock
+
+	orders.EXPECT().
+		GetByUserIDAndIdempotencyKey(testifymock.Anything, userID, "idem-confirmed-publish-fail").
+		Return(outbound.Order{}, outbound.ErrOrderNotFound).
+		Once()
+	snapshots.EXPECT().
+		GetCheckoutSnapshot(testifymock.Anything, userID).
+		Return(checkoutSnapshotWithSingleItem(userID, 2600, "SKU-4", "Item 4", 2600), nil).
+		Once()
+	orders.EXPECT().
+		CreateWithItems(testifymock.Anything, testifymock.Anything).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusPending, Currency: "USD", TotalAmount: 2600}, nil).
+		Once()
+
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusPending, outbound.OrderStatusAwaitingStock).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingStock, Currency: "USD", TotalAmount: 2600, CreatedAt: now, UpdatedAt: now}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(testifymock.Anything, orderID, &fromPending, outbound.OrderStatusAwaitingStock, (*string)(nil)).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+
+	saga.EXPECT().
+		TransitionStockStageToRequested(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageRequested, PaymentStage: outbound.SagaStageNotStarted}, nil).
+		Once()
+
+	stock.EXPECT().
+		ReserveStock(testifymock.Anything, testifymock.MatchedBy(func(input outbound.ReserveStockInput) bool {
+			return input.OrderID == orderID && input.UserID == userID && len(input.Items) == 1
+		})).
+		Return(nil).
+		Once()
+
+	saga.EXPECT().
+		TransitionStockStageToSucceeded(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageNotStarted}, nil).
+		Once()
+
+	orders.EXPECT().
+		TransitionStatus(testifymock.Anything, orderID, outbound.OrderStatusAwaitingStock, outbound.OrderStatusAwaitingPayment).
+		Return(outbound.Order{OrderID: orderID, UserID: userID, Status: outbound.OrderStatusAwaitingPayment, Currency: "USD", TotalAmount: 2600, CreatedAt: now, UpdatedAt: now}, nil).
+		Once()
+	orders.EXPECT().
+		AppendStatusHistory(testifymock.Anything, orderID, &fromAwaitingStock, outbound.OrderStatusAwaitingPayment, (*string)(nil)).
+		Return(outbound.OrderStatusHistory{}, nil).
+		Once()
+
+	saga.EXPECT().
+		TransitionPaymentStageToRequested(testifymock.Anything, orderID).
+		Return(outbound.SagaState{OrderID: orderID, StockStage: outbound.SagaStageSucceeded, PaymentStage: outbound.SagaStageRequested}, nil).
+		Once()
+
+	payment.EXPECT().
+		InitiatePayment(testifymock.Anything, testifymock.MatchedBy(func(input outbound.InitiatePaymentInput) bool {
+			return input.OrderID == orderID &&
+				input.Amount == 2600 &&
+				input.Currency == "USD" &&
+				input.IdempotencyKey == orderID.String() &&
+				input.PaymentProvider == "default"
+		})).
+		Return(nil).
+		Once()
+
+
+	behavior := &checkoutSQLBehavior{}
+	db := newCheckoutTestDB(t, behavior)
+	publisher := &selectiveFailEventPublisher{failEventName: "order.confirmed", err: errors.New("should not be called")}
+	txProvider := sqltx.NewProvider(db, func(_ *sql.Tx) TransactionRepos {
+		return TransactionRepos{Orders: orders, Saga: saga, Publisher: publisher}
+	})
+
+	svc := NewService(orders, saga, snapshots, stock, nil, payment).WithEventing(publisher, txProvider, "order-svc")
+
+	order, err := svc.Checkout(context.Background(), CheckoutInput{UserID: userID, IdempotencyKey: "idem-confirmed-publish-fail"})
+	require.NoError(t, err)
+	require.Equal(t, outbound.OrderStatusAwaitingPayment, order.Status)
+
+	require.Equal(t, 3, behavior.commitCount)
+	require.Equal(t, 0, behavior.rollbackCount)
+	require.Len(t, publisher.events, 1)
+	require.Equal(t, "order.created", publisher.events[0].EventName)
 }
 
 func TestCheckoutPaymentFailureCompensation(t *testing.T) {
@@ -2145,6 +2254,21 @@ type captureEventPublisher struct {
 func (p *captureEventPublisher) Publish(_ context.Context, event domain.DomainEvent) error {
 	p.events = append(p.events, event)
 	return p.err
+}
+
+type selectiveFailEventPublisher struct {
+	events         []domain.DomainEvent
+	failEventName  string
+	err            error
+}
+
+func (p *selectiveFailEventPublisher) Publish(_ context.Context, event domain.DomainEvent) error {
+	p.events = append(p.events, event)
+	if event.EventName == p.failEventName {
+		return p.err
+	}
+
+	return nil
 }
 
 func TestCheckoutCreateOrderAndOutboxAtomicWithTxProvider(t *testing.T) {

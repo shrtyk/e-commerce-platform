@@ -96,6 +96,30 @@ func TestEventPublisherPublish(t *testing.T) {
 			},
 		},
 		{
+			name: "order confirmed success",
+			event: domain.DomainEvent{
+				EventID:       "111f0566-3ca0-4147-bf2a-865ff1756118",
+				EventName:     "order.confirmed",
+				Producer:      "order-svc",
+				OccurredAt:    now,
+				CorrelationID: "corr-3",
+				CausationID:   "cause-3",
+				SchemaVersion: "1",
+				AggregateType: "order",
+				AggregateID:   "order-3",
+				Topic:         "order.events",
+				Key:           "order-3",
+				Payload: domain.OrderConfirmedPayload{
+					OrderID:     "order-3",
+					UserID:      "user-3",
+					Status:      domain.OrderStatusConfirmed,
+					Currency:    "USD",
+					TotalAmount: 3500,
+					ConfirmedAt: now,
+				},
+			},
+		},
+		{
 			name: "unsupported event",
 			event: domain.DomainEvent{
 				EventID:       "fd6f1817-fd78-4e7f-a126-a97810c4259b",
@@ -162,6 +186,14 @@ func TestEventPublisherPublish(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, orderv1.OrderStatus_ORDER_STATUS_PENDING, payload.Status)
 				require.Equal(t, "ecommerce.order.v1.OrderCreated", fake.record.Headers[commonkafka.HeaderRecordName])
+			case "order.confirmed":
+				var payload orderv1.OrderConfirmed
+				err = proto.Unmarshal(fake.record.Payload, &payload)
+				require.NoError(t, err)
+				require.Equal(t, orderv1.OrderStatus_ORDER_STATUS_CONFIRMED, payload.Status)
+				require.Equal(t, "USD", payload.Currency)
+				require.Equal(t, int64(3500), payload.GetTotalAmount().GetAmount())
+				require.Equal(t, "ecommerce.order.v1.OrderConfirmed", fake.record.Headers[commonkafka.HeaderRecordName])
 			case "order.cancelled":
 				var payload orderv1.OrderCancelled
 				err = proto.Unmarshal(fake.record.Payload, &payload)

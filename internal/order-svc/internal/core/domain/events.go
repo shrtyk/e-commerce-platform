@@ -30,6 +30,15 @@ type OrderCancelledPayload struct {
 	CancelledAt         time.Time
 }
 
+type OrderConfirmedPayload struct {
+	OrderID     string
+	UserID      string
+	Status      OrderStatus
+	Currency    string
+	TotalAmount int64
+	ConfirmedAt time.Time
+}
+
 type DomainEvent struct {
 	EventID       string
 	EventName     string

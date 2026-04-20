@@ -19,11 +19,13 @@ const maxIdempotencyKeyLength = 255
 const (
 	orderEventsTopic           = "order.events"
 	orderCreatedEventName      = "order.created"
+	orderConfirmedEventName    = "order.confirmed"
 	orderCancelledEventName    = "order.cancelled"
 	orderAggregateType         = "order"
 	orderEventSchemaVersion    = "1"
 	outboxHeaderIdempotencyKey = "idempotencyKey"
 	replayNonTerminalRetries   = 3
+	defaultPaymentFailureCode  = "payment_declined"
 )
 
 const replayNonTerminalRetryDelay = 10 * time.Millisecond
@@ -58,6 +60,15 @@ type CheckoutInput struct {
 type GetOrderInput struct {
 	UserID  uuid.UUID
 	OrderID uuid.UUID
+}
+
+type HandlePaymentSucceededInput struct {
+	OrderID uuid.UUID
+}
+
+type HandlePaymentFailedInput struct {
+	OrderID     uuid.UUID
+	FailureCode string
 }
 
 func NewService(
@@ -256,10 +267,6 @@ func (s *Service) Checkout(ctx context.Context, input CheckoutInput) (outbound.O
 		return outbound.Order{}, wrapCode(code, "initiate payment", err)
 	}
 
-	if _, err := s.transitionPaymentStage(ctx, createdOrder.OrderID, domain.SagaStageSucceeded); err != nil {
-		return outbound.Order{}, err
-	}
-
 	return order, nil
 }
 
@@ -368,6 +375,114 @@ func (s *Service) GetOrder(ctx context.Context, input GetOrderInput) (outbound.O
 	}
 
 	return order, nil
+}
+
+func (s *Service) HandlePaymentSucceeded(ctx context.Context, input HandlePaymentSucceededInput) error {
+	if input.OrderID == uuid.Nil {
+		return newCodeError(CheckoutErrorCodeInvalidArgument, "payment succeeded input order_id is required")
+	}
+
+	order, err := s.orders.GetByID(ctx, input.OrderID)
+	if err != nil {
+		if errors.Is(err, outbound.ErrOrderNotFound) {
+			return nil
+		}
+
+		return wrapCode(CheckoutErrorCodeInternal, "get order by id", err)
+	}
+
+	if _, err := s.saga.TransitionPaymentStageToSucceeded(ctx, input.OrderID); err != nil {
+		if !isReplaySafeTransitionError(err) {
+			return wrapCode(mapCheckoutCode(err), "transition payment stage to succeeded", err)
+		}
+	}
+
+	if _, err := s.saga.ClearLastErrorCode(ctx, input.OrderID); err != nil {
+		return wrapCode(mapCheckoutCode(err), "clear order saga last error code", err)
+	}
+
+	if order.Status == outbound.OrderStatusConfirmed || order.Status == outbound.OrderStatusCancelled {
+		return nil
+	}
+
+	if _, err := s.transitionOrderStatus(ctx, order, domain.OrderStatusConfirmed, nil); err != nil {
+		if isReplaySafeTransitionError(err) {
+			return nil
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+func (s *Service) HandlePaymentFailed(ctx context.Context, input HandlePaymentFailedInput) error {
+	if input.OrderID == uuid.Nil {
+		return newCodeError(CheckoutErrorCodeInvalidArgument, "payment failed input order_id is required")
+	}
+
+	failureCode := strings.TrimSpace(input.FailureCode)
+	if failureCode == "" {
+		failureCode = defaultPaymentFailureCode
+	}
+
+	order, err := s.orders.GetByID(ctx, input.OrderID)
+	if err != nil {
+		if errors.Is(err, outbound.ErrOrderNotFound) {
+			return nil
+		}
+
+		return wrapCode(CheckoutErrorCodeInternal, "get order by id", err)
+	}
+
+	if order.Status == outbound.OrderStatusConfirmed {
+		return nil
+	}
+
+	if _, err := s.saga.TransitionPaymentStageToFailed(ctx, input.OrderID); err != nil {
+		if !isReplaySafeTransitionError(err) {
+			return wrapCode(mapCheckoutCode(err), "transition payment stage to failed", err)
+		}
+	}
+
+	if _, err := s.saga.SetLastErrorCode(ctx, input.OrderID, failureCode); err != nil {
+		return wrapCode(mapCheckoutCode(err), "set order saga last error code", err)
+	}
+
+	if order.Status != outbound.OrderStatusCancelled {
+		reasonCode := failureCode
+		if _, err := s.transitionOrderStatus(ctx, order, domain.OrderStatusCancelled, &reasonCode); err != nil {
+			if !isReplaySafeTransitionError(err) {
+				return err
+			}
+
+			reloadedOrder, getErr := s.orders.GetByID(ctx, input.OrderID)
+			if getErr != nil {
+				if errors.Is(getErr, outbound.ErrOrderNotFound) {
+					return nil
+				}
+
+				return wrapCode(CheckoutErrorCodeInternal, "reload order by id after cancel conflict", getErr)
+			}
+
+			switch reloadedOrder.Status {
+			case outbound.OrderStatusConfirmed:
+				return nil
+			case outbound.OrderStatusCancelled:
+				order = reloadedOrder
+			}
+		}
+	}
+
+	if order.Status == outbound.OrderStatusConfirmed {
+		return nil
+	}
+
+	if err := s.stockRelease.ReleaseStock(ctx, toReleaseStockInputFromOrder(order)); err != nil {
+		return fmt.Errorf("release stock after payment failure: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Service) compensateStockFailure(
@@ -482,17 +597,23 @@ func (s *Service) transitionOrderStatus(
 			return wrapCode(mapCheckoutCode(transitionErr), "transition order status", transitionErr)
 		}
 
+		nextOrder.Items = order.Items
+		if nextOrder.UserID == uuid.Nil {
+			nextOrder.UserID = order.UserID
+		}
+		if nextOrder.Currency == "" {
+			nextOrder.Currency = order.Currency
+		}
+		if nextOrder.TotalAmount == 0 {
+			nextOrder.TotalAmount = order.TotalAmount
+		}
+
 		fromStatusOutbound := toOutboundOrderStatus(fromStatus)
 		if _, historyErr := repos.Orders.AppendStatusHistory(ctx, order.OrderID, &fromStatusOutbound, nextOrder.Status, reasonCode); historyErr != nil {
 			return wrapCode(mapCheckoutCode(historyErr), "append order status history", historyErr)
 		}
 
 		if next == domain.OrderStatusCancelled {
-			nextOrder.Items = order.Items
-			nextOrder.Currency = order.Currency
-			nextOrder.TotalAmount = order.TotalAmount
-			nextOrder.UserID = order.UserID
-
 			cancelledEvent, eventErr := s.newOrderCancelledEvent(ctx, nextOrder, reasonCode)
 			if eventErr != nil {
 				return wrapCode(CheckoutErrorCodeInternal, "map order cancelled event", eventErr)
@@ -503,15 +624,15 @@ func (s *Service) transitionOrderStatus(
 			}
 		}
 
-		nextOrder.Items = order.Items
-		if nextOrder.UserID == uuid.Nil {
-			nextOrder.UserID = order.UserID
-		}
-		if nextOrder.Currency == "" {
-			nextOrder.Currency = order.Currency
-		}
-		if nextOrder.TotalAmount == 0 {
-			nextOrder.TotalAmount = order.TotalAmount
+		if next == domain.OrderStatusConfirmed {
+			confirmedEvent, eventErr := s.newOrderConfirmedEvent(ctx, nextOrder)
+			if eventErr != nil {
+				return wrapCode(CheckoutErrorCodeInternal, "map order confirmed event", eventErr)
+			}
+
+			if publishErr := repos.Publisher.Publish(ctx, confirmedEvent); publishErr != nil {
+				return wrapCode(mapCheckoutCode(publishErr), "publish order confirmed event", publishErr)
+			}
 		}
 
 		updated = nextOrder
@@ -692,6 +813,50 @@ func (s *Service) newOrderCancelledEvent(
 			CancelReasonCode:    cancelReasonCode,
 			CancelReasonMessage: cancelReasonCode,
 			CancelledAt:         now,
+		},
+		Headers: map[string]string{},
+	}, nil
+}
+
+func (s *Service) newOrderConfirmedEvent(
+	ctx context.Context,
+	order outbound.Order,
+) (domain.DomainEvent, error) {
+	if order.OrderID == uuid.Nil {
+		return domain.DomainEvent{}, fmt.Errorf("order_id is required")
+	}
+
+	if order.UserID == uuid.Nil {
+		return domain.DomainEvent{}, fmt.Errorf("user_id is required")
+	}
+
+	correlationID := correlationIDFromContext(ctx, order.OrderID.String())
+	causationID := causationIDFromContext(ctx)
+	if causationID == "" {
+		causationID = correlationID
+	}
+
+	now := timeNowUTC()
+
+	return domain.DomainEvent{
+		EventID:       uuid.NewString(),
+		EventName:     orderConfirmedEventName,
+		Producer:      s.producer,
+		OccurredAt:    now,
+		CorrelationID: correlationID,
+		CausationID:   causationID,
+		SchemaVersion: orderEventSchemaVersion,
+		AggregateType: orderAggregateType,
+		AggregateID:   order.OrderID.String(),
+		Topic:         orderEventsTopic,
+		Key:           order.OrderID.String(),
+		Payload: domain.OrderConfirmedPayload{
+			OrderID:     order.OrderID.String(),
+			UserID:      order.UserID.String(),
+			Status:      domain.OrderStatus(order.Status),
+			Currency:    order.Currency,
+			TotalAmount: order.TotalAmount,
+			ConfirmedAt: now,
 		},
 		Headers: map[string]string{},
 	}, nil
@@ -989,6 +1154,33 @@ func isReplayableIdempotentStatus(status outbound.OrderStatus) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func isReplaySafeTransitionError(err error) bool {
+	return errors.Is(err, outbound.ErrOrderInvalidStatusTransition) ||
+		errors.Is(err, outbound.ErrOrderSagaStateInvalidTransition) ||
+		errors.Is(err, domain.ErrInvalidOrderStatusTransition) ||
+		errors.Is(err, domain.ErrCancelledOrderTerminal) ||
+		errors.Is(err, domain.ErrConfirmedOrderImmutable) ||
+		errors.Is(err, domain.ErrInvalidSagaStageTransition) ||
+		errors.Is(err, domain.ErrSagaTerminalStateConflict)
+}
+
+func toReleaseStockInputFromOrder(order outbound.Order) outbound.ReleaseStockInput {
+	items := make([]outbound.ReleaseStockItem, 0, len(order.Items))
+	for _, item := range order.Items {
+		items = append(items, outbound.ReleaseStockItem{
+			ProductID: item.ProductID,
+			SKU:       item.SKU,
+			Quantity:  item.Quantity,
+		})
+	}
+
+	return outbound.ReleaseStockInput{
+		OrderID: order.OrderID,
+		UserID:  order.UserID,
+		Items:   items,
 	}
 }
 

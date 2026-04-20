@@ -15,6 +15,7 @@ import (
 
 const (
 	orderCreatedEventName   = "order.created"
+	orderConfirmedEventName = "order.confirmed"
 	orderCancelledEventName = "order.cancelled"
 )
 
@@ -170,6 +171,24 @@ func toProtoMessage(event domain.DomainEvent) (proto.Message, error) {
 			CancelReasonCode:    payload.CancelReasonCode,
 			CancelReasonMessage: payload.CancelReasonMessage,
 			CancelledAt:         timestamppb.New(payload.CancelledAt.UTC()),
+		}, nil
+	case orderConfirmedEventName:
+		payload, ok := event.Payload.(domain.OrderConfirmedPayload)
+		if !ok {
+			return nil, fmt.Errorf("invalid order confirmed payload type %T", event.Payload)
+		}
+
+		return &orderv1.OrderConfirmed{
+			Metadata:  mapMetadata(event),
+			OrderId:   payload.OrderID,
+			UserId:    payload.UserID,
+			Status:    toProtoOrderStatus(payload.Status),
+			Currency:  payload.Currency,
+			ConfirmedAt: timestamppb.New(payload.ConfirmedAt.UTC()),
+			TotalAmount: &commonv1.Money{
+				Amount:   payload.TotalAmount,
+				Currency: payload.Currency,
+			},
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported event name: %s", event.EventName)
