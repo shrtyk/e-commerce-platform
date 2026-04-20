@@ -7,6 +7,9 @@ package sqlc
 
 import (
 	"context"
+	"database/sql"
+
+	"github.com/google/uuid"
 )
 
 const createInitiatedPaymentAttempt = `-- name: CreateInitiatedPaymentAttempt :one
@@ -29,12 +32,12 @@ VALUES
     $6
   )
 RETURNING
-  payment_attempt_id, order_id, status, amount, currency, provider_name, provider_reference, idempotency_key, created_at, updated_at
+  payment_attempt_id, order_id, status, amount, currency, provider_name, provider_reference, failure_code, failure_message, idempotency_key, created_at, updated_at
 `
 
 type CreateInitiatedPaymentAttemptParams struct {
-	OrderID        interface{}
-	Status         interface{}
+	OrderID        uuid.UUID
+	Status         PaymentStatus
 	Amount         int64
 	Currency       string
 	ProviderName   string
@@ -59,6 +62,171 @@ func (q *Queries) CreateInitiatedPaymentAttempt(ctx context.Context, arg CreateI
 		&i.Currency,
 		&i.ProviderName,
 		&i.ProviderReference,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPaymentAttemptByOrderIDAndIdempotencyKey = `-- name: GetPaymentAttemptByOrderIDAndIdempotencyKey :one
+SELECT
+  payment_attempt_id, order_id, status, amount, currency, provider_name, provider_reference, failure_code, failure_message, idempotency_key, created_at, updated_at
+FROM
+  payment_attempts
+WHERE
+  order_id = $1
+  AND idempotency_key = $2
+LIMIT
+  1
+`
+
+type GetPaymentAttemptByOrderIDAndIdempotencyKeyParams struct {
+	OrderID        uuid.UUID
+	IdempotencyKey string
+}
+
+func (q *Queries) GetPaymentAttemptByOrderIDAndIdempotencyKey(ctx context.Context, arg GetPaymentAttemptByOrderIDAndIdempotencyKeyParams) (PaymentAttempt, error) {
+	row := q.db.QueryRowContext(ctx, getPaymentAttemptByOrderIDAndIdempotencyKey, arg.OrderID, arg.IdempotencyKey)
+	var i PaymentAttempt
+	err := row.Scan(
+		&i.PaymentAttemptID,
+		&i.OrderID,
+		&i.Status,
+		&i.Amount,
+		&i.Currency,
+		&i.ProviderName,
+		&i.ProviderReference,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markPaymentAttemptFailed = `-- name: MarkPaymentAttemptFailed :one
+UPDATE payment_attempts
+SET
+  status = $1,
+  failure_code = $2,
+  failure_message = $3,
+  updated_at = now()
+WHERE
+  payment_attempt_id = $4
+  AND status = 'processing'
+RETURNING
+  payment_attempt_id, order_id, status, amount, currency, provider_name, provider_reference, failure_code, failure_message, idempotency_key, created_at, updated_at
+`
+
+type MarkPaymentAttemptFailedParams struct {
+	Status           PaymentStatus
+	FailureCode      sql.NullString
+	FailureMessage   sql.NullString
+	PaymentAttemptID uuid.UUID
+}
+
+func (q *Queries) MarkPaymentAttemptFailed(ctx context.Context, arg MarkPaymentAttemptFailedParams) (PaymentAttempt, error) {
+	row := q.db.QueryRowContext(ctx, markPaymentAttemptFailed,
+		arg.Status,
+		arg.FailureCode,
+		arg.FailureMessage,
+		arg.PaymentAttemptID,
+	)
+	var i PaymentAttempt
+	err := row.Scan(
+		&i.PaymentAttemptID,
+		&i.OrderID,
+		&i.Status,
+		&i.Amount,
+		&i.Currency,
+		&i.ProviderName,
+		&i.ProviderReference,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markPaymentAttemptProcessing = `-- name: MarkPaymentAttemptProcessing :one
+UPDATE payment_attempts
+SET
+  status = $1,
+  failure_code = NULL,
+  failure_message = NULL,
+  updated_at = now()
+WHERE
+  payment_attempt_id = $2
+  AND status = 'initiated'
+RETURNING
+  payment_attempt_id, order_id, status, amount, currency, provider_name, provider_reference, failure_code, failure_message, idempotency_key, created_at, updated_at
+`
+
+type MarkPaymentAttemptProcessingParams struct {
+	Status           PaymentStatus
+	PaymentAttemptID uuid.UUID
+}
+
+func (q *Queries) MarkPaymentAttemptProcessing(ctx context.Context, arg MarkPaymentAttemptProcessingParams) (PaymentAttempt, error) {
+	row := q.db.QueryRowContext(ctx, markPaymentAttemptProcessing, arg.Status, arg.PaymentAttemptID)
+	var i PaymentAttempt
+	err := row.Scan(
+		&i.PaymentAttemptID,
+		&i.OrderID,
+		&i.Status,
+		&i.Amount,
+		&i.Currency,
+		&i.ProviderName,
+		&i.ProviderReference,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markPaymentAttemptSucceeded = `-- name: MarkPaymentAttemptSucceeded :one
+UPDATE payment_attempts
+SET
+  status = $1,
+  provider_reference = $2,
+  failure_code = NULL,
+  failure_message = NULL,
+  updated_at = now()
+WHERE
+  payment_attempt_id = $3
+  AND status = 'processing'
+RETURNING
+  payment_attempt_id, order_id, status, amount, currency, provider_name, provider_reference, failure_code, failure_message, idempotency_key, created_at, updated_at
+`
+
+type MarkPaymentAttemptSucceededParams struct {
+	Status            PaymentStatus
+	ProviderReference string
+	PaymentAttemptID  uuid.UUID
+}
+
+func (q *Queries) MarkPaymentAttemptSucceeded(ctx context.Context, arg MarkPaymentAttemptSucceededParams) (PaymentAttempt, error) {
+	row := q.db.QueryRowContext(ctx, markPaymentAttemptSucceeded, arg.Status, arg.ProviderReference, arg.PaymentAttemptID)
+	var i PaymentAttempt
+	err := row.Scan(
+		&i.PaymentAttemptID,
+		&i.OrderID,
+		&i.Status,
+		&i.Amount,
+		&i.Currency,
+		&i.ProviderName,
+		&i.ProviderReference,
+		&i.FailureCode,
+		&i.FailureMessage,
 		&i.IdempotencyKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,

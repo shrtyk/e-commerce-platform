@@ -26,4 +26,8 @@ type CreatePaymentAttemptInput struct {
 //mockery:generate: true
 type PaymentAttemptRepository interface {
 	CreateInitiated(ctx context.Context, input CreatePaymentAttemptInput) (domain.PaymentAttempt, error)
+	GetByOrderIDAndIdempotencyKey(ctx context.Context, orderID uuid.UUID, idempotencyKey string) (domain.PaymentAttempt, error)
+	MarkProcessing(ctx context.Context, paymentAttemptID uuid.UUID) (domain.PaymentAttempt, error)
+	MarkSucceeded(ctx context.Context, paymentAttemptID uuid.UUID, providerReference string) (domain.PaymentAttempt, error)
+	MarkFailed(ctx context.Context, paymentAttemptID uuid.UUID, failureCode string, failureMessage string) (domain.PaymentAttempt, error)
 }

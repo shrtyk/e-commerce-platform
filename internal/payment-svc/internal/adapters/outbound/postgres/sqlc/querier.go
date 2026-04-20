@@ -4,16 +4,22 @@
 
 package sqlc
 
-import "context"
+import (
+	"context"
+)
 
 type Querier interface {
 	AppendOutboxRecord(ctx context.Context, arg AppendOutboxRecordParams) (OutboxRecord, error)
 	ClaimPendingOutboxRecords(ctx context.Context, arg ClaimPendingOutboxRecordsParams) ([]OutboxRecord, error)
 	ClaimStaleInProgressOutboxRecords(ctx context.Context, arg ClaimStaleInProgressOutboxRecordsParams) ([]OutboxRecord, error)
 	CreateInitiatedPaymentAttempt(ctx context.Context, arg CreateInitiatedPaymentAttemptParams) (PaymentAttempt, error)
+	GetPaymentAttemptByOrderIDAndIdempotencyKey(ctx context.Context, arg GetPaymentAttemptByOrderIDAndIdempotencyKeyParams) (PaymentAttempt, error)
 	MarkOutboxRecordDead(ctx context.Context, arg MarkOutboxRecordDeadParams) (int64, error)
 	MarkOutboxRecordPublished(ctx context.Context, arg MarkOutboxRecordPublishedParams) (int64, error)
 	MarkOutboxRecordRetryableFailure(ctx context.Context, arg MarkOutboxRecordRetryableFailureParams) (int64, error)
+	MarkPaymentAttemptFailed(ctx context.Context, arg MarkPaymentAttemptFailedParams) (PaymentAttempt, error)
+	MarkPaymentAttemptProcessing(ctx context.Context, arg MarkPaymentAttemptProcessingParams) (PaymentAttempt, error)
+	MarkPaymentAttemptSucceeded(ctx context.Context, arg MarkPaymentAttemptSucceededParams) (PaymentAttempt, error)
 }
 
 var _ Querier = (*Queries)(nil)

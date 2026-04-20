@@ -32,44 +32,30 @@ func (e *PaymentStatus) Scan(src interface{}) error {
 	default:
 		return fmt.Errorf("unsupported scan type for PaymentStatus: %T", src)
 	}
-
 	return nil
 }
 
 type NullPaymentStatus struct {
 	PaymentStatus PaymentStatus
-	Valid         bool
+	Valid         bool // Valid is true if PaymentStatus is not NULL
 }
 
+// Scan implements the Scanner interface.
 func (ns *NullPaymentStatus) Scan(value interface{}) error {
 	if value == nil {
 		ns.PaymentStatus, ns.Valid = "", false
 		return nil
 	}
-
 	ns.Valid = true
 	return ns.PaymentStatus.Scan(value)
 }
 
+// Value implements the driver Valuer interface.
 func (ns NullPaymentStatus) Value() (driver.Value, error) {
 	if !ns.Valid {
 		return nil, nil
 	}
-
 	return string(ns.PaymentStatus), nil
-}
-
-type PaymentAttempt struct {
-	PaymentAttemptID  uuid.UUID
-	OrderID           uuid.UUID
-	Status            PaymentStatus
-	Amount            int64
-	Currency          string
-	ProviderName      string
-	ProviderReference string
-	IdempotencyKey    string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
 }
 
 type OutboxRecord struct {
@@ -92,4 +78,19 @@ type OutboxRecord struct {
 	MaxAttempts   int32
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+type PaymentAttempt struct {
+	PaymentAttemptID  uuid.UUID
+	OrderID           uuid.UUID
+	Status            PaymentStatus
+	Amount            int64
+	Currency          string
+	ProviderName      string
+	ProviderReference string
+	FailureCode       sql.NullString
+	FailureMessage    sql.NullString
+	IdempotencyKey    string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }

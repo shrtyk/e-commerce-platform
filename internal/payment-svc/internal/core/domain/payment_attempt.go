@@ -25,6 +25,9 @@ type PaymentAttempt struct {
 	ProviderName      string
 	ProviderReference string
 	IdempotencyKey    string
+	FailureCode       string
+	FailureMessage    string
+	ProcessedAt       *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
