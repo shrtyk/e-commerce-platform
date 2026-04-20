@@ -18,6 +18,7 @@ import (
 	adapterpostgres "github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/adapters/outbound/postgres"
 	adapteroutbox "github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/adapters/outbound/postgres/outbox"
 	adapterpostgresrepos "github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/adapters/outbound/postgres/repos"
+	adapterprovider "github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/adapters/outbound/provider"
 	paymentapp "github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/app"
 	"github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/config"
 	"github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/core/service/payment"
@@ -46,9 +47,10 @@ func main() {
 	paymentAttemptRepository := adapterpostgresrepos.NewPaymentAttemptRepository(db)
 	outboxRepository := adapteroutbox.NewRepository(db)
 	outboxEventPublisher := adapterevents.MustCreateOutboxEventPublisher(outboxRepository)
+	stubPaymentProvider := adapterprovider.NewStubProvider()
 	ensureRelaySafeMode(cfg)
 
-	paymentService := payment.NewService(paymentAttemptRepository, outboxEventPublisher, cfg.Service.Name)
+	paymentService := payment.NewService(paymentAttemptRepository, outboxEventPublisher, stubPaymentProvider, cfg.Service.Name)
 	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, db, tracer)
 	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, paymentService, tracer)
 
