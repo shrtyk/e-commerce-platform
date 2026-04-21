@@ -700,6 +700,137 @@ func TestHandleOrderEvent(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("idempotent replay with non-requested status skips provider send", func(t *testing.T) {
+		dr := outboundmocks.NewMockDeliveryRequestRepository(t)
+		da := outboundmocks.NewMockDeliveryAttemptRepository(t)
+		cid := outboundmocks.NewMockConsumerIdempotencyRepository(t)
+
+		sendCalled := false
+		svc := NewNotificationService(dr, da, cid).WithDeliveryProvider(deliveryProviderStub{
+			sendFunc: func(context.Context, outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
+				sendCalled = true
+				return outbound.SendDeliveryResult{}, nil
+			},
+		})
+
+		idempotencyKey := "order.confirmed:" + eventID.String()
+		cid.EXPECT().Exists(testifymock.Anything, eventID, "notification.order.events").Return(true, nil)
+		dr.EXPECT().GetByIdempotencyKey(testifymock.Anything, idempotencyKey).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			Status:            domain.DeliveryStatusSent,
+			IdempotencyKey:    idempotencyKey,
+		}, nil)
+
+		err := svc.HandleOrderEvent(ctx, baseInput)
+
+		require.NoError(t, err)
+		require.False(t, sendCalled)
+		da.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+		dr.AssertNotCalled(t, "MarkSent", testifymock.Anything, testifymock.Anything)
+		dr.AssertNotCalled(t, "MarkFailed", testifymock.Anything, testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	})
+
+	t.Run("idempotent replay with failed status skips provider send", func(t *testing.T) {
+		dr := outboundmocks.NewMockDeliveryRequestRepository(t)
+		da := outboundmocks.NewMockDeliveryAttemptRepository(t)
+		cid := outboundmocks.NewMockConsumerIdempotencyRepository(t)
+
+		sendCalled := false
+		svc := NewNotificationService(dr, da, cid).WithDeliveryProvider(deliveryProviderStub{
+			sendFunc: func(context.Context, outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
+				sendCalled = true
+				return outbound.SendDeliveryResult{}, nil
+			},
+		})
+
+		idempotencyKey := "order.confirmed:" + eventID.String()
+		cid.EXPECT().Exists(testifymock.Anything, eventID, "notification.order.events").Return(true, nil)
+		dr.EXPECT().GetByIdempotencyKey(testifymock.Anything, idempotencyKey).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			Status:            domain.DeliveryStatusFailed,
+			IdempotencyKey:    idempotencyKey,
+		}, nil)
+
+		err := svc.HandleOrderEvent(ctx, baseInput)
+
+		require.NoError(t, err)
+		require.False(t, sendCalled)
+		da.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+		dr.AssertNotCalled(t, "MarkSent", testifymock.Anything, testifymock.Anything)
+		dr.AssertNotCalled(t, "MarkFailed", testifymock.Anything, testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	})
+
+	t.Run("idempotent replay with requested status retries provider send", func(t *testing.T) {
+		dr := outboundmocks.NewMockDeliveryRequestRepository(t)
+		da := outboundmocks.NewMockDeliveryAttemptRepository(t)
+		cid := outboundmocks.NewMockConsumerIdempotencyRepository(t)
+
+		sendCalled := false
+		svc := NewNotificationService(dr, da, cid).WithDeliveryProvider(deliveryProviderStub{
+			sendFunc: func(_ context.Context, input outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
+				sendCalled = true
+				require.Equal(t, deliveryRequestID, input.DeliveryRequestID)
+				require.Equal(t, "in_app", input.Channel)
+				require.Equal(t, "user-1", input.Recipient)
+				require.Equal(t, "order-confirmed", input.TemplateKey)
+				require.Equal(t, "order confirmed", input.Body)
+
+				return outbound.SendDeliveryResult{ProviderName: "provider", ProviderMessageID: "msg-1"}, nil
+			},
+		})
+
+		idempotencyKey := "order.confirmed:" + eventID.String()
+		cid.EXPECT().Exists(testifymock.Anything, eventID, "notification.order.events").Return(true, nil)
+		dr.EXPECT().GetByIdempotencyKey(testifymock.Anything, idempotencyKey).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			CorrelationID:     "corr-order-events",
+			SourceEventName:   "order.confirmed",
+			Channel:           "in_app",
+			Recipient:         "user-1",
+			TemplateKey:       "order-confirmed",
+			Status:            domain.DeliveryStatusRequested,
+			IdempotencyKey:    idempotencyKey,
+		}, nil)
+
+		cid.EXPECT().Create(testifymock.Anything, outbound.CreateConsumerIdempotencyInput{
+			EventID:           eventID,
+			ConsumerGroupName: "notification.order.events.delivery-results",
+			DeliveryRequestID: deliveryRequestID,
+		}).Return(nil)
+		dr.EXPECT().GetByID(testifymock.Anything, deliveryRequestID).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			CorrelationID:     "corr-order-events",
+			SourceEventName:   "order.confirmed",
+			Channel:           "in_app",
+			Recipient:         "user-1",
+			TemplateKey:       "order-confirmed",
+			Status:            domain.DeliveryStatusRequested,
+			IdempotencyKey:    idempotencyKey,
+		}, nil)
+		da.EXPECT().Create(testifymock.Anything, outbound.CreateDeliveryAttemptInput{
+			DeliveryRequestID: deliveryRequestID,
+			AttemptNumber:     1,
+			ProviderName:      "provider",
+			ProviderMessageID: "msg-1",
+			AttemptedAt:       now,
+		}).Return(domain.DeliveryAttempt{DeliveryRequestID: deliveryRequestID, AttemptNumber: 1}, nil)
+		dr.EXPECT().MarkSent(testifymock.Anything, deliveryRequestID).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			CorrelationID:     "corr-order-events",
+			SourceEventName:   "order.confirmed",
+			Channel:           "in_app",
+			Recipient:         "user-1",
+			Status:            domain.DeliveryStatusSent,
+			IdempotencyKey:    idempotencyKey,
+		}, nil)
+
+		err := svc.HandleOrderEvent(ctx, baseInput)
+
+		require.NoError(t, err)
+		require.True(t, sendCalled)
+		dr.AssertNotCalled(t, "MarkFailed", testifymock.Anything, testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	})
+
 	t.Run("request delivery error returns and skips send", func(t *testing.T) {
 		dr := outboundmocks.NewMockDeliveryRequestRepository(t)
 		da := outboundmocks.NewMockDeliveryAttemptRepository(t)
@@ -1010,7 +1141,16 @@ func TestMarkSentPublishesEvent(t *testing.T) {
 		if event.EventName != "notification.sent" {
 			return false
 		}
+		if event.Topic != "notification.events" || event.AggregateID != deliveryRequestID.String() {
+			return false
+		}
 		if event.CorrelationID != "corr-order-confirmed" || event.CausationID != eventID.String() {
+			return false
+		}
+		if event.Producer != "notification-svc" || event.SchemaVersion != "1" {
+			return false
+		}
+		if event.Headers["idempotencyKey"] != "idem-1" {
 			return false
 		}
 		payload, ok := event.Payload.(domain.NotificationSentPayload)
@@ -1100,6 +1240,12 @@ func TestMarkFailedPublishesEvent(t *testing.T) {
 		if event.CorrelationID != "corr-order-cancelled" || event.CausationID != eventID.String() {
 			return false
 		}
+		if event.Producer != "notification-svc" || event.SchemaVersion != "1" {
+			return false
+		}
+		if event.Headers["idempotencyKey"] != "idem-failed-1" {
+			return false
+		}
 		payload, ok := event.Payload.(domain.NotificationFailedPayload)
 		if !ok {
 			return false
@@ -1168,6 +1314,316 @@ func TestRequestDeliveryRollsBackWhenPublishFails(t *testing.T) {
 	require.Equal(t, 1, len(repos.deliveryRequests.byID))
 	require.Equal(t, 1, len(repos.deliveryRequests.byIdempotencyKey))
 	require.Equal(t, 1, len(repos.consumerIdempotencies.byKey))
+}
+
+func TestMarkSentRollsBackWhenPublishFails(t *testing.T) {
+	ctx := context.Background()
+	eventID := uuid.New()
+	deliveryRequestID := uuid.New()
+	now := time.Now().UTC()
+
+	repos := newTxLifecycleRepos(domain.DeliveryRequest{
+		DeliveryRequestID: deliveryRequestID,
+		SourceEventID:     uuid.New(),
+		CorrelationID:     "corr-order-confirmed",
+		SourceEventName:   "order.confirmed",
+		Channel:           "in_app",
+		Recipient:         "user-1",
+		TemplateKey:       "order-confirmed",
+		Status:            domain.DeliveryStatusRequested,
+		IdempotencyKey:    "idem-sent-rollback",
+	})
+	repos.publisher.err = errors.New("publish boom")
+
+	svc := NewNotificationService(repos.deliveryRequests, repos.deliveryAttempts, repos.consumerIdempotencies).
+		WithEventPublisher(repos.publisher, "notification-svc").
+		WithTxProvider(repos.txProvider())
+
+	result, err := svc.MarkSent(ctx, MarkSentInput{
+		EventID:           eventID,
+		ConsumerGroupName: "notification.order.events.delivery-results",
+		DeliveryRequestID: deliveryRequestID,
+		AttemptNumber:     1,
+		ProviderName:      "provider",
+		ProviderMessageID: "msg-1",
+		AttemptedAt:       now,
+	})
+
+	require.ErrorContains(t, err, "publish notification sent event")
+	require.ErrorContains(t, err, "publish boom")
+	require.Equal(t, MarkSentResult{}, result)
+	require.True(t, repos.tx.rolledBack)
+	require.False(t, repos.tx.committed)
+	require.Equal(t, 1, repos.tx.withTxCalls)
+	require.Equal(t, domain.DeliveryStatusRequested, repos.deliveryRequests.byID[deliveryRequestID].Status)
+	require.Empty(t, repos.deliveryAttempts.byRequestID[deliveryRequestID])
+	require.Empty(t, repos.consumerIdempotencies.byKey)
+
+	repos.publisher.err = nil
+
+	secondResult, secondErr := svc.MarkSent(ctx, MarkSentInput{
+		EventID:           eventID,
+		ConsumerGroupName: "notification.order.events.delivery-results",
+		DeliveryRequestID: deliveryRequestID,
+		AttemptNumber:     1,
+		ProviderName:      "provider",
+		ProviderMessageID: "msg-1",
+		AttemptedAt:       now,
+	})
+	require.NoError(t, secondErr)
+	require.False(t, secondResult.IdempotentReplay)
+	require.Equal(t, 2, repos.tx.withTxCalls)
+	require.True(t, repos.tx.committed)
+	require.Equal(t, domain.DeliveryStatusSent, repos.deliveryRequests.byID[deliveryRequestID].Status)
+	require.Len(t, repos.deliveryAttempts.byRequestID[deliveryRequestID], 1)
+	require.Len(t, repos.consumerIdempotencies.byKey, 1)
+}
+
+func TestMarkFailedRollsBackWhenPublishFails(t *testing.T) {
+	ctx := context.Background()
+	eventID := uuid.New()
+	deliveryRequestID := uuid.New()
+	now := time.Now().UTC()
+
+	repos := newTxLifecycleRepos(domain.DeliveryRequest{
+		DeliveryRequestID: deliveryRequestID,
+		SourceEventID:     uuid.New(),
+		CorrelationID:     "corr-order-cancelled",
+		SourceEventName:   "order.cancelled",
+		Channel:           "in_app",
+		Recipient:         "user-1",
+		TemplateKey:       "order-cancelled",
+		Status:            domain.DeliveryStatusRequested,
+		IdempotencyKey:    "idem-failed-rollback",
+	})
+	repos.publisher.err = errors.New("publish boom")
+
+	svc := NewNotificationService(repos.deliveryRequests, repos.deliveryAttempts, repos.consumerIdempotencies).
+		WithEventPublisher(repos.publisher, "notification-svc").
+		WithTxProvider(repos.txProvider())
+
+	result, err := svc.MarkFailed(ctx, MarkFailedInput{
+		EventID:           eventID,
+		ConsumerGroupName: "notification.order.events.delivery-results",
+		DeliveryRequestID: deliveryRequestID,
+		AttemptNumber:     1,
+		ProviderName:      "provider",
+		ProviderMessageID: "msg-1",
+		FailureCode:       "provider-timeout",
+		FailureMessage:    "provider timeout",
+		AttemptedAt:       now,
+	})
+
+	require.ErrorContains(t, err, "publish notification failed event")
+	require.ErrorContains(t, err, "publish boom")
+	require.Equal(t, MarkFailedResult{}, result)
+	require.True(t, repos.tx.rolledBack)
+	require.False(t, repos.tx.committed)
+	require.Equal(t, 1, repos.tx.withTxCalls)
+	require.Equal(t, domain.DeliveryStatusRequested, repos.deliveryRequests.byID[deliveryRequestID].Status)
+	require.Empty(t, repos.deliveryAttempts.byRequestID[deliveryRequestID])
+	require.Empty(t, repos.consumerIdempotencies.byKey)
+
+	repos.publisher.err = nil
+
+	secondResult, secondErr := svc.MarkFailed(ctx, MarkFailedInput{
+		EventID:           eventID,
+		ConsumerGroupName: "notification.order.events.delivery-results",
+		DeliveryRequestID: deliveryRequestID,
+		AttemptNumber:     1,
+		ProviderName:      "provider",
+		ProviderMessageID: "msg-1",
+		FailureCode:       "provider-timeout",
+		FailureMessage:    "provider timeout",
+		AttemptedAt:       now,
+	})
+	require.NoError(t, secondErr)
+	require.False(t, secondResult.IdempotentReplay)
+	require.Equal(t, 2, repos.tx.withTxCalls)
+	require.True(t, repos.tx.committed)
+	require.Equal(t, domain.DeliveryStatusFailed, repos.deliveryRequests.byID[deliveryRequestID].Status)
+	require.Len(t, repos.deliveryAttempts.byRequestID[deliveryRequestID], 1)
+	require.Len(t, repos.consumerIdempotencies.byKey, 1)
+}
+
+type txLifecycleRepos struct {
+	deliveryRequests      *txLifecycleDeliveryRequestRepo
+	deliveryAttempts      *txLifecycleDeliveryAttemptRepo
+	consumerIdempotencies *txAssertionConsumerIdempotencyRepo
+	publisher             *txAssertionPublisher
+	tx                    *txLifecycleProvider
+}
+
+func newTxLifecycleRepos(initial domain.DeliveryRequest) *txLifecycleRepos {
+	deliveryRequests := &txLifecycleDeliveryRequestRepo{
+		byID:             map[uuid.UUID]domain.DeliveryRequest{initial.DeliveryRequestID: initial},
+		byIdempotencyKey: map[string]uuid.UUID{initial.IdempotencyKey: initial.DeliveryRequestID},
+	}
+
+	repos := &txLifecycleRepos{
+		deliveryRequests: deliveryRequests,
+		deliveryAttempts: &txLifecycleDeliveryAttemptRepo{byRequestID: map[uuid.UUID][]domain.DeliveryAttempt{}},
+		consumerIdempotencies: &txAssertionConsumerIdempotencyRepo{
+			byKey: map[string]outbound.CreateConsumerIdempotencyInput{},
+		},
+		publisher: &txAssertionPublisher{},
+	}
+
+	repos.tx = &txLifecycleProvider{repos: repos}
+
+	return repos
+}
+
+func (r *txLifecycleRepos) txProvider() *txLifecycleProvider {
+	return r.tx
+}
+
+func (r *txLifecycleRepos) clone() *txLifecycleRepos {
+	deliveryRequests := &txLifecycleDeliveryRequestRepo{byID: map[uuid.UUID]domain.DeliveryRequest{}, byIdempotencyKey: map[string]uuid.UUID{}}
+	for id, request := range r.deliveryRequests.byID {
+		deliveryRequests.byID[id] = request
+	}
+	for key, id := range r.deliveryRequests.byIdempotencyKey {
+		deliveryRequests.byIdempotencyKey[key] = id
+	}
+
+	deliveryAttempts := &txLifecycleDeliveryAttemptRepo{byRequestID: map[uuid.UUID][]domain.DeliveryAttempt{}}
+	for requestID, attempts := range r.deliveryAttempts.byRequestID {
+		copied := make([]domain.DeliveryAttempt, len(attempts))
+		copy(copied, attempts)
+		deliveryAttempts.byRequestID[requestID] = copied
+	}
+
+	consumerIdempotencies := &txAssertionConsumerIdempotencyRepo{byKey: map[string]outbound.CreateConsumerIdempotencyInput{}}
+	for key, input := range r.consumerIdempotencies.byKey {
+		consumerIdempotencies.byKey[key] = input
+	}
+
+	return &txLifecycleRepos{
+		deliveryRequests:      deliveryRequests,
+		deliveryAttempts:      deliveryAttempts,
+		consumerIdempotencies: consumerIdempotencies,
+		publisher:             r.publisher,
+	}
+}
+
+func (r *txLifecycleRepos) applyFrom(clone *txLifecycleRepos) {
+	r.deliveryRequests = clone.deliveryRequests
+	r.deliveryAttempts = clone.deliveryAttempts
+	r.consumerIdempotencies = clone.consumerIdempotencies
+}
+
+type txLifecycleProvider struct {
+	repos       *txLifecycleRepos
+	committed   bool
+	rolledBack  bool
+	withTxCalls int
+}
+
+func (p *txLifecycleProvider) WithTransaction(ctx context.Context, _ *sql.TxOptions, fn func(commontx.UnitOfWork[NotificationRepos]) error) error {
+	p.withTxCalls++
+	clone := p.repos.clone()
+	err := fn(txUnitOfWorkStub{repos: NotificationRepos{
+		DeliveryRequests:      clone.deliveryRequests,
+		DeliveryAttempts:      clone.deliveryAttempts,
+		ConsumerIdempotencies: clone.consumerIdempotencies,
+		Publisher:             clone.publisher,
+	}})
+	if err != nil {
+		p.rolledBack = true
+		return err
+	}
+
+	p.repos.applyFrom(clone)
+	p.committed = true
+
+	return nil
+}
+
+type txLifecycleDeliveryRequestRepo struct {
+	byID             map[uuid.UUID]domain.DeliveryRequest
+	byIdempotencyKey map[string]uuid.UUID
+}
+
+func (r *txLifecycleDeliveryRequestRepo) CreateRequested(_ context.Context, _ outbound.CreateDeliveryRequestInput) (domain.DeliveryRequest, error) {
+	return domain.DeliveryRequest{}, errors.New("unexpected CreateRequested call")
+}
+
+func (r *txLifecycleDeliveryRequestRepo) GetByID(_ context.Context, deliveryRequestID uuid.UUID) (domain.DeliveryRequest, error) {
+	request, ok := r.byID[deliveryRequestID]
+	if !ok {
+		return domain.DeliveryRequest{}, outbound.ErrDeliveryRequestNotFound
+	}
+
+	return request, nil
+}
+
+func (r *txLifecycleDeliveryRequestRepo) GetByIdempotencyKey(_ context.Context, idempotencyKey string) (domain.DeliveryRequest, error) {
+	id, ok := r.byIdempotencyKey[idempotencyKey]
+	if !ok {
+		return domain.DeliveryRequest{}, outbound.ErrDeliveryRequestNotFound
+	}
+
+	request, ok := r.byID[id]
+	if !ok {
+		return domain.DeliveryRequest{}, outbound.ErrDeliveryRequestNotFound
+	}
+
+	return request, nil
+}
+
+func (r *txLifecycleDeliveryRequestRepo) MarkSent(_ context.Context, deliveryRequestID uuid.UUID) (domain.DeliveryRequest, error) {
+	request, ok := r.byID[deliveryRequestID]
+	if !ok {
+		return domain.DeliveryRequest{}, outbound.ErrDeliveryRequestNotFound
+	}
+
+	request.Status = domain.DeliveryStatusSent
+	r.byID[deliveryRequestID] = request
+
+	return request, nil
+}
+
+func (r *txLifecycleDeliveryRequestRepo) MarkFailed(_ context.Context, deliveryRequestID uuid.UUID, failureCode string, failureMessage string) (domain.DeliveryRequest, error) {
+	request, ok := r.byID[deliveryRequestID]
+	if !ok {
+		return domain.DeliveryRequest{}, outbound.ErrDeliveryRequestNotFound
+	}
+
+	request.Status = domain.DeliveryStatusFailed
+	request.LastErrorCode = failureCode
+	request.LastErrorMessage = failureMessage
+	r.byID[deliveryRequestID] = request
+
+	return request, nil
+}
+
+type txLifecycleDeliveryAttemptRepo struct {
+	byRequestID map[uuid.UUID][]domain.DeliveryAttempt
+}
+
+func (r *txLifecycleDeliveryAttemptRepo) Create(_ context.Context, input outbound.CreateDeliveryAttemptInput) (domain.DeliveryAttempt, error) {
+	attempt := domain.DeliveryAttempt{
+		DeliveryRequestID: input.DeliveryRequestID,
+		AttemptNumber:     input.AttemptNumber,
+		ProviderName:      input.ProviderName,
+		ProviderMessageID: input.ProviderMessageID,
+		FailureCode:       input.FailureCode,
+		FailureMessage:    input.FailureMessage,
+		AttemptedAt:       input.AttemptedAt,
+	}
+
+	r.byRequestID[input.DeliveryRequestID] = append(r.byRequestID[input.DeliveryRequestID], attempt)
+
+	return attempt, nil
+}
+
+func (r *txLifecycleDeliveryAttemptRepo) ListByDeliveryRequestID(_ context.Context, deliveryRequestID uuid.UUID) ([]domain.DeliveryAttempt, error) {
+	attempts := r.byRequestID[deliveryRequestID]
+	result := make([]domain.DeliveryAttempt, len(attempts))
+	copy(result, attempts)
+
+	return result, nil
 }
 
 type txAssertionRepos struct {
