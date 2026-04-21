@@ -292,6 +292,172 @@ func TestRegisterUserTxProviderError(t *testing.T) {
 	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
 }
 
+func TestRegisterAdminCreatesAdmin(t *testing.T) {
+	accessToken := "access-token"
+	adminUUID := uuid.New()
+	pwd := "pwd"
+	pwdHash := "hash"
+	normalizedEmail := "admin@example.com"
+	repo := outboundmocks.NewMockUserRepository(t)
+	sessions := outboundmocks.NewMockSessionRepository(t)
+	hasher := outboundmocks.NewMockPasswordHasher(t)
+	issuer := outboundmocks.NewMockTokenIssuer(t)
+	txProvider := newStubProvider(repo, sessions)
+	auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+	sessionID := uuid.New()
+
+	hasher.EXPECT().Hash(pwd).Return(pwdHash, nil)
+	repo.EXPECT().
+		Create(testifymock.Anything, testifymock.MatchedBy(func(user domain.User) bool {
+			return user.Email == normalizedEmail &&
+				user.PasswordHash == pwdHash &&
+				user.Role == domain.UserRoleAdmin &&
+				user.Status == domain.UserStatusActive
+		})).
+		Return(domain.User{
+			ID:           adminUUID,
+			Email:        normalizedEmail,
+			PasswordHash: pwdHash,
+			Role:         domain.UserRoleAdmin,
+			Status:       domain.UserStatusActive,
+		}, nil)
+	sessions.EXPECT().
+		Create(testifymock.Anything, testifymock.Anything).
+		RunAndReturn(func(_ context.Context, session domain.Session) (domain.Session, error) {
+			require.Equal(t, adminUUID, session.UserID)
+
+			return domain.Session{
+				ID:        sessionID,
+				UserID:    session.UserID,
+				TokenHash: session.TokenHash,
+				ExpiresAt: session.ExpiresAt,
+			}, nil
+		})
+	issuer.EXPECT().IssueToken(testifymock.MatchedBy(func(user domain.User) bool {
+		return user.ID == adminUUID && user.Role == domain.UserRoleAdmin
+	})).Return(accessToken, nil)
+
+	result, err := auth.RegisterAdmin(context.Background(), RegisterUserInput{
+		Email:    "  ADMIN@Example.com  ",
+		Password: pwd,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, adminUUID.String(), result.ID)
+	require.Equal(t, domain.UserRoleAdmin, result.Role)
+	require.Equal(t, accessToken, result.AccessToken)
+	require.True(t, strings.HasPrefix(result.RefreshToken, sessionID.String()+"."))
+}
+
+func TestEnsureBootstrapAdmin(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func(*outboundmocks.MockUserRepository, *outboundmocks.MockPasswordHasher)
+		expectError string
+	}{
+		{
+			name: "create when missing",
+			setup: func(users *outboundmocks.MockUserRepository, hasher *outboundmocks.MockPasswordHasher) {
+				hasher.EXPECT().Hash("super-secret").Return("hashed-password", nil)
+				users.EXPECT().
+					GetByEmail(testifymock.Anything, "admin@example.com").
+					Return(domain.User{}, outbound.ErrUserNotFound)
+				users.EXPECT().
+					Create(testifymock.Anything, testifymock.MatchedBy(func(user domain.User) bool {
+						return user.Email == "admin@example.com" &&
+							user.PasswordHash == "hashed-password" &&
+							user.Role == domain.UserRoleAdmin &&
+							user.Status == domain.UserStatusActive &&
+							user.DisplayName == "Bootstrap Admin"
+					})).
+					Return(domain.User{ID: uuid.New(), Email: "admin@example.com", Role: domain.UserRoleAdmin, Status: domain.UserStatusActive}, nil)
+			},
+		},
+		{
+			name: "no-op when active admin exists",
+			setup: func(users *outboundmocks.MockUserRepository, hasher *outboundmocks.MockPasswordHasher) {
+				users.EXPECT().
+					GetByEmail(testifymock.Anything, "admin@example.com").
+					Return(domain.User{ID: uuid.New(), Email: "admin@example.com", Role: domain.UserRoleAdmin, Status: domain.UserStatusActive}, nil)
+			},
+		},
+		{
+			name: "fail when existing user not admin-compatible",
+			setup: func(users *outboundmocks.MockUserRepository, _ *outboundmocks.MockPasswordHasher) {
+				users.EXPECT().
+					GetByEmail(testifymock.Anything, "admin@example.com").
+					Return(domain.User{ID: uuid.New(), Email: "admin@example.com", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil)
+			},
+			expectError: "bootstrap admin",
+		},
+		{
+			name: "duplicate then existing active admin is treated as success",
+			setup: func(users *outboundmocks.MockUserRepository, hasher *outboundmocks.MockPasswordHasher) {
+				hasher.EXPECT().Hash("super-secret").Return("hashed-password", nil)
+				users.EXPECT().
+					GetByEmail(testifymock.Anything, "admin@example.com").
+					Return(domain.User{}, outbound.ErrUserNotFound).
+					Once()
+				users.EXPECT().
+					Create(testifymock.Anything, testifymock.MatchedBy(func(user domain.User) bool {
+						return user.Email == "admin@example.com" && user.Role == domain.UserRoleAdmin && user.Status == domain.UserStatusActive
+					})).
+					Return(domain.User{}, outbound.ErrDuplicateEmail)
+				users.EXPECT().
+					GetByEmail(testifymock.Anything, "admin@example.com").
+					Return(domain.User{ID: uuid.New(), Email: "admin@example.com", Role: domain.UserRoleAdmin, Status: domain.UserStatusActive}, nil).
+					Once()
+			},
+		},
+		{
+			name: "duplicate then existing incompatible user fails",
+			setup: func(users *outboundmocks.MockUserRepository, hasher *outboundmocks.MockPasswordHasher) {
+				hasher.EXPECT().Hash("super-secret").Return("hashed-password", nil)
+				users.EXPECT().
+					GetByEmail(testifymock.Anything, "admin@example.com").
+					Return(domain.User{}, outbound.ErrUserNotFound).
+					Once()
+				users.EXPECT().
+					Create(testifymock.Anything, testifymock.MatchedBy(func(user domain.User) bool {
+						return user.Email == "admin@example.com" && user.Role == domain.UserRoleAdmin && user.Status == domain.UserStatusActive
+					})).
+					Return(domain.User{}, outbound.ErrDuplicateEmail)
+				users.EXPECT().
+					GetByEmail(testifymock.Anything, "admin@example.com").
+					Return(domain.User{ID: uuid.New(), Email: "admin@example.com", Role: domain.UserRoleUser, Status: domain.UserStatusActive}, nil).
+					Once()
+			},
+			expectError: "bootstrap admin",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := outboundmocks.NewMockUserRepository(t)
+			sessions := outboundmocks.NewMockSessionRepository(t)
+			hasher := outboundmocks.NewMockPasswordHasher(t)
+			issuer := outboundmocks.NewMockTokenIssuer(t)
+			txProvider := newStubProvider(repo, sessions)
+			auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+			tt.setup(repo, hasher)
+
+			err := auth.EnsureBootstrapAdmin(context.Background(), BootstrapAdminInput{
+				Email:       "admin@example.com",
+				Password:    "super-secret",
+				DisplayName: stringPtr("Bootstrap Admin"),
+			})
+
+			if tt.expectError == "" {
+				require.NoError(t, err)
+				return
+			}
+
+			require.ErrorContains(t, err, tt.expectError)
+		})
+	}
+}
+
 func TestLoginUserReturnsUser(t *testing.T) {
 	accessToken := "access-token"
 	userUUID := uuid.New()

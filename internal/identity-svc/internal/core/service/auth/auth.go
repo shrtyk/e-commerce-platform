@@ -60,9 +60,30 @@ type RefreshTokenInput struct {
 
 type RefreshTokenResult LoginUserResult
 
+type BootstrapAdminInput struct {
+	Email       string
+	Password    string
+	DisplayName *string
+}
+
 func (s *AuthService) RegisterUser(
 	ctx context.Context,
 	input RegisterUserInput,
+) (RegisterUserResult, error) {
+	return s.registerUserWithRole(ctx, input, domain.UserRoleUser)
+}
+
+func (s *AuthService) RegisterAdmin(
+	ctx context.Context,
+	input RegisterUserInput,
+) (RegisterUserResult, error) {
+	return s.registerUserWithRole(ctx, input, domain.UserRoleAdmin)
+}
+
+func (s *AuthService) registerUserWithRole(
+	ctx context.Context,
+	input RegisterUserInput,
+	role domain.UserRole,
 ) (RegisterUserResult, error) {
 	email := normalizeEmail(input.Email)
 	if email == "" || input.Password == "" {
@@ -78,7 +99,7 @@ func (s *AuthService) RegisterUser(
 		Email:        email,
 		PasswordHash: passwordHash,
 		DisplayName:  normalizeDisplayName(input.DisplayName),
-		Role:         domain.UserRoleUser,
+		Role:         role,
 		Status:       domain.UserStatusActive,
 	}
 
@@ -114,6 +135,67 @@ func (s *AuthService) RegisterUser(
 	result.RefreshToken = refreshToken
 
 	return result, nil
+}
+
+func (s *AuthService) EnsureBootstrapAdmin(ctx context.Context, input BootstrapAdminInput) error {
+	email := normalizeEmail(input.Email)
+	if email == "" || input.Password == "" {
+		return fmt.Errorf("bootstrap admin: %w", ErrInvalidRegisterInput)
+	}
+
+	existingUser, err := s.repos.Users.GetByEmail(ctx, email)
+	if err == nil {
+		if existingUser.Role == domain.UserRoleAdmin && existingUser.Status == domain.UserStatusActive {
+			return nil
+		}
+
+		return fmt.Errorf(
+			"bootstrap admin %q exists with incompatible role/status (role=%q status=%q)",
+			email,
+			existingUser.Role,
+			existingUser.Status,
+		)
+	}
+
+	if !errors.Is(err, outbound.ErrUserNotFound) {
+		return fmt.Errorf("lookup bootstrap admin: %w", err)
+	}
+
+	passwordHash, err := s.hasher.Hash(input.Password)
+	if err != nil {
+		return fmt.Errorf("hash bootstrap admin password: %w", err)
+	}
+
+	_, err = s.repos.Users.Create(ctx, domain.User{
+		Email:        email,
+		PasswordHash: passwordHash,
+		DisplayName:  normalizeDisplayName(input.DisplayName),
+		Role:         domain.UserRoleAdmin,
+		Status:       domain.UserStatusActive,
+	})
+	if err == nil {
+		return nil
+	}
+
+	if !errors.Is(err, outbound.ErrDuplicateEmail) {
+		return fmt.Errorf("create bootstrap admin: %w", err)
+	}
+
+	existingUser, err = s.repos.Users.GetByEmail(ctx, email)
+	if err != nil {
+		return fmt.Errorf("lookup bootstrap admin after duplicate email: %w", err)
+	}
+
+	if existingUser.Role == domain.UserRoleAdmin && existingUser.Status == domain.UserStatusActive {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"bootstrap admin %q exists with incompatible role/status (role=%q status=%q)",
+		email,
+		existingUser.Role,
+		existingUser.Status,
+	)
 }
 
 func (s *AuthService) LoginUser(

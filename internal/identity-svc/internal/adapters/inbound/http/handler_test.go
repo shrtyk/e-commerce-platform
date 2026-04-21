@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/shrtyk/e-commerce-platform/internal/common/tx"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/inbound/http/dto"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
@@ -97,6 +98,93 @@ func TestRegisterUser(t *testing.T) {
 			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, nil, noop.NewTracerProvider().Tracer("test-service"))
 			req := httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
+			res := httptest.NewRecorder()
+
+			h.ServeHTTP(res, req)
+
+			require.Equal(t, tt.statusCode, res.Code)
+			tt.assertBody(t, res.Body.String())
+		})
+	}
+}
+
+func TestRegisterAdmin(t *testing.T) {
+	tests := []struct {
+		name          string
+		authHeader    string
+		tokenVerifier *stubTokenVerifier
+		setup         func(*authFixture)
+		statusCode    int
+		assertBody    func(t *testing.T, body string)
+	}{
+		{
+			name:       "unauthorized without token",
+			statusCode: http.StatusUnauthorized,
+			assertBody: func(t *testing.T, body string) {
+				var response dto.ErrorResponse
+				require.NoError(t, json.Unmarshal([]byte(body), &response))
+				require.Equal(t, "unauthorized", response.Code)
+			},
+		},
+		{
+			name:       "forbidden for non-admin",
+			authHeader: "Bearer user-token",
+			tokenVerifier: &stubTokenVerifier{
+				claims: transport.Claims{UserID: uuid.New(), Role: string(domain.UserRoleUser), Status: string(domain.UserStatusActive)},
+			},
+			statusCode: http.StatusForbidden,
+			assertBody: func(t *testing.T, body string) {
+				var response dto.ErrorResponse
+				require.NoError(t, json.Unmarshal([]byte(body), &response))
+				require.Equal(t, "forbidden", response.Code)
+			},
+		},
+		{
+			name:       "success for admin",
+			authHeader: "Bearer admin-token",
+			tokenVerifier: &stubTokenVerifier{
+				claims: transport.Claims{UserID: uuid.New(), Role: string(domain.UserRoleAdmin), Status: string(domain.UserStatusActive)},
+			},
+			setup: func(f *authFixture) {
+				adminID := uuid.New()
+				sessionID := uuid.New()
+
+				f.hasher.EXPECT().Hash("super-secret").Return("hashed-password", nil)
+				f.users.EXPECT().
+					Create(testifymock.Anything, testifymock.MatchedBy(func(user domain.User) bool {
+						return user.Role == domain.UserRoleAdmin
+					})).
+					Return(domain.User{ID: adminID, Email: "admin@example.com", Status: domain.UserStatusActive, Role: domain.UserRoleAdmin}, nil)
+				f.sessions.EXPECT().
+					Create(testifymock.Anything, testifymock.Anything).
+					RunAndReturn(func(_ context.Context, session domain.Session) (domain.Session, error) {
+						return domain.Session{ID: sessionID, UserID: session.UserID, TokenHash: session.TokenHash, ExpiresAt: session.ExpiresAt}, nil
+					})
+				f.tokens.EXPECT().IssueToken(testifymock.Anything).Return("access-token", nil)
+			},
+			statusCode: http.StatusCreated,
+			assertBody: func(t *testing.T, body string) {
+				var response dto.AuthTokensResponse
+				require.NoError(t, json.Unmarshal([]byte(body), &response))
+				require.Equal(t, "access-token", response.AccessToken)
+				require.NotEmpty(t, response.RefreshToken)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newAuthFixture(t)
+			if tt.setup != nil {
+				tt.setup(fixture)
+			}
+
+			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, tt.tokenVerifier, noop.NewTracerProvider().Tracer("test-service"))
+			req := httptest.NewRequest(http.MethodPost, "/v1/auth/register-admin", strings.NewReader(`{"email":"admin@example.com","password":"super-secret"}`))
+			req.Header.Set("Content-Type", "application/json")
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
 			res := httptest.NewRecorder()
 
 			h.ServeHTTP(res, req)
@@ -325,6 +413,19 @@ func (p testTxProvider) WithTransaction(
 
 type testUnitOfWork struct {
 	repos auth.IdentityRepos
+}
+
+type stubTokenVerifier struct {
+	claims transport.Claims
+	err    error
+}
+
+func (s *stubTokenVerifier) Verify(_ string) (transport.Claims, error) {
+	if s.err != nil {
+		return transport.Claims{}, s.err
+	}
+
+	return s.claims, nil
 }
 
 func (u testUnitOfWork) Repos() auth.IdentityRepos {

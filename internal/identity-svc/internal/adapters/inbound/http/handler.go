@@ -53,6 +53,30 @@ func (h *IdentityHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *IdentityHandler) RegisterAdmin(w http.ResponseWriter, r *http.Request) {
+	var request dto.RegisterRequest
+	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	result, err := h.authService.RegisterAdmin(r.Context(), auth.RegisterUserInput{
+		Email:       string(request.Email),
+		Password:    request.Password,
+		DisplayName: request.DisplayName,
+	})
+	if err != nil {
+		h.writeError(w, r, mapAuthError(err))
+		return
+	}
+
+	render.Status(r, http.StatusCreated)
+	render.JSON(w, r, dto.AuthTokensResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+	})
+}
+
 func (h *IdentityHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 	var request dto.LoginRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {

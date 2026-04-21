@@ -6,6 +6,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/adapters/outbound/password/bcrypt"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 
@@ -118,6 +120,9 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 
 	stack.HTTPHandler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusUnauthorized, response.Code)
+	var unauthorized dto.ErrorResponse
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&unauthorized))
+	require.Equal(t, "unauthorized", unauthorized.Code)
 }
 
 func TestRegisterRejectsDuplicateEmail(t *testing.T) {
@@ -142,6 +147,88 @@ func TestRegisterRejectsDuplicateEmail(t *testing.T) {
 
 	stack.HTTPHandler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusConflict, response.Code)
+}
+
+func TestRegisterAdminEndpointAuth(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newAuthStack(t)
+
+	body, err := json.Marshal(dto.RegisterRequest{
+		Email:    "admin-new@example.com",
+		Password: testhelper.TestPassword,
+	})
+	require.NoError(t, err)
+
+	unauthorizedCases := []struct {
+		name          string
+		authorization string
+	}{
+		{name: "missing token"},
+		{name: "invalid token", authorization: "Bearer invalid-token"},
+	}
+
+	for _, tc := range unauthorizedCases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1/auth/register-admin", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			if tc.authorization != "" {
+				request.Header.Set("Authorization", tc.authorization)
+			}
+			response := httptest.NewRecorder()
+
+			stack.HTTPHandler.ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusUnauthorized, response.Code)
+			var unauthorized dto.ErrorResponse
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&unauthorized))
+			require.Equal(t, "unauthorized", unauthorized.Code)
+			require.Equal(t, "unauthorized", unauthorized.Message)
+		})
+	}
+
+	userTokens := registerHTTP(t, stack.HTTPHandler, registerHTTPInput{
+		Email:    "regular@example.com",
+		Password: testhelper.TestPassword,
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/auth/register-admin", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+userTokens.AccessToken)
+	response := httptest.NewRecorder()
+
+	stack.HTTPHandler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusForbidden, response.Code)
+	var forbidden dto.ErrorResponse
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&forbidden))
+	require.Equal(t, "forbidden", forbidden.Code)
+}
+
+func TestRegisterAdminCreatesAdminUser(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newAuthStack(t)
+
+	adminAccessToken := createAdminAccessToken(t, harness.DB, stack.HTTPHandler, "bootstrap-admin@example.com")
+
+	body, err := json.Marshal(dto.RegisterRequest{
+		Email:    "new-admin@example.com",
+		Password: testhelper.TestPassword,
+	})
+	require.NoError(t, err)
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/auth/register-admin", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+adminAccessToken)
+	response := httptest.NewRecorder()
+
+	stack.HTTPHandler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusCreated, response.Code)
+
+	var roleCode string
+	err = harness.DB.QueryRow("SELECT role_code FROM users WHERE email = $1", "new-admin@example.com").Scan(&roleCode)
+	require.NoError(t, err)
+	require.Equal(t, "admin", roleCode)
 }
 
 type registerHTTPInput struct {
@@ -235,6 +322,24 @@ func parseSessionID(t *testing.T, token string) uuid.UUID {
 
 func strPtr(value string) *string {
 	return &value
+}
+
+func createAdminAccessToken(t *testing.T, db *sql.DB, handler http.Handler, email string) string {
+	t.Helper()
+
+	hasher := bcrypt.NewHasher(0)
+	hash, err := hasher.Hash(testhelper.TestPassword)
+	require.NoError(t, err)
+
+	_, err = db.Exec(
+		`INSERT INTO users (email, password_hash, role_code, status) VALUES ($1, $2, 'admin', 'active')`,
+		email,
+		hash,
+	)
+	require.NoError(t, err)
+
+	tokens := loginHTTP(t, handler, email, testhelper.TestPassword)
+	return tokens.AccessToken
 }
 
 func grpcAuthContext(t *testing.T, accessToken string) context.Context {

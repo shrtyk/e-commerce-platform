@@ -5,6 +5,6 @@ generate:
   models: true
   chi-server: true
 output-options:
+  skip-prune: true
   include-tags:
     - Auth
-    - Profile
