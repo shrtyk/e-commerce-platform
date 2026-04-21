@@ -68,6 +68,20 @@ func main() {
 		jwt.NewTokenIssuer(cfg.Auth.AccessTokenIssuer, cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenTTL),
 		cfg.Auth.SessionTTL,
 	)
+	if cfg.Bootstrap.Enabled {
+		var displayName *string
+		if cfg.Bootstrap.DisplayName != "" {
+			displayName = &cfg.Bootstrap.DisplayName
+		}
+
+		if err := authService.EnsureBootstrapAdmin(ctx, auth.BootstrapAdminInput{
+			Email:       cfg.Bootstrap.Email,
+			Password:    cfg.Bootstrap.Password,
+			DisplayName: displayName,
+		}); err != nil {
+			panic(fmt.Errorf("bootstrap admin: %w", err))
+		}
+	}
 	tokenVerifier := jwt.NewTokenVerifier(cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenIssuer)
 
 	handler := adapterhttp.NewRouter(
