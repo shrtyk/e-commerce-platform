@@ -28,7 +28,7 @@ const (
 	defaultDeliveryResultsGroupSuffix = ".delivery-results"
 	defaultProviderFailureCode        = "provider_error"
 	defaultProviderFailureMessage     = "delivery provider failed"
-	defaultProviderFailureMessageID   = "provider-error"
+	defaultProviderMessageID          = "unknown-provider-message-id"
 )
 
 type RequestDeliveryInput struct {
@@ -134,10 +134,16 @@ func (s *NotificationService) HandleOrderEvent(ctx context.Context, input Handle
 		return fmt.Errorf("send delivery: %w", sendErr)
 	}
 
-	if strings.TrimSpace(sendResult.FailureCode) != "" {
+	failureCode := strings.TrimSpace(sendResult.FailureCode)
+	failureMessage := strings.TrimSpace(sendResult.FailureMessage)
+	providerMessageID := strings.TrimSpace(sendResult.ProviderMessageID)
+
+	hasFailureDetails := failureCode != "" || failureMessage != ""
+
+	if hasFailureDetails {
 		providerMessageID := strings.TrimSpace(sendResult.ProviderMessageID)
 		if providerMessageID == "" {
-			providerMessageID = defaultProviderFailureMessageID
+			providerMessageID = defaultProviderMessageID
 		}
 
 		_, markErr := s.MarkFailed(ctx, MarkFailedInput{
@@ -147,8 +153,8 @@ func (s *NotificationService) HandleOrderEvent(ctx context.Context, input Handle
 			AttemptNumber:     1,
 			ProviderName:      nonEmpty(strings.TrimSpace(sendResult.ProviderName), "delivery-provider"),
 			ProviderMessageID: providerMessageID,
-			FailureCode:       nonEmpty(strings.TrimSpace(sendResult.FailureCode), defaultProviderFailureCode),
-			FailureMessage:    nonEmpty(strings.TrimSpace(sendResult.FailureMessage), defaultProviderFailureMessage),
+			FailureCode:       nonEmpty(failureCode, defaultProviderFailureCode),
+			FailureMessage:    nonEmpty(failureMessage, defaultProviderFailureMessage),
 			AttemptedAt:       input.AttemptedAt,
 		})
 		if markErr != nil {
@@ -164,7 +170,7 @@ func (s *NotificationService) HandleOrderEvent(ctx context.Context, input Handle
 		DeliveryRequestID: requestResult.DeliveryRequest.DeliveryRequestID,
 		AttemptNumber:     1,
 		ProviderName:      nonEmpty(strings.TrimSpace(sendResult.ProviderName), "unknown-provider"),
-		ProviderMessageID: nonEmpty(strings.TrimSpace(sendResult.ProviderMessageID), defaultProviderFailureMessageID),
+		ProviderMessageID: nonEmpty(providerMessageID, defaultProviderMessageID),
 		AttemptedAt:       input.AttemptedAt,
 	})
 	if err != nil {
