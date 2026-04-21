@@ -43,18 +43,20 @@ func (r *DeliveryRequestRepository) CreateRequested(
 	ctx context.Context,
 	input outbound.CreateDeliveryRequestInput,
 ) (domain.DeliveryRequest, error) {
+	correlationID := strings.TrimSpace(input.CorrelationID)
 	sourceEventName := strings.TrimSpace(input.SourceEventName)
 	channel := strings.TrimSpace(input.Channel)
 	recipient := strings.TrimSpace(input.Recipient)
 	templateKey := strings.TrimSpace(input.TemplateKey)
 	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
 
-	if input.SourceEventID == uuid.Nil || sourceEventName == "" || channel == "" || recipient == "" || templateKey == "" || idempotencyKey == "" {
+	if input.SourceEventID == uuid.Nil || correlationID == "" || sourceEventName == "" || channel == "" || recipient == "" || templateKey == "" || idempotencyKey == "" {
 		return domain.DeliveryRequest{}, outbound.ErrInvalidDeliveryRequestArg
 	}
 
 	deliveryRequest, err := r.queries.CreateRequestedDeliveryRequest(ctx, sqlc.CreateRequestedDeliveryRequestParams{
 		SourceEventID:   input.SourceEventID,
+		CorrelationID:   correlationID,
 		SourceEventName: sourceEventName,
 		Channel:         channel,
 		Recipient:       recipient,
@@ -143,6 +145,7 @@ func toDomainDeliveryRequest(deliveryRequest sqlc.DeliveryRequest) domain.Delive
 	return domain.DeliveryRequest{
 		DeliveryRequestID: deliveryRequest.DeliveryRequestID,
 		SourceEventID:     deliveryRequest.SourceEventID,
+		CorrelationID:     deliveryRequest.CorrelationID,
 		SourceEventName:   deliveryRequest.SourceEventName,
 		Channel:           deliveryRequest.Channel,
 		Recipient:         deliveryRequest.Recipient,

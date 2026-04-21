@@ -27,6 +27,7 @@ func TestDeliveryRequestRepositoryCreateRequested(t *testing.T) {
 		repo := NewDeliveryRequestRepositoryFromQuerier(stubDeliveryRequestQuerier{
 			createRequestedDeliveryRequestFunc: func(_ context.Context, arg sqlc.CreateRequestedDeliveryRequestParams) (sqlc.DeliveryRequest, error) {
 				require.Equal(t, sourceEventID, arg.SourceEventID)
+				require.Equal(t, "corr-order-confirmed", arg.CorrelationID)
 				require.Equal(t, "order.confirmed", arg.SourceEventName)
 				require.Equal(t, "email", arg.Channel)
 				require.Equal(t, "user@example.com", arg.Recipient)
@@ -37,6 +38,7 @@ func TestDeliveryRequestRepositoryCreateRequested(t *testing.T) {
 				return sqlc.DeliveryRequest{
 					DeliveryRequestID: deliveryRequestID,
 					SourceEventID:     sourceEventID,
+					CorrelationID:     "corr-order-confirmed",
 					SourceEventName:   "order.confirmed",
 					Channel:           "email",
 					Recipient:         "user@example.com",
@@ -51,6 +53,7 @@ func TestDeliveryRequestRepositoryCreateRequested(t *testing.T) {
 
 		result, err := repo.CreateRequested(ctx, outbound.CreateDeliveryRequestInput{
 			SourceEventID:   sourceEventID,
+			CorrelationID:   "corr-order-confirmed",
 			SourceEventName: "order.confirmed",
 			Channel:         "email",
 			Recipient:       "user@example.com",
@@ -62,6 +65,7 @@ func TestDeliveryRequestRepositoryCreateRequested(t *testing.T) {
 		require.Equal(t, domain.DeliveryRequest{
 			DeliveryRequestID: deliveryRequestID,
 			SourceEventID:     sourceEventID,
+			CorrelationID:     "corr-order-confirmed",
 			SourceEventName:   "order.confirmed",
 			Channel:           "email",
 			Recipient:         "user@example.com",
@@ -90,6 +94,7 @@ func TestDeliveryRequestRepositoryCreateRequested(t *testing.T) {
 
 		_, err := repo.CreateRequested(ctx, outbound.CreateDeliveryRequestInput{
 			SourceEventID:   sourceEventID,
+			CorrelationID:   "corr-order-confirmed",
 			SourceEventName: "order.confirmed",
 			Channel:         "email",
 			Recipient:       "user@example.com",
@@ -134,6 +139,7 @@ func TestDeliveryRequestRepositoryGetByIdempotencyKey(t *testing.T) {
 				return sqlc.DeliveryRequest{
 					DeliveryRequestID: deliveryRequestID,
 					SourceEventID:     sourceEventID,
+					CorrelationID:     "corr-order-confirmed",
 					SourceEventName:   "order.confirmed",
 					Channel:           "email",
 					Recipient:         "user@example.com",
@@ -152,6 +158,7 @@ func TestDeliveryRequestRepositoryGetByIdempotencyKey(t *testing.T) {
 		require.Equal(t, domain.DeliveryRequest{
 			DeliveryRequestID: deliveryRequestID,
 			SourceEventID:     sourceEventID,
+			CorrelationID:     "corr-order-confirmed",
 			SourceEventName:   "order.confirmed",
 			Channel:           "email",
 			Recipient:         "user@example.com",
@@ -213,6 +220,7 @@ func TestDeliveryRequestRepositoryMarkSent(t *testing.T) {
 				return sqlc.DeliveryRequest{
 					DeliveryRequestID: deliveryRequestID,
 					SourceEventID:     sourceEventID,
+					CorrelationID:     "corr-order-confirmed",
 					SourceEventName:   "order.confirmed",
 					Channel:           "email",
 					Recipient:         "user@example.com",
@@ -231,6 +239,7 @@ func TestDeliveryRequestRepositoryMarkSent(t *testing.T) {
 		require.Equal(t, domain.DeliveryRequest{
 			DeliveryRequestID: deliveryRequestID,
 			SourceEventID:     sourceEventID,
+			CorrelationID:     "corr-order-confirmed",
 			SourceEventName:   "order.confirmed",
 			Channel:           "email",
 			Recipient:         "user@example.com",
@@ -275,20 +284,21 @@ func TestDeliveryRequestRepositoryMarkFailed(t *testing.T) {
 	sourceEventID := uuid.New()
 	deliveryRequestID := uuid.New()
 
-	t.Run("marks request failed", func(t *testing.T) {
-		repo := NewDeliveryRequestRepositoryFromQuerier(stubDeliveryRequestQuerier{
-			markDeliveryRequestFailedFunc: func(_ context.Context, arg sqlc.MarkDeliveryRequestFailedParams) (sqlc.DeliveryRequest, error) {
+		t.Run("marks request failed", func(t *testing.T) {
+			repo := NewDeliveryRequestRepositoryFromQuerier(stubDeliveryRequestQuerier{
+				markDeliveryRequestFailedFunc: func(_ context.Context, arg sqlc.MarkDeliveryRequestFailedParams) (sqlc.DeliveryRequest, error) {
 				require.Equal(t, sqlc.DeliveryStatusFailed, arg.Status)
 				require.Equal(t, deliveryRequestID, arg.DeliveryRequestID)
 				require.Equal(t, sql.NullString{String: "timeout", Valid: true}, arg.LastErrorCode)
 				require.Equal(t, sql.NullString{String: "provider timeout", Valid: true}, arg.LastErrorMessage)
 
-				return sqlc.DeliveryRequest{
-					DeliveryRequestID: deliveryRequestID,
-					SourceEventID:     sourceEventID,
-					SourceEventName:   "order.confirmed",
-					Channel:           "email",
-					Recipient:         "user@example.com",
+					return sqlc.DeliveryRequest{
+						DeliveryRequestID: deliveryRequestID,
+						SourceEventID:     sourceEventID,
+						CorrelationID:     "corr-order-confirmed",
+						SourceEventName:   "order.confirmed",
+						Channel:           "email",
+						Recipient:         "user@example.com",
 					TemplateKey:       "order-confirmed",
 					Status:            sqlc.DeliveryStatusFailed,
 					IdempotencyKey:    "idem-1",
@@ -306,6 +316,7 @@ func TestDeliveryRequestRepositoryMarkFailed(t *testing.T) {
 		require.Equal(t, domain.DeliveryRequest{
 			DeliveryRequestID: deliveryRequestID,
 			SourceEventID:     sourceEventID,
+			CorrelationID:     "corr-order-confirmed",
 			SourceEventName:   "order.confirmed",
 			Channel:           "email",
 			Recipient:         "user@example.com",

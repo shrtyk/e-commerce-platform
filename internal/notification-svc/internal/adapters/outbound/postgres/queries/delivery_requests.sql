@@ -2,6 +2,7 @@
 INSERT INTO
   delivery_requests (
     source_event_id,
+    correlation_id,
     source_event_name,
     channel,
     recipient,
@@ -12,6 +13,7 @@ INSERT INTO
 VALUES
   (
     sqlc.arg (source_event_id),
+    sqlc.arg (correlation_id),
     sqlc.arg (source_event_name),
     sqlc.arg (channel),
     sqlc.arg (recipient),

@@ -17,6 +17,7 @@ var (
 
 type CreateDeliveryRequestInput struct {
 	SourceEventID   uuid.UUID
+	CorrelationID   string
 	SourceEventName string
 	Channel         string
 	Recipient       string

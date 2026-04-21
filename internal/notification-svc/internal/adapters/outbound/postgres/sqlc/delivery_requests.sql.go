@@ -16,6 +16,7 @@ const createRequestedDeliveryRequest = `-- name: CreateRequestedDeliveryRequest 
 INSERT INTO
   delivery_requests (
     source_event_id,
+    correlation_id,
     source_event_name,
     channel,
     recipient,
@@ -31,14 +32,16 @@ VALUES
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
   )
 RETURNING
-  delivery_request_id, source_event_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
+  delivery_request_id, source_event_id, correlation_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
 `
 
 type CreateRequestedDeliveryRequestParams struct {
 	SourceEventID   uuid.UUID
+	CorrelationID   string
 	SourceEventName string
 	Channel         string
 	Recipient       string
@@ -50,6 +53,7 @@ type CreateRequestedDeliveryRequestParams struct {
 func (q *Queries) CreateRequestedDeliveryRequest(ctx context.Context, arg CreateRequestedDeliveryRequestParams) (DeliveryRequest, error) {
 	row := q.db.QueryRowContext(ctx, createRequestedDeliveryRequest,
 		arg.SourceEventID,
+		arg.CorrelationID,
 		arg.SourceEventName,
 		arg.Channel,
 		arg.Recipient,
@@ -61,6 +65,7 @@ func (q *Queries) CreateRequestedDeliveryRequest(ctx context.Context, arg Create
 	err := row.Scan(
 		&i.DeliveryRequestID,
 		&i.SourceEventID,
+		&i.CorrelationID,
 		&i.SourceEventName,
 		&i.Channel,
 		&i.Recipient,
@@ -77,7 +82,7 @@ func (q *Queries) CreateRequestedDeliveryRequest(ctx context.Context, arg Create
 
 const getDeliveryRequestByID = `-- name: GetDeliveryRequestByID :one
 SELECT
-  delivery_request_id, source_event_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
+  delivery_request_id, source_event_id, correlation_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
 FROM
   delivery_requests
 WHERE
@@ -92,6 +97,7 @@ func (q *Queries) GetDeliveryRequestByID(ctx context.Context, deliveryRequestID 
 	err := row.Scan(
 		&i.DeliveryRequestID,
 		&i.SourceEventID,
+		&i.CorrelationID,
 		&i.SourceEventName,
 		&i.Channel,
 		&i.Recipient,
@@ -108,7 +114,7 @@ func (q *Queries) GetDeliveryRequestByID(ctx context.Context, deliveryRequestID 
 
 const getDeliveryRequestByIdempotencyKey = `-- name: GetDeliveryRequestByIdempotencyKey :one
 SELECT
-  delivery_request_id, source_event_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
+  delivery_request_id, source_event_id, correlation_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
 FROM
   delivery_requests
 WHERE
@@ -123,6 +129,7 @@ func (q *Queries) GetDeliveryRequestByIdempotencyKey(ctx context.Context, idempo
 	err := row.Scan(
 		&i.DeliveryRequestID,
 		&i.SourceEventID,
+		&i.CorrelationID,
 		&i.SourceEventName,
 		&i.Channel,
 		&i.Recipient,
@@ -147,7 +154,7 @@ SET
 WHERE
   delivery_request_id = $4
 RETURNING
-  delivery_request_id, source_event_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
+  delivery_request_id, source_event_id, correlation_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
 `
 
 type MarkDeliveryRequestFailedParams struct {
@@ -168,6 +175,7 @@ func (q *Queries) MarkDeliveryRequestFailed(ctx context.Context, arg MarkDeliver
 	err := row.Scan(
 		&i.DeliveryRequestID,
 		&i.SourceEventID,
+		&i.CorrelationID,
 		&i.SourceEventName,
 		&i.Channel,
 		&i.Recipient,
@@ -192,7 +200,7 @@ SET
 WHERE
   delivery_request_id = $2
 RETURNING
-  delivery_request_id, source_event_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
+  delivery_request_id, source_event_id, correlation_id, source_event_name, channel, recipient, template_key, status, idempotency_key, last_error_code, last_error_message, created_at, updated_at
 `
 
 type MarkDeliveryRequestSentParams struct {
@@ -206,6 +214,7 @@ func (q *Queries) MarkDeliveryRequestSent(ctx context.Context, arg MarkDeliveryR
 	err := row.Scan(
 		&i.DeliveryRequestID,
 		&i.SourceEventID,
+		&i.CorrelationID,
 		&i.SourceEventName,
 		&i.Channel,
 		&i.Recipient,

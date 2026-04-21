@@ -7,6 +7,7 @@ package sqlc
 import (
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -78,6 +79,7 @@ type DeliveryAttempt struct {
 type DeliveryRequest struct {
 	DeliveryRequestID uuid.UUID
 	SourceEventID     uuid.UUID
+	CorrelationID     string
 	SourceEventName   string
 	Channel           string
 	Recipient         string
@@ -88,4 +90,26 @@ type DeliveryRequest struct {
 	LastErrorMessage  sql.NullString
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+type OutboxRecord struct {
+	ID            uuid.UUID
+	EventID       uuid.UUID
+	EventName     string
+	AggregateType string
+	AggregateID   string
+	Topic         string
+	Key           []byte
+	Payload       []byte
+	Headers       json.RawMessage
+	Attempt       int32
+	Status        interface{}
+	LastError     sql.NullString
+	NextAttemptAt time.Time
+	LockedAt      sql.NullTime
+	LockedBy      sql.NullString
+	PublishedAt   sql.NullTime
+	MaxAttempts   int32
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }

@@ -5,6 +5,7 @@ CREATE TYPE delivery_status AS ENUM('requested', 'sent', 'failed');
 CREATE TABLE IF NOT EXISTS delivery_requests (
   delivery_request_id UUID PRIMARY KEY DEFAULT uuidv7 (),
   source_event_id UUID NOT NULL,
+  correlation_id TEXT NOT NULL,
   source_event_name TEXT NOT NULL,
   channel TEXT NOT NULL,
   recipient TEXT NOT NULL,
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT uq_delivery_requests_idempotency_key UNIQUE (idempotency_key),
   CHECK (BTRIM(source_event_name) <> ''),
+  CHECK (BTRIM(correlation_id) <> ''),
   CHECK (BTRIM(channel) <> ''),
   CHECK (BTRIM(recipient) <> ''),
   CHECK (BTRIM(template_key) <> ''),

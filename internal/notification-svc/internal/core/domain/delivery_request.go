@@ -18,6 +18,7 @@ const (
 type DeliveryRequest struct {
 	DeliveryRequestID uuid.UUID
 	SourceEventID     uuid.UUID
+	CorrelationID     string
 	SourceEventName   string
 	Channel           string
 	Recipient         string
