@@ -11,6 +11,9 @@ import (
 )
 
 type Querier interface {
+	AppendOutboxRecord(ctx context.Context, arg AppendOutboxRecordParams) (OutboxRecord, error)
+	ClaimPendingOutboxRecords(ctx context.Context, arg ClaimPendingOutboxRecordsParams) ([]OutboxRecord, error)
+	ClaimStaleInProgressOutboxRecords(ctx context.Context, arg ClaimStaleInProgressOutboxRecordsParams) ([]OutboxRecord, error)
 	ConsumerIdempotencyExists(ctx context.Context, arg ConsumerIdempotencyExistsParams) (bool, error)
 	CreateConsumerIdempotency(ctx context.Context, arg CreateConsumerIdempotencyParams) error
 	CreateDeliveryAttempt(ctx context.Context, arg CreateDeliveryAttemptParams) (DeliveryAttempt, error)
@@ -20,6 +23,9 @@ type Querier interface {
 	ListDeliveryAttemptsByDeliveryRequestID(ctx context.Context, deliveryRequestID uuid.UUID) ([]DeliveryAttempt, error)
 	MarkDeliveryRequestFailed(ctx context.Context, arg MarkDeliveryRequestFailedParams) (DeliveryRequest, error)
 	MarkDeliveryRequestSent(ctx context.Context, arg MarkDeliveryRequestSentParams) (DeliveryRequest, error)
+	MarkOutboxRecordDead(ctx context.Context, arg MarkOutboxRecordDeadParams) (int64, error)
+	MarkOutboxRecordPublished(ctx context.Context, arg MarkOutboxRecordPublishedParams) (int64, error)
+	MarkOutboxRecordRetryableFailure(ctx context.Context, arg MarkOutboxRecordRetryableFailureParams) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)
