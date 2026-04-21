@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"os/signal"
@@ -16,10 +17,13 @@ import (
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	commonkafka "github.com/shrtyk/e-commerce-platform/internal/common/messaging/kafka"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
+	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/inbound/grpc"
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/inbound/http"
 	adapterinboundkafka "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/inbound/kafka"
+	adapterevents "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/events"
 	adapterpostgres "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/postgres"
+	adapteroutbox "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/postgres/outbox"
 	adapterpostgresrepos "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/postgres/repos"
 	adapterprovider "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/provider"
 	notificationapp "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/app"
@@ -63,11 +67,25 @@ func main() {
 	deliveryRequestRepository := adapterpostgresrepos.NewDeliveryRequestRepository(db)
 	deliveryAttemptRepository := adapterpostgresrepos.NewDeliveryAttemptRepository(db)
 	consumerIdempotencyRepository := adapterpostgresrepos.NewConsumerIdempotencyRepository(db)
+	outboxRepository := adapteroutbox.NewRepository(db)
+	outboxEventPublisher := adapterevents.MustCreateOutboxEventPublisher(outboxRepository)
+
+	txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) notification.NotificationRepos {
+		return notification.NotificationRepos{
+			DeliveryRequests:      adapterpostgresrepos.NewDeliveryRequestRepositoryFromTx(tx),
+			DeliveryAttempts:      adapterpostgresrepos.NewDeliveryAttemptRepositoryFromTx(tx),
+			ConsumerIdempotencies: adapterpostgresrepos.NewConsumerIdempotencyRepositoryFromTx(tx),
+			Publisher:             adapterevents.MustCreateOutboxEventPublisher(adapteroutbox.NewRepositoryFromTx(tx)),
+		}
+	})
+
 	notificationService := notification.NewNotificationService(
 		deliveryRequestRepository,
 		deliveryAttemptRepository,
 		consumerIdempotencyRepository,
-	).WithDeliveryProvider(adapterprovider.NewStubProvider())
+	).WithEventPublisher(outboxEventPublisher, cfg.Service.Name).
+		WithTxProvider(txProvider).
+		WithDeliveryProvider(adapterprovider.NewStubProvider())
 
 	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, db, tracer)
 	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, tracer)

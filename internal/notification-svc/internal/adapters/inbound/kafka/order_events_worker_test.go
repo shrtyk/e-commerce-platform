@@ -73,6 +73,7 @@ func TestOrderEventsWorkerTickHandlesOrderConfirmed(t *testing.T) {
 			handleOrderEventFunc: func(_ context.Context, input notification.HandleOrderEventInput) error {
 				calledRequest = true
 				require.Equal(t, eventID, input.EventID)
+				require.Equal(t, eventID.String(), input.CorrelationID)
 				require.Equal(t, "notification-svc-order-events-v1", input.ConsumerGroupName)
 				require.Equal(t, "order.confirmed", input.SourceEventName)
 				require.Equal(t, "in_app", input.Channel)
@@ -91,6 +92,65 @@ func TestOrderEventsWorkerTickHandlesOrderConfirmed(t *testing.T) {
 	require.NoError(t, worker.Tick(context.Background()))
 	require.True(t, calledRequest)
 	require.Equal(t, 1, commitCalls)
+}
+
+func TestOrderEventsWorkerTickUsesMetadataCorrelationIDWhenPresent(t *testing.T) {
+	t.Parallel()
+
+	eventID := uuid.New()
+
+	called := false
+
+	worker, err := NewOrderEventsWorker(
+		testLogger(),
+		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
+			return []commonkafka.ConsumedMessage{{
+				Message: newOrderConfirmedEventWithCorrelation(eventID.String(), uuid.NewString(), "user-1", "corr-from-metadata"),
+			}}, nil
+		}},
+		notificationServiceStub{
+			handleOrderEventFunc: func(_ context.Context, input notification.HandleOrderEventInput) error {
+				called = true
+				require.Equal(t, "corr-from-metadata", input.CorrelationID)
+				return nil
+			},
+		},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, worker.Tick(context.Background()))
+	require.True(t, called)
+}
+
+func TestOrderEventsWorkerTickUsesEnvelopeCorrelationIDWhenMetadataBlank(t *testing.T) {
+	t.Parallel()
+
+	eventID := uuid.New()
+
+	called := false
+
+	worker, err := NewOrderEventsWorker(
+		testLogger(),
+		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
+			return []commonkafka.ConsumedMessage{{
+				Envelope: commonkafka.EventEnvelope{Metadata: commonkafka.EventMetadata{CorrelationID: "corr-from-envelope"}},
+				Message:  newOrderConfirmedEvent(eventID.String(), uuid.NewString(), "user-1"),
+			}}, nil
+		}},
+		notificationServiceStub{
+			handleOrderEventFunc: func(_ context.Context, input notification.HandleOrderEventInput) error {
+				called = true
+				require.Equal(t, "corr-from-envelope", input.CorrelationID)
+				return nil
+			},
+		},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, worker.Tick(context.Background()))
+	require.True(t, called)
 }
 
 func TestOrderEventsWorkerTickHandlesOrderCancelled(t *testing.T) {
@@ -285,6 +345,13 @@ func newOrderConfirmedEvent(eventID string, orderID string, userID string) *orde
 		OrderId: orderID,
 		UserId:  userID,
 	}
+}
+
+func newOrderConfirmedEventWithCorrelation(eventID string, orderID string, userID string, correlationID string) *orderv1.OrderConfirmed {
+	payload := newOrderConfirmedEvent(eventID, orderID, userID)
+	payload.Metadata.CorrelationId = correlationID
+
+	return payload
 }
 
 func newOrderCancelledEvent(eventID string, orderID string, userID string, reasonCode string, reasonMessage string) *orderv1.OrderCancelled {

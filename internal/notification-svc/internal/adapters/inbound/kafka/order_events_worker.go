@@ -172,23 +172,26 @@ func (w *OrderEventsWorker) Tick(ctx context.Context) error {
 func (w *OrderEventsWorker) handleMessage(ctx context.Context, consumed commonkafka.ConsumedMessage) error {
 	switch payload := consumed.Message.(type) {
 	case *orderv1.OrderConfirmed:
-		return w.handleOrderConfirmed(ctx, payload)
+		return w.handleOrderConfirmed(ctx, consumed, payload)
 	case *orderv1.OrderCancelled:
-		return w.handleOrderCancelled(ctx, payload)
+		return w.handleOrderCancelled(ctx, consumed, payload)
 	default:
 		return nil
 	}
 }
 
-func (w *OrderEventsWorker) handleOrderConfirmed(ctx context.Context, payload *orderv1.OrderConfirmed) error {
+func (w *OrderEventsWorker) handleOrderConfirmed(ctx context.Context, consumed commonkafka.ConsumedMessage, payload *orderv1.OrderConfirmed) error {
 	eventID, orderID, userID, err := parseOrderEvent(payload.GetMetadata().GetEventId(), payload.GetOrderId(), payload.GetUserId())
 	if err != nil {
 		return fmt.Errorf("parse order confirmed: %w", err)
 	}
 
+	correlationID := correlationIDFromConsumedEvent(consumed, payload.GetMetadata(), eventID)
+
 	return w.handleOrderEvent(ctx, handleOrderEventInput{
 		eventID:       eventID,
 		sourceEventID: orderID,
+		correlationID: correlationID,
 		sourceEvent:   "order.confirmed",
 		recipient:     userID,
 		templateKey:   confirmedTemplateKey,
@@ -196,11 +199,13 @@ func (w *OrderEventsWorker) handleOrderConfirmed(ctx context.Context, payload *o
 	})
 }
 
-func (w *OrderEventsWorker) handleOrderCancelled(ctx context.Context, payload *orderv1.OrderCancelled) error {
+func (w *OrderEventsWorker) handleOrderCancelled(ctx context.Context, consumed commonkafka.ConsumedMessage, payload *orderv1.OrderCancelled) error {
 	eventID, orderID, userID, err := parseOrderEvent(payload.GetMetadata().GetEventId(), payload.GetOrderId(), payload.GetUserId())
 	if err != nil {
 		return fmt.Errorf("parse order cancelled: %w", err)
 	}
+
+	correlationID := correlationIDFromConsumedEvent(consumed, payload.GetMetadata(), eventID)
 
 	reason := strings.TrimSpace(payload.GetCancelReasonMessage())
 	if reason == "" {
@@ -213,6 +218,7 @@ func (w *OrderEventsWorker) handleOrderCancelled(ctx context.Context, payload *o
 	return w.handleOrderEvent(ctx, handleOrderEventInput{
 		eventID:       eventID,
 		sourceEventID: orderID,
+		correlationID: correlationID,
 		sourceEvent:   "order.cancelled",
 		recipient:     userID,
 		templateKey:   cancelledTemplateKey,
@@ -223,6 +229,7 @@ func (w *OrderEventsWorker) handleOrderCancelled(ctx context.Context, payload *o
 type handleOrderEventInput struct {
 	eventID       uuid.UUID
 	sourceEventID uuid.UUID
+	correlationID string
 	sourceEvent   string
 	recipient     string
 	templateKey   string
@@ -234,6 +241,7 @@ func (w *OrderEventsWorker) handleOrderEvent(ctx context.Context, input handleOr
 		EventID:           input.eventID,
 		ConsumerGroupName: w.config.ConsumerGroupName,
 		SourceEventID:     input.sourceEventID,
+		CorrelationID:     input.correlationID,
 		SourceEventName:   input.sourceEvent,
 		Channel:           defaultChannel,
 		Recipient:         input.recipient,
@@ -249,6 +257,20 @@ func (w *OrderEventsWorker) handleOrderEvent(ctx context.Context, input handleOr
 }
 
 var errRetriableOrderEvent = errors.New("retriable order event")
+
+func correlationIDFromConsumedEvent(consumed commonkafka.ConsumedMessage, metadata interface{ GetCorrelationId() string }, eventID uuid.UUID) string {
+	if metadata != nil {
+		if correlationID := strings.TrimSpace(metadata.GetCorrelationId()); correlationID != "" {
+			return correlationID
+		}
+	}
+
+	if correlationID := strings.TrimSpace(consumed.Envelope.Metadata.CorrelationID); correlationID != "" {
+		return correlationID
+	}
+
+	return eventID.String()
+}
 
 func parseOrderEvent(eventIDRaw string, orderIDRaw string, userIDRaw string) (uuid.UUID, uuid.UUID, string, error) {
 	eventID, err := uuid.Parse(strings.TrimSpace(eventIDRaw))

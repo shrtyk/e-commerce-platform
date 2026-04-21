@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shrtyk/e-commerce-platform/internal/common/tx"
+
 	"github.com/google/uuid"
 
 	"github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/core/domain"
@@ -33,6 +35,7 @@ type RequestDeliveryInput struct {
 	EventID           uuid.UUID
 	ConsumerGroupName string
 	SourceEventID     uuid.UUID
+	CorrelationID     string
 	SourceEventName   string
 	Channel           string
 	Recipient         string
@@ -83,6 +86,7 @@ type HandleOrderEventInput struct {
 	EventID           uuid.UUID
 	ConsumerGroupName string
 	SourceEventID     uuid.UUID
+	CorrelationID     string
 	SourceEventName   string
 	Channel           string
 	Recipient         string
@@ -104,6 +108,7 @@ func (s *NotificationService) HandleOrderEvent(ctx context.Context, input Handle
 		EventID:           input.EventID,
 		ConsumerGroupName: input.ConsumerGroupName,
 		SourceEventID:     input.SourceEventID,
+		CorrelationID:     input.CorrelationID,
 		SourceEventName:   input.SourceEventName,
 		Channel:           input.Channel,
 		Recipient:         input.Recipient,
@@ -177,12 +182,12 @@ func (s *NotificationService) RequestDelivery(
 		return RequestDeliveryResult{}, err
 	}
 
-	idempotencyExists, err := s.consumerIdempotencies.Exists(ctx, input.EventID, input.ConsumerGroupName)
+	idempotencyExists, err := s.repos.ConsumerIdempotencies.Exists(ctx, input.EventID, input.ConsumerGroupName)
 	if err != nil {
 		return RequestDeliveryResult{}, fmt.Errorf("check consumer idempotency: %w", err)
 	}
 	if idempotencyExists {
-		deliveryRequest, err := s.deliveryRequests.GetByIdempotencyKey(ctx, input.IdempotencyKey)
+		deliveryRequest, err := s.repos.DeliveryRequests.GetByIdempotencyKey(ctx, input.IdempotencyKey)
 		if err != nil {
 			return RequestDeliveryResult{}, fmt.Errorf("get delivery request by idempotency key: %w", mapDeliveryRequestErr(err, ErrInvalidRequestDeliveryInput))
 		}
@@ -193,41 +198,62 @@ func (s *NotificationService) RequestDelivery(
 		}, nil
 	}
 
-	deliveryRequest, err := s.deliveryRequests.CreateRequested(ctx, outbound.CreateDeliveryRequestInput{
-		SourceEventID:   input.SourceEventID,
-		SourceEventName: input.SourceEventName,
-		Channel:         input.Channel,
-		Recipient:       input.Recipient,
-		TemplateKey:     input.TemplateKey,
-		IdempotencyKey:  input.IdempotencyKey,
-	})
-	if err != nil {
-		if errors.Is(err, outbound.ErrDeliveryRequestDuplicate) {
-			existingDeliveryRequest, existingErr := s.deliveryRequests.GetByIdempotencyKey(ctx, input.IdempotencyKey)
-			if existingErr != nil {
-				return RequestDeliveryResult{}, fmt.Errorf("get delivery request by idempotency key after duplicate: %w", mapDeliveryRequestErr(existingErr, ErrInvalidRequestDeliveryInput))
+	var result RequestDeliveryResult
+	err = s.doInTransaction(ctx, func(repos NotificationRepos) error {
+		deliveryRequest, err := repos.DeliveryRequests.CreateRequested(ctx, outbound.CreateDeliveryRequestInput{
+			SourceEventID:   input.SourceEventID,
+			CorrelationID:   input.CorrelationID,
+			SourceEventName: input.SourceEventName,
+			Channel:         input.Channel,
+			Recipient:       input.Recipient,
+			TemplateKey:     input.TemplateKey,
+			IdempotencyKey:  input.IdempotencyKey,
+		})
+		if err != nil {
+			if errors.Is(err, outbound.ErrDeliveryRequestDuplicate) {
+				existingDeliveryRequest, existingErr := repos.DeliveryRequests.GetByIdempotencyKey(ctx, input.IdempotencyKey)
+				if existingErr != nil {
+					return fmt.Errorf("get delivery request by idempotency key after duplicate: %w", mapDeliveryRequestErr(existingErr, ErrInvalidRequestDeliveryInput))
+				}
+
+				_, markerErr := s.createConsumerIdempotencyMarker(ctx, repos, input.EventID, input.ConsumerGroupName, existingDeliveryRequest.DeliveryRequestID)
+				if markerErr != nil {
+					return markerErr
+				}
+
+				result = RequestDeliveryResult{
+					DeliveryRequest:  existingDeliveryRequest,
+					IdempotentReplay: true,
+				}
+
+				return nil
 			}
 
-			_, markerErr := s.createConsumerIdempotencyMarker(ctx, input.EventID, input.ConsumerGroupName, existingDeliveryRequest.DeliveryRequestID)
-			if markerErr != nil {
-				return RequestDeliveryResult{}, markerErr
-			}
-
-			return RequestDeliveryResult{
-				DeliveryRequest:  existingDeliveryRequest,
-				IdempotentReplay: true,
-			}, nil
+			return fmt.Errorf("create requested delivery request: %w", mapDeliveryRequestErr(err, ErrInvalidRequestDeliveryInput))
 		}
 
-		return RequestDeliveryResult{}, fmt.Errorf("create requested delivery request: %w", mapDeliveryRequestErr(err, ErrInvalidRequestDeliveryInput))
-	}
+		replay, err := s.createConsumerIdempotencyMarker(ctx, repos, input.EventID, input.ConsumerGroupName, deliveryRequest.DeliveryRequestID)
+		if err != nil {
+			return err
+		}
+		if replay {
+			result = RequestDeliveryResult{DeliveryRequest: deliveryRequest, IdempotentReplay: true}
+			return nil
+		}
 
-	replay, err := s.createConsumerIdempotencyMarker(ctx, input.EventID, input.ConsumerGroupName, deliveryRequest.DeliveryRequestID)
+		if err := s.publishDeliveryRequested(ctx, repos, deliveryRequest, input.EventID); err != nil {
+			return fmt.Errorf("publish delivery requested event: %w", err)
+		}
+
+		result = RequestDeliveryResult{DeliveryRequest: deliveryRequest, IdempotentReplay: false}
+
+		return nil
+	})
 	if err != nil {
 		return RequestDeliveryResult{}, err
 	}
 
-	return RequestDeliveryResult{DeliveryRequest: deliveryRequest, IdempotentReplay: replay}, nil
+	return result, nil
 }
 
 func (s *NotificationService) MarkSent(ctx context.Context, input MarkSentInput) (MarkSentResult, error) {
@@ -235,44 +261,59 @@ func (s *NotificationService) MarkSent(ctx context.Context, input MarkSentInput)
 		return MarkSentResult{}, err
 	}
 
-	replay, err := s.createConsumerIdempotencyMarker(ctx, input.EventID, input.ConsumerGroupName, input.DeliveryRequestID)
+	var result MarkSentResult
+	err := s.doInTransaction(ctx, func(repos NotificationRepos) error {
+		replay, err := s.createConsumerIdempotencyMarker(ctx, repos, input.EventID, input.ConsumerGroupName, input.DeliveryRequestID)
+		if err != nil {
+			return err
+		}
+		if replay {
+			result = MarkSentResult{IdempotentReplay: true}
+			return nil
+		}
+
+		currentDeliveryRequest, err := repos.DeliveryRequests.GetByID(ctx, input.DeliveryRequestID)
+		if err != nil {
+			return fmt.Errorf("get delivery request by id: %w", mapDeliveryRequestErr(err, ErrInvalidMarkSentInput))
+		}
+
+		if currentDeliveryRequest.Status != domain.DeliveryStatusRequested {
+			return fmt.Errorf("mark sent transition: %w", ErrInvalidDeliveryTransition)
+		}
+
+		deliveryAttempt, err := repos.DeliveryAttempts.Create(ctx, outbound.CreateDeliveryAttemptInput{
+			DeliveryRequestID: input.DeliveryRequestID,
+			AttemptNumber:     input.AttemptNumber,
+			ProviderName:      input.ProviderName,
+			ProviderMessageID: input.ProviderMessageID,
+			AttemptedAt:       input.AttemptedAt,
+		})
+		if err != nil {
+			return fmt.Errorf("create delivery attempt: %w", err)
+		}
+
+		updatedDeliveryRequest, err := repos.DeliveryRequests.MarkSent(ctx, input.DeliveryRequestID)
+		if err != nil {
+			return fmt.Errorf("mark delivery request sent: %w", mapDeliveryRequestErr(err, ErrInvalidMarkSentInput))
+		}
+
+		if err := s.publishNotificationSent(ctx, repos, updatedDeliveryRequest, input.EventID); err != nil {
+			return fmt.Errorf("publish notification sent event: %w", err)
+		}
+
+		result = MarkSentResult{
+			DeliveryRequest:  updatedDeliveryRequest,
+			DeliveryAttempt:  deliveryAttempt,
+			IdempotentReplay: false,
+		}
+
+		return nil
+	})
 	if err != nil {
 		return MarkSentResult{}, err
 	}
-	if replay {
-		return MarkSentResult{IdempotentReplay: true}, nil
-	}
 
-	currentDeliveryRequest, err := s.deliveryRequests.GetByID(ctx, input.DeliveryRequestID)
-	if err != nil {
-		return MarkSentResult{}, fmt.Errorf("get delivery request by id: %w", mapDeliveryRequestErr(err, ErrInvalidMarkSentInput))
-	}
-
-	if currentDeliveryRequest.Status != domain.DeliveryStatusRequested {
-		return MarkSentResult{}, fmt.Errorf("mark sent transition: %w", ErrInvalidDeliveryTransition)
-	}
-
-	deliveryAttempt, err := s.deliveryAttempts.Create(ctx, outbound.CreateDeliveryAttemptInput{
-		DeliveryRequestID: input.DeliveryRequestID,
-		AttemptNumber:     input.AttemptNumber,
-		ProviderName:      input.ProviderName,
-		ProviderMessageID: input.ProviderMessageID,
-		AttemptedAt:       input.AttemptedAt,
-	})
-	if err != nil {
-		return MarkSentResult{}, fmt.Errorf("create delivery attempt: %w", err)
-	}
-
-	updatedDeliveryRequest, err := s.deliveryRequests.MarkSent(ctx, input.DeliveryRequestID)
-	if err != nil {
-		return MarkSentResult{}, fmt.Errorf("mark delivery request sent: %w", mapDeliveryRequestErr(err, ErrInvalidMarkSentInput))
-	}
-
-	return MarkSentResult{
-		DeliveryRequest:  updatedDeliveryRequest,
-		DeliveryAttempt:  deliveryAttempt,
-		IdempotentReplay: false,
-	}, nil
+	return result, nil
 }
 
 func (s *NotificationService) MarkFailed(ctx context.Context, input MarkFailedInput) (MarkFailedResult, error) {
@@ -280,52 +321,68 @@ func (s *NotificationService) MarkFailed(ctx context.Context, input MarkFailedIn
 		return MarkFailedResult{}, err
 	}
 
-	replay, err := s.createConsumerIdempotencyMarker(ctx, input.EventID, input.ConsumerGroupName, input.DeliveryRequestID)
+	var result MarkFailedResult
+	err := s.doInTransaction(ctx, func(repos NotificationRepos) error {
+		replay, err := s.createConsumerIdempotencyMarker(ctx, repos, input.EventID, input.ConsumerGroupName, input.DeliveryRequestID)
+		if err != nil {
+			return err
+		}
+		if replay {
+			result = MarkFailedResult{IdempotentReplay: true}
+			return nil
+		}
+
+		currentDeliveryRequest, err := repos.DeliveryRequests.GetByID(ctx, input.DeliveryRequestID)
+		if err != nil {
+			return fmt.Errorf("get delivery request by id: %w", mapDeliveryRequestErr(err, ErrInvalidMarkFailedInput))
+		}
+
+		if currentDeliveryRequest.Status != domain.DeliveryStatusRequested {
+			return fmt.Errorf("mark failed transition: %w", ErrInvalidDeliveryTransition)
+		}
+
+		deliveryAttempt, err := repos.DeliveryAttempts.Create(ctx, outbound.CreateDeliveryAttemptInput{
+			DeliveryRequestID: input.DeliveryRequestID,
+			AttemptNumber:     input.AttemptNumber,
+			ProviderName:      input.ProviderName,
+			ProviderMessageID: input.ProviderMessageID,
+			FailureCode:       input.FailureCode,
+			FailureMessage:    input.FailureMessage,
+			AttemptedAt:       input.AttemptedAt,
+		})
+		if err != nil {
+			return fmt.Errorf("create delivery attempt: %w", err)
+		}
+
+		updatedDeliveryRequest, err := repos.DeliveryRequests.MarkFailed(ctx, input.DeliveryRequestID, input.FailureCode, input.FailureMessage)
+		if err != nil {
+			return fmt.Errorf("mark delivery request failed: %w", mapDeliveryRequestErr(err, ErrInvalidMarkFailedInput))
+		}
+
+		if err := s.publishNotificationFailed(ctx, repos, updatedDeliveryRequest, input.EventID); err != nil {
+			return fmt.Errorf("publish notification failed event: %w", err)
+		}
+
+		result = MarkFailedResult{
+			DeliveryRequest:  updatedDeliveryRequest,
+			DeliveryAttempt:  deliveryAttempt,
+			IdempotentReplay: false,
+		}
+
+		return nil
+	})
 	if err != nil {
 		return MarkFailedResult{}, err
 	}
-	if replay {
-		return MarkFailedResult{IdempotentReplay: true}, nil
-	}
 
-	currentDeliveryRequest, err := s.deliveryRequests.GetByID(ctx, input.DeliveryRequestID)
-	if err != nil {
-		return MarkFailedResult{}, fmt.Errorf("get delivery request by id: %w", mapDeliveryRequestErr(err, ErrInvalidMarkFailedInput))
-	}
-
-	if currentDeliveryRequest.Status != domain.DeliveryStatusRequested {
-		return MarkFailedResult{}, fmt.Errorf("mark failed transition: %w", ErrInvalidDeliveryTransition)
-	}
-
-	deliveryAttempt, err := s.deliveryAttempts.Create(ctx, outbound.CreateDeliveryAttemptInput{
-		DeliveryRequestID: input.DeliveryRequestID,
-		AttemptNumber:     input.AttemptNumber,
-		ProviderName:      input.ProviderName,
-		ProviderMessageID: input.ProviderMessageID,
-		FailureCode:       input.FailureCode,
-		FailureMessage:    input.FailureMessage,
-		AttemptedAt:       input.AttemptedAt,
-	})
-	if err != nil {
-		return MarkFailedResult{}, fmt.Errorf("create delivery attempt: %w", err)
-	}
-
-	updatedDeliveryRequest, err := s.deliveryRequests.MarkFailed(ctx, input.DeliveryRequestID, input.FailureCode, input.FailureMessage)
-	if err != nil {
-		return MarkFailedResult{}, fmt.Errorf("mark delivery request failed: %w", mapDeliveryRequestErr(err, ErrInvalidMarkFailedInput))
-	}
-
-	return MarkFailedResult{
-		DeliveryRequest:  updatedDeliveryRequest,
-		DeliveryAttempt:  deliveryAttempt,
-		IdempotentReplay: false,
-	}, nil
+	return result, nil
 }
 
 func validateRequestDeliveryInput(input RequestDeliveryInput) error {
 	if input.EventID == uuid.Nil ||
 		strings.TrimSpace(input.ConsumerGroupName) == "" ||
 		input.SourceEventID == uuid.Nil ||
+		strings.TrimSpace(input.CorrelationID) == "" ||
 		strings.TrimSpace(input.SourceEventName) == "" ||
 		strings.TrimSpace(input.Channel) == "" ||
 		strings.TrimSpace(input.Recipient) == "" ||
@@ -371,6 +428,7 @@ func validateHandleOrderEventInput(input HandleOrderEventInput) error {
 	if input.EventID == uuid.Nil ||
 		strings.TrimSpace(input.ConsumerGroupName) == "" ||
 		input.SourceEventID == uuid.Nil ||
+		strings.TrimSpace(input.CorrelationID) == "" ||
 		strings.TrimSpace(input.SourceEventName) == "" ||
 		strings.TrimSpace(input.Channel) == "" ||
 		strings.TrimSpace(input.Recipient) == "" ||
@@ -408,11 +466,12 @@ func mapDeliveryRequestErr(err error, invalidInputErr error) error {
 
 func (s *NotificationService) createConsumerIdempotencyMarker(
 	ctx context.Context,
+	repos NotificationRepos,
 	eventID uuid.UUID,
 	consumerGroupName string,
 	deliveryRequestID uuid.UUID,
 ) (bool, error) {
-	err := s.consumerIdempotencies.Create(ctx, outbound.CreateConsumerIdempotencyInput{
+	err := repos.ConsumerIdempotencies.Create(ctx, outbound.CreateConsumerIdempotencyInput{
 		EventID:           eventID,
 		ConsumerGroupName: consumerGroupName,
 		DeliveryRequestID: deliveryRequestID,
@@ -426,4 +485,14 @@ func (s *NotificationService) createConsumerIdempotencyMarker(
 	}
 
 	return false, nil
+}
+
+func (s *NotificationService) doInTransaction(ctx context.Context, fn func(repos NotificationRepos) error) error {
+	if s.txProvider == nil {
+		return fn(s.repos)
+	}
+
+	return s.txProvider.WithTransaction(ctx, nil, func(uow tx.UnitOfWork[NotificationRepos]) error {
+		return fn(uow.Repos())
+	})
 }
