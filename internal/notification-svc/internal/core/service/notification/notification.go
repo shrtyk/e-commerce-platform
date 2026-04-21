@@ -14,11 +14,19 @@ import (
 )
 
 var (
-	ErrInvalidRequestDeliveryInput = errors.New("notification invalid request delivery input")
-	ErrInvalidMarkSentInput        = errors.New("notification invalid mark sent input")
-	ErrInvalidMarkFailedInput      = errors.New("notification invalid mark failed input")
-	ErrInvalidDeliveryTransition   = errors.New("notification invalid delivery transition")
-	ErrDeliveryRequestNotFound     = errors.New("notification delivery request not found")
+	ErrInvalidRequestDeliveryInput  = errors.New("notification invalid request delivery input")
+	ErrInvalidMarkSentInput         = errors.New("notification invalid mark sent input")
+	ErrInvalidMarkFailedInput       = errors.New("notification invalid mark failed input")
+	ErrInvalidHandleOrderEventInput = errors.New("notification invalid handle order event input")
+	ErrInvalidDeliveryTransition    = errors.New("notification invalid delivery transition")
+	ErrDeliveryRequestNotFound      = errors.New("notification delivery request not found")
+)
+
+const (
+	defaultDeliveryResultsGroupSuffix = ".delivery-results"
+	defaultProviderFailureCode        = "provider_error"
+	defaultProviderFailureMessage     = "delivery provider failed"
+	defaultProviderFailureMessageID   = "provider-error"
 )
 
 type RequestDeliveryInput struct {
@@ -69,6 +77,96 @@ type MarkFailedResult struct {
 	DeliveryRequest  domain.DeliveryRequest
 	DeliveryAttempt  domain.DeliveryAttempt
 	IdempotentReplay bool
+}
+
+type HandleOrderEventInput struct {
+	EventID           uuid.UUID
+	ConsumerGroupName string
+	SourceEventID     uuid.UUID
+	SourceEventName   string
+	Channel           string
+	Recipient         string
+	TemplateKey       string
+	Body              string
+	AttemptedAt       time.Time
+}
+
+func (s *NotificationService) HandleOrderEvent(ctx context.Context, input HandleOrderEventInput) error {
+	if err := validateHandleOrderEventInput(input); err != nil {
+		return err
+	}
+
+	if s.deliveryProvider == nil {
+		return fmt.Errorf("delivery provider is not configured")
+	}
+
+	requestResult, err := s.RequestDelivery(ctx, RequestDeliveryInput{
+		EventID:           input.EventID,
+		ConsumerGroupName: input.ConsumerGroupName,
+		SourceEventID:     input.SourceEventID,
+		SourceEventName:   input.SourceEventName,
+		Channel:           input.Channel,
+		Recipient:         input.Recipient,
+		TemplateKey:       input.TemplateKey,
+		IdempotencyKey:    buildRequestIdempotencyKey(input.SourceEventName, input.EventID),
+	})
+	if err != nil {
+		return fmt.Errorf("request delivery: %w", err)
+	}
+
+	if requestResult.IdempotentReplay && requestResult.DeliveryRequest.Status != domain.DeliveryStatusRequested {
+		return nil
+	}
+
+	sendResult, sendErr := s.deliveryProvider.Send(ctx, outbound.SendDeliveryInput{
+		DeliveryRequestID: requestResult.DeliveryRequest.DeliveryRequestID,
+		Channel:           requestResult.DeliveryRequest.Channel,
+		Recipient:         requestResult.DeliveryRequest.Recipient,
+		TemplateKey:       requestResult.DeliveryRequest.TemplateKey,
+		Body:              input.Body,
+	})
+	if sendErr != nil {
+		return fmt.Errorf("send delivery: %w", sendErr)
+	}
+
+	if strings.TrimSpace(sendResult.FailureCode) != "" {
+		providerMessageID := strings.TrimSpace(sendResult.ProviderMessageID)
+		if providerMessageID == "" {
+			providerMessageID = defaultProviderFailureMessageID
+		}
+
+		_, markErr := s.MarkFailed(ctx, MarkFailedInput{
+			EventID:           input.EventID,
+			ConsumerGroupName: input.ConsumerGroupName + defaultDeliveryResultsGroupSuffix,
+			DeliveryRequestID: requestResult.DeliveryRequest.DeliveryRequestID,
+			AttemptNumber:     1,
+			ProviderName:      nonEmpty(strings.TrimSpace(sendResult.ProviderName), "delivery-provider"),
+			ProviderMessageID: providerMessageID,
+			FailureCode:       nonEmpty(strings.TrimSpace(sendResult.FailureCode), defaultProviderFailureCode),
+			FailureMessage:    nonEmpty(strings.TrimSpace(sendResult.FailureMessage), defaultProviderFailureMessage),
+			AttemptedAt:       input.AttemptedAt,
+		})
+		if markErr != nil {
+			return fmt.Errorf("mark provider failure: %w", markErr)
+		}
+
+		return nil
+	}
+
+	_, err = s.MarkSent(ctx, MarkSentInput{
+		EventID:           input.EventID,
+		ConsumerGroupName: input.ConsumerGroupName + defaultDeliveryResultsGroupSuffix,
+		DeliveryRequestID: requestResult.DeliveryRequest.DeliveryRequestID,
+		AttemptNumber:     1,
+		ProviderName:      nonEmpty(strings.TrimSpace(sendResult.ProviderName), "unknown-provider"),
+		ProviderMessageID: nonEmpty(strings.TrimSpace(sendResult.ProviderMessageID), defaultProviderFailureMessageID),
+		AttemptedAt:       input.AttemptedAt,
+	})
+	if err != nil {
+		return fmt.Errorf("mark provider sent: %w", err)
+	}
+
+	return nil
 }
 
 func (s *NotificationService) RequestDelivery(
@@ -267,6 +365,34 @@ func validateMarkFailedInput(input MarkFailedInput) error {
 	}
 
 	return nil
+}
+
+func validateHandleOrderEventInput(input HandleOrderEventInput) error {
+	if input.EventID == uuid.Nil ||
+		strings.TrimSpace(input.ConsumerGroupName) == "" ||
+		input.SourceEventID == uuid.Nil ||
+		strings.TrimSpace(input.SourceEventName) == "" ||
+		strings.TrimSpace(input.Channel) == "" ||
+		strings.TrimSpace(input.Recipient) == "" ||
+		strings.TrimSpace(input.TemplateKey) == "" ||
+		strings.TrimSpace(input.Body) == "" ||
+		input.AttemptedAt.IsZero() {
+		return ErrInvalidHandleOrderEventInput
+	}
+
+	return nil
+}
+
+func buildRequestIdempotencyKey(sourceEvent string, eventID uuid.UUID) string {
+	return sourceEvent + ":" + eventID.String()
+}
+
+func nonEmpty(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+
+	return value
 }
 
 func mapDeliveryRequestErr(err error, invalidInputErr error) error {

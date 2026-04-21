@@ -24,8 +24,13 @@ type Application struct {
 	Logger         *slog.Logger
 	Handler        http.Handler
 	GRPCServer     *grpcpkg.Server
+	Workers        []worker
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *metric.MeterProvider
+}
+
+type worker interface {
+	Run(ctx context.Context) error
 }
 
 type option func(*Application)
@@ -78,6 +83,16 @@ func WithMeterProvider(provider *metric.MeterProvider) option {
 	}
 }
 
+func WithBackgroundWorker(backgroundWorker worker) option {
+	return func(a *Application) {
+		if backgroundWorker == nil {
+			return
+		}
+
+		a.Workers = append(a.Workers, backgroundWorker)
+	}
+}
+
 func (a *Application) Run(ctx context.Context) error {
 	if a.Config == nil || a.Config.Service.Name == "" {
 		return errConfigRequired
@@ -110,9 +125,9 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 	defer grpcListener.Close()
 
-	serverErrCh := make(chan error, 2)
+	serverErrCh := make(chan error, len(a.Workers)+2)
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(len(a.Workers) + 2)
 
 	go func() {
 		defer wg.Done()
@@ -125,6 +140,27 @@ func (a *Application) Run(ctx context.Context) error {
 
 		serverErrCh <- nil
 	}()
+
+	for i, backgroundWorker := range a.Workers {
+		idx := i
+		workerInstance := backgroundWorker
+
+		go func() {
+			defer wg.Done()
+
+			if runErr := workerInstance.Run(ctx); runErr != nil {
+				if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+					serverErrCh <- nil
+					return
+				}
+
+				serverErrCh <- fmt.Errorf("run background worker %d: %w", idx, runErr)
+				return
+			}
+
+			serverErrCh <- nil
+		}()
+	}
 
 	go func() {
 		defer wg.Done()

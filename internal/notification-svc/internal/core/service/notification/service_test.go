@@ -7,12 +7,24 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	outboundmocks "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/core/ports/outbound/mocks"
 	"github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/core/ports/outbound"
+	outboundmocks "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/core/ports/outbound/mocks"
 	testifymock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type deliveryProviderStub struct {
+	sendFunc func(ctx context.Context, input outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error)
+}
+
+func (s deliveryProviderStub) Send(ctx context.Context, input outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
+	if s.sendFunc == nil {
+		return outbound.SendDeliveryResult{}, nil
+	}
+
+	return s.sendFunc(ctx, input)
+}
 
 func TestNewNotificationService(t *testing.T) {
 	t.Run("panics when delivery request repository nil", func(t *testing.T) {
@@ -60,7 +72,7 @@ func TestRequestDelivery(t *testing.T) {
 		IdempotencyKey:    "req-order-1",
 	}
 
-		tests := []testCase{
+	tests := []testCase{
 		{
 			name:  "creates delivery request",
 			input: baseInput,
@@ -579,6 +591,200 @@ func TestMarkFailed(t *testing.T) {
 		require.ErrorContains(t, err, "create delivery attempt")
 		require.ErrorContains(t, err, "attempt create boom")
 		require.Equal(t, MarkFailedResult{}, result)
+		dr.AssertNotCalled(t, "MarkFailed", testifymock.Anything, testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	})
+}
+
+func TestHandleOrderEvent(t *testing.T) {
+	ctx := context.Background()
+	eventID := uuid.New()
+	sourceEventID := uuid.New()
+	deliveryRequestID := uuid.New()
+	now := time.Now().UTC()
+
+	baseInput := HandleOrderEventInput{
+		EventID:           eventID,
+		ConsumerGroupName: "notification.order.events",
+		SourceEventID:     sourceEventID,
+		SourceEventName:   "order.confirmed",
+		Channel:           "in_app",
+		Recipient:         "user-1",
+		TemplateKey:       "order-confirmed",
+		Body:              "order confirmed",
+		AttemptedAt:       now,
+	}
+
+	t.Run("provider deterministic failure marks failed", func(t *testing.T) {
+		dr := outboundmocks.NewMockDeliveryRequestRepository(t)
+		da := outboundmocks.NewMockDeliveryAttemptRepository(t)
+		cid := outboundmocks.NewMockConsumerIdempotencyRepository(t)
+		svc := NewNotificationService(dr, da, cid).WithDeliveryProvider(deliveryProviderStub{
+			sendFunc: func(context.Context, outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
+				return outbound.SendDeliveryResult{
+					ProviderName:      "stub-delivery",
+					ProviderMessageID: "msg-fail",
+					FailureCode:       "recipient_suffix_fail",
+					FailureMessage:    "deterministic",
+				}, nil
+			},
+		})
+
+		idempotencyKey := "order.confirmed:" + eventID.String()
+		cid.EXPECT().Exists(testifymock.Anything, eventID, "notification.order.events").Return(false, nil)
+		dr.EXPECT().CreateRequested(testifymock.Anything, outbound.CreateDeliveryRequestInput{
+			SourceEventID:   sourceEventID,
+			SourceEventName: "order.confirmed",
+			Channel:         "in_app",
+			Recipient:       "user-1",
+			TemplateKey:     "order-confirmed",
+			IdempotencyKey:  idempotencyKey,
+		}).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			Channel:           "in_app",
+			Recipient:         "user-1",
+			TemplateKey:       "order-confirmed",
+			Status:            domain.DeliveryStatusRequested,
+		}, nil)
+		cid.EXPECT().Create(testifymock.Anything, outbound.CreateConsumerIdempotencyInput{
+			EventID:           eventID,
+			ConsumerGroupName: "notification.order.events",
+			DeliveryRequestID: deliveryRequestID,
+		}).Return(nil)
+
+		cid.EXPECT().Create(testifymock.Anything, outbound.CreateConsumerIdempotencyInput{
+			EventID:           eventID,
+			ConsumerGroupName: "notification.order.events.delivery-results",
+			DeliveryRequestID: deliveryRequestID,
+		}).Return(nil)
+		dr.EXPECT().GetByID(testifymock.Anything, deliveryRequestID).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			Status:            domain.DeliveryStatusRequested,
+		}, nil)
+		da.EXPECT().Create(testifymock.Anything, outbound.CreateDeliveryAttemptInput{
+			DeliveryRequestID: deliveryRequestID,
+			AttemptNumber:     1,
+			ProviderName:      "stub-delivery",
+			ProviderMessageID: "msg-fail",
+			FailureCode:       "recipient_suffix_fail",
+			FailureMessage:    "deterministic",
+			AttemptedAt:       now,
+		}).Return(domain.DeliveryAttempt{DeliveryRequestID: deliveryRequestID, AttemptNumber: 1}, nil)
+		dr.EXPECT().MarkFailed(testifymock.Anything, deliveryRequestID, "recipient_suffix_fail", "deterministic").Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			Status:            domain.DeliveryStatusFailed,
+		}, nil)
+
+		err := svc.HandleOrderEvent(ctx, baseInput)
+		require.NoError(t, err)
+	})
+
+	t.Run("request delivery error returns and skips send", func(t *testing.T) {
+		dr := outboundmocks.NewMockDeliveryRequestRepository(t)
+		da := outboundmocks.NewMockDeliveryAttemptRepository(t)
+		cid := outboundmocks.NewMockConsumerIdempotencyRepository(t)
+		sendCalled := false
+		svc := NewNotificationService(dr, da, cid).WithDeliveryProvider(deliveryProviderStub{
+			sendFunc: func(context.Context, outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
+				sendCalled = true
+				return outbound.SendDeliveryResult{}, nil
+			},
+		})
+
+		cid.EXPECT().Exists(testifymock.Anything, eventID, "notification.order.events").Return(false, nil)
+		dr.EXPECT().CreateRequested(testifymock.Anything, testifymock.Anything).Return(domain.DeliveryRequest{}, errors.New("request create boom"))
+
+		err := svc.HandleOrderEvent(ctx, baseInput)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "request delivery")
+		require.ErrorContains(t, err, "request create boom")
+		require.False(t, sendCalled)
+	})
+
+	t.Run("mark failed error returns", func(t *testing.T) {
+		dr := outboundmocks.NewMockDeliveryRequestRepository(t)
+		da := outboundmocks.NewMockDeliveryAttemptRepository(t)
+		cid := outboundmocks.NewMockConsumerIdempotencyRepository(t)
+		svc := NewNotificationService(dr, da, cid).WithDeliveryProvider(deliveryProviderStub{
+			sendFunc: func(context.Context, outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
+				return outbound.SendDeliveryResult{FailureCode: "provider_fail", FailureMessage: "provider failed"}, nil
+			},
+		})
+
+		idempotencyKey := "order.confirmed:" + eventID.String()
+		cid.EXPECT().Exists(testifymock.Anything, eventID, "notification.order.events").Return(false, nil)
+		dr.EXPECT().CreateRequested(testifymock.Anything, outbound.CreateDeliveryRequestInput{
+			SourceEventID:   sourceEventID,
+			SourceEventName: "order.confirmed",
+			Channel:         "in_app",
+			Recipient:       "user-1",
+			TemplateKey:     "order-confirmed",
+			IdempotencyKey:  idempotencyKey,
+		}).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			Channel:           "in_app",
+			Recipient:         "user-1",
+			TemplateKey:       "order-confirmed",
+			Status:            domain.DeliveryStatusRequested,
+		}, nil)
+		cid.EXPECT().Create(testifymock.Anything, outbound.CreateConsumerIdempotencyInput{
+			EventID:           eventID,
+			ConsumerGroupName: "notification.order.events",
+			DeliveryRequestID: deliveryRequestID,
+		}).Return(nil)
+
+		cid.EXPECT().Create(testifymock.Anything, outbound.CreateConsumerIdempotencyInput{
+			EventID:           eventID,
+			ConsumerGroupName: "notification.order.events.delivery-results",
+			DeliveryRequestID: deliveryRequestID,
+		}).Return(nil)
+		dr.EXPECT().GetByID(testifymock.Anything, deliveryRequestID).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			Status:            domain.DeliveryStatusRequested,
+		}, nil)
+		da.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.DeliveryAttempt{}, errors.New("attempt create boom"))
+
+		err := svc.HandleOrderEvent(ctx, baseInput)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "mark provider failure")
+		require.ErrorContains(t, err, "attempt create boom")
+	})
+
+	t.Run("transient send error does not mark failed", func(t *testing.T) {
+		dr := outboundmocks.NewMockDeliveryRequestRepository(t)
+		da := outboundmocks.NewMockDeliveryAttemptRepository(t)
+		cid := outboundmocks.NewMockConsumerIdempotencyRepository(t)
+		svc := NewNotificationService(dr, da, cid).WithDeliveryProvider(deliveryProviderStub{
+			sendFunc: func(context.Context, outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
+				return outbound.SendDeliveryResult{}, errors.New("transport timeout")
+			},
+		})
+
+		idempotencyKey := "order.confirmed:" + eventID.String()
+		cid.EXPECT().Exists(testifymock.Anything, eventID, "notification.order.events").Return(false, nil)
+		dr.EXPECT().CreateRequested(testifymock.Anything, outbound.CreateDeliveryRequestInput{
+			SourceEventID:   sourceEventID,
+			SourceEventName: "order.confirmed",
+			Channel:         "in_app",
+			Recipient:       "user-1",
+			TemplateKey:     "order-confirmed",
+			IdempotencyKey:  idempotencyKey,
+		}).Return(domain.DeliveryRequest{
+			DeliveryRequestID: deliveryRequestID,
+			Channel:           "in_app",
+			Recipient:         "user-1",
+			TemplateKey:       "order-confirmed",
+			Status:            domain.DeliveryStatusRequested,
+		}, nil)
+		cid.EXPECT().Create(testifymock.Anything, outbound.CreateConsumerIdempotencyInput{
+			EventID:           eventID,
+			ConsumerGroupName: "notification.order.events",
+			DeliveryRequestID: deliveryRequestID,
+		}).Return(nil)
+
+		err := svc.HandleOrderEvent(ctx, baseInput)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "send delivery")
+		da.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
 		dr.AssertNotCalled(t, "MarkFailed", testifymock.Anything, testifymock.Anything, testifymock.Anything, testifymock.Anything)
 	})
 }

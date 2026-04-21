@@ -16,6 +16,7 @@ type NotificationService struct {
 	deliveryRequests      outbound.DeliveryRequestRepository
 	deliveryAttempts      outbound.DeliveryAttemptRepository
 	consumerIdempotencies outbound.ConsumerIdempotencyRepository
+	deliveryProvider      outbound.DeliveryProvider
 }
 
 func NewNotificationService(
@@ -38,4 +39,10 @@ func NewNotificationService(
 		deliveryAttempts:      deliveryAttempts,
 		consumerIdempotencies: consumerIdempotencies,
 	}
+}
+
+func (s *NotificationService) WithDeliveryProvider(deliveryProvider outbound.DeliveryProvider) *NotificationService {
+	s.deliveryProvider = deliveryProvider
+
+	return s
 }
