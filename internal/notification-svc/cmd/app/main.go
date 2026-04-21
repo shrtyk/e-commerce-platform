@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	notificationv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/notification/v1"
 	orderv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/order/v1"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sr"
@@ -22,6 +23,7 @@ import (
 	adapterhttp "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/inbound/http"
 	adapterinboundkafka "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/inbound/kafka"
 	adapterevents "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/events"
+	adapterkafka "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/kafka"
 	adapterpostgres "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/postgres"
 	adapteroutbox "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/postgres/outbox"
 	adapterpostgresrepos "github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/adapters/outbound/postgres/repos"
@@ -70,6 +72,45 @@ func main() {
 	outboxRepository := adapteroutbox.NewRepository(db)
 	outboxEventPublisher := adapterevents.MustCreateOutboxEventPublisher(outboxRepository)
 
+	kafkaBrokers := strings.Split(cfg.Kafka.Brokers, ",")
+	relayKafkaClient, err := commonkafka.NewClient(kgo.SeedBrokers(kafkaBrokers...))
+	if err != nil {
+		panic(fmt.Errorf("create relay kafka client: %w", err))
+	}
+	defer relayKafkaClient.Close()
+
+	schemaRegistryClient, err := sr.NewClient(sr.URLs(cfg.SchemaRegistry.URL))
+	if err != nil {
+		panic(fmt.Errorf("create schema registry client: %w", err))
+	}
+
+	typeRegistry := commonkafka.NewTypeRegistry()
+	err = typeRegistry.RegisterMessages(
+		&notificationv1.DeliveryRequested{},
+		&notificationv1.NotificationSent{},
+		&notificationv1.NotificationFailed{},
+	)
+	if err != nil {
+		panic(fmt.Errorf("register notification kafka types: %w", err))
+	}
+
+	relayPublisher, err := adapterkafka.NewPublisher(relayKafkaClient, schemaRegistryClient, typeRegistry)
+	if err != nil {
+		panic(fmt.Errorf("create relay kafka publisher: %w", err))
+	}
+
+	relayWorker, err := adapterkafka.NewRelayWorker(outboxRepository, relayPublisher, adapterkafka.RelayConfig{
+		BatchSize:        cfg.Relay.BatchSize,
+		Interval:         cfg.Relay.Interval,
+		RetryBaseBackoff: cfg.Relay.RetryBaseBackoff,
+		RetryMaxBackoff:  cfg.Relay.RetryMaxBackoff,
+		WorkerID:         cfg.Relay.WorkerID,
+		StaleLockTTL:     cfg.Relay.StaleLockTTL,
+	})
+	if err != nil {
+		panic(fmt.Errorf("create outbox relay worker: %w", err))
+	}
+
 	txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) notification.NotificationRepos {
 		return notification.NotificationRepos{
 			DeliveryRequests:      adapterpostgresrepos.NewDeliveryRequestRepositoryFromTx(tx),
@@ -98,10 +139,10 @@ func main() {
 		notificationapp.WithLogger(logger),
 		notificationapp.WithTracerProvider(tracerProvider),
 		notificationapp.WithMeterProvider(meterProvider),
+		notificationapp.WithBackgroundWorker(relayWorker),
 	)
 
 	if cfg.OrderEvents.Enabled {
-		kafkaBrokers := strings.Split(cfg.Kafka.Brokers, ",")
 		orderEventsClient, err := kgo.NewClient(
 			kgo.SeedBrokers(kafkaBrokers...),
 			kgo.ConsumerGroup(cfg.OrderEvents.GroupID),
@@ -112,11 +153,6 @@ func main() {
 			panic(fmt.Errorf("create order events kafka client: %w", err))
 		}
 		defer orderEventsClient.Close()
-
-		schemaRegistryClient, err := sr.NewClient(sr.URLs(cfg.SchemaRegistry.URL))
-		if err != nil {
-			panic(fmt.Errorf("create schema registry client: %w", err))
-		}
 
 		orderSerde := commonkafka.NewProtoSerde(schemaRegistryClient, commonkafka.NewDescriptorSchemaProvider())
 		if err := orderSerde.RegisterType(context.Background(), cfg.OrderEvents.Topic, &orderv1.OrderConfirmed{}); err != nil {
