@@ -166,7 +166,8 @@ func TestAdminWriteRoutesAndPublicFiltering(t *testing.T) {
 	})
 	require.NoError(t, servicePatchErr)
 	storedStatus := getProductStatus(t, stack.DB, serviceCreated.Product.ID)
-	require.Equalf(t, domain.ProductStatusPublished, servicePatched.Product.Status, "stored status: %s", storedStatus)
+	require.Equal(t, domain.ProductStatusPublished, servicePatched.Product.Status)
+	require.Equal(t, domain.ProductStatusPublished, storedStatus)
 
 	createBody := fmt.Sprintf(`{"sku":"SKU-%s","name":"Admin created","description":"created via admin route","price":1099,"currencyId":"%s","status":"draft","initialQuantity":11}`,
 		uuid.NewString(),
@@ -178,6 +179,8 @@ func TestAdminWriteRoutesAndPublicFiltering(t *testing.T) {
 	require.NoError(t, json.NewDecoder(createRes.Body).Decode(&created))
 	require.Equal(t, dto.ProductStatusDraft, created.Product.Status)
 	require.Equal(t, 11, created.Stock.Quantity)
+	createdProductID, parseCreatedIDErr := uuid.Parse(created.Product.ProductId)
+	require.NoError(t, parseCreatedIDErr)
 
 	getDraftErr := getProductHTTPError(t, stack, created.Product.ProductId, http.StatusNotFound)
 	require.Equal(t, "product_not_found", getDraftErr.Code)
@@ -193,7 +196,7 @@ func TestAdminWriteRoutesAndPublicFiltering(t *testing.T) {
 	require.Equal(t, dto.ProductStatusPublished, updated.Product.Status)
 	require.Equal(t, "Admin published", updated.Product.Name)
 	require.NotNil(t, updated.Product.CategoryId)
-	require.Equal(t, categoryID.String(), *updated.Product.CategoryId)
+	require.Equal(t, categoryID, uuid.UUID(*updated.Product.CategoryId))
 
 	publicProduct := getProductHTTP(t, stack, created.Product.ProductId, http.StatusOK)
 	require.Equal(t, dto.ProductStatusPublished, publicProduct.Status)
@@ -203,9 +206,55 @@ func TestAdminWriteRoutesAndPublicFiltering(t *testing.T) {
 	var archived dto.ProductWriteResponse
 	require.NoError(t, json.NewDecoder(deleteRes.Body).Decode(&archived))
 	require.Equal(t, dto.ProductStatusArchived, archived.Product.Status)
+	require.Equal(t, domain.ProductStatusArchived, getProductStatus(t, stack.DB, createdProductID))
+
+	archivedStock := getPersistedProductSnapshot(t, stack.DB, createdProductID)
+	require.Equal(t, int32(11), archivedStock.Quantity)
+	require.Equal(t, int32(0), archivedStock.Reserved)
+	require.Equal(t, int32(11), archivedStock.Available)
 
 	getArchivedErr := getProductHTTPError(t, stack, created.Product.ProductId, http.StatusNotFound)
 	require.Equal(t, "product_not_found", getArchivedErr.Code)
+}
+
+func TestAdminPatchAndDeleteMissingProductReturnNotFound(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newCatalogStack(t)
+
+	adminToken := issueTestAdminToken(t)
+	missingProductID := uuid.NewString()
+
+	patchRes := performAdminJSONRequest(
+		t,
+		stack,
+		http.MethodPatch,
+		"/v1/products/"+missingProductID,
+		`{"name":"missing"}`,
+		adminToken,
+		http.StatusNotFound,
+	)
+
+	var patchErr dto.ErrorResponse
+	require.NoError(t, json.NewDecoder(patchRes.Body).Decode(&patchErr))
+	require.Equal(t, "product_not_found", patchErr.Code)
+
+	deleteRes := performAdminJSONRequest(
+		t,
+		stack,
+		http.MethodDelete,
+		"/v1/products/"+missingProductID,
+		"",
+		adminToken,
+		http.StatusNotFound,
+	)
+
+	var deleteErr dto.ErrorResponse
+	require.NoError(t, json.NewDecoder(deleteRes.Body).Decode(&deleteErr))
+	require.Equal(t, "product_not_found", deleteErr.Code)
+
+	require.Equal(t, 0, countProducts(t, stack.DB))
+	require.Equal(t, 0, countStockRecords(t, stack.DB))
 }
 
 func TestAdminPatchRejectsEmptyOrWhitespaceCategoryID(t *testing.T) {
@@ -215,6 +264,9 @@ func TestAdminPatchRejectsEmptyOrWhitespaceCategoryID(t *testing.T) {
 
 	created := createProductViaService(t, stack, domain.ProductStatusDraft, 3)
 	adminToken := issueTestAdminToken(t)
+	baseSnapshot := getPersistedProductSnapshot(t, stack.DB, created.Product.ID)
+	baseCount := countProducts(t, stack.DB)
+	baseStockCount := countStockRecords(t, stack.DB)
 
 	tests := []struct {
 		name string
@@ -240,6 +292,16 @@ func TestAdminPatchRejectsEmptyOrWhitespaceCategoryID(t *testing.T) {
 			require.NoError(t, json.NewDecoder(response.Body).Decode(&httpErr))
 			require.Equal(t, "invalid_request", httpErr.Code)
 			require.Equal(t, "invalid category id", httpErr.Message)
+
+			require.Equal(t, baseCount, countProducts(t, stack.DB))
+			require.Equal(t, baseStockCount, countStockRecords(t, stack.DB))
+
+			after := getPersistedProductSnapshot(t, stack.DB, created.Product.ID)
+			require.Equal(t, baseSnapshot.Name, after.Name)
+			require.Equal(t, baseSnapshot.Status, after.Status)
+			require.Equal(t, baseSnapshot.Quantity, after.Quantity)
+			require.Equal(t, baseSnapshot.Reserved, after.Reserved)
+			require.Equal(t, baseSnapshot.Available, after.Available)
 		})
 	}
 }
@@ -285,7 +347,13 @@ func TestAdminWriteRoutesAuthFailuresReturnJSONErrorResponse(t *testing.T) {
 	testhelper.CleanupDB(t, harness.DB)
 	stack := newCatalogStack(t)
 
-	productID := uuid.NewString()
+	protectedProduct := createProductViaService(t, stack, domain.ProductStatusPublished, 7)
+	productID := protectedProduct.Product.ID.String()
+	baseCount := countProducts(t, stack.DB)
+	baseStockCount := countStockRecords(t, stack.DB)
+	baseSnapshot := getPersistedProductSnapshot(t, stack.DB, protectedProduct.Product.ID)
+	currencyID := getCurrencyID(t, stack.DB, "USD")
+
 	inactiveAdminToken := issueTestToken(t, "admin", "inactive")
 	nonAdminToken := issueTestToken(t, "user", "active")
 
@@ -307,8 +375,8 @@ func TestAdminWriteRoutesAuthFailuresReturnJSONErrorResponse(t *testing.T) {
 		path   string
 		body   string
 	}{
-		{name: "post", method: http.MethodPost, path: "/v1/products", body: `{"sku":"SKU-1","name":"x","price":100,"currencyId":"` + uuid.NewString() + `","initialQuantity":1}`},
-		{name: "patch", method: http.MethodPatch, path: "/v1/products/" + productID, body: `{"name":"x"}`},
+		{name: "post", method: http.MethodPost, path: "/v1/products", body: `{"sku":"SKU-` + uuid.NewString() + `","name":"x","price":100,"currencyId":"` + currencyID.String() + `","initialQuantity":1}`},
+		{name: "patch", method: http.MethodPatch, path: "/v1/products/" + productID, body: `{"name":"forbidden-update","status":"archived"}`},
 		{name: "delete", method: http.MethodDelete, path: "/v1/products/" + productID, body: ""},
 	}
 
@@ -331,8 +399,104 @@ func TestAdminWriteRoutesAuthFailuresReturnJSONErrorResponse(t *testing.T) {
 				var body dto.ErrorResponse
 				require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
 				require.Equal(t, tt.expectedCode, body.Code)
+
+				require.Equal(t, baseCount, countProducts(t, stack.DB))
+				require.Equal(t, baseStockCount, countStockRecords(t, stack.DB))
+
+				after := getPersistedProductSnapshot(t, stack.DB, protectedProduct.Product.ID)
+				require.Equal(t, baseSnapshot.Name, after.Name)
+				require.Equal(t, baseSnapshot.Status, after.Status)
+				require.Equal(t, baseSnapshot.Quantity, after.Quantity)
+				require.Equal(t, baseSnapshot.Reserved, after.Reserved)
+				require.Equal(t, baseSnapshot.Available, after.Available)
 			})
 		}
+	}
+}
+
+func TestAdminCreateRejectsInvalidPayloadNoPersistenceSideEffects(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newCatalogStack(t)
+
+	adminToken := issueTestAdminToken(t)
+	currencyID := getCurrencyID(t, stack.DB, "USD")
+	baseCount := countProducts(t, stack.DB)
+	baseStockCount := countStockRecords(t, stack.DB)
+
+	tests := []struct {
+		name            string
+		body            string
+		expectedMessage string
+	}{
+		{name: "malformed json", body: `{"sku":`, expectedMessage: "invalid request body"},
+		{name: "zero currency", body: `{"sku":"SKU-` + uuid.NewString() + `","name":"Name","price":100,"currencyId":"00000000-0000-0000-0000-000000000000","initialQuantity":1}`, expectedMessage: "invalid currency"},
+		{name: "zero category", body: `{"sku":"SKU-` + uuid.NewString() + `","name":"Name","price":100,"currencyId":"` + currencyID.String() + `","categoryId":"00000000-0000-0000-0000-000000000000","initialQuantity":1}`, expectedMessage: "invalid category id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := performAdminJSONRequest(t, stack, http.MethodPost, "/v1/products", tt.body, adminToken, http.StatusBadRequest)
+
+			var httpErr dto.ErrorResponse
+			require.NoError(t, json.NewDecoder(res.Body).Decode(&httpErr))
+			require.Equal(t, "invalid_request", httpErr.Code)
+			require.Equal(t, tt.expectedMessage, httpErr.Message)
+
+			require.Equal(t, baseCount, countProducts(t, stack.DB))
+			require.Equal(t, baseStockCount, countStockRecords(t, stack.DB))
+		})
+	}
+}
+
+func TestAdminPatchRejectsInvalidPayloadNoPersistenceSideEffects(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newCatalogStack(t)
+
+	created := createProductViaService(t, stack, domain.ProductStatusDraft, 3)
+	adminToken := issueTestAdminToken(t)
+	baseSnapshot := getPersistedProductSnapshot(t, stack.DB, created.Product.ID)
+	baseCount := countProducts(t, stack.DB)
+	baseStockCount := countStockRecords(t, stack.DB)
+
+	tests := []struct {
+		name            string
+		body            string
+		expectedMessage string
+	}{
+		{name: "malformed json", body: `{"status":`, expectedMessage: "invalid request body"},
+		{name: "category null", body: `{"categoryId":null}`, expectedMessage: "invalid category id"},
+		{name: "category number", body: `{"categoryId":123}`, expectedMessage: "invalid category id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := performAdminJSONRequest(
+				t,
+				stack,
+				http.MethodPatch,
+				"/v1/products/"+created.Product.ID.String(),
+				tt.body,
+				adminToken,
+				http.StatusBadRequest,
+			)
+
+			var httpErr dto.ErrorResponse
+			require.NoError(t, json.NewDecoder(res.Body).Decode(&httpErr))
+			require.Equal(t, "invalid_request", httpErr.Code)
+			require.Equal(t, tt.expectedMessage, httpErr.Message)
+
+			require.Equal(t, baseCount, countProducts(t, stack.DB))
+			require.Equal(t, baseStockCount, countStockRecords(t, stack.DB))
+
+			after := getPersistedProductSnapshot(t, stack.DB, created.Product.ID)
+			require.Equal(t, baseSnapshot.Name, after.Name)
+			require.Equal(t, baseSnapshot.Status, after.Status)
+			require.Equal(t, baseSnapshot.Quantity, after.Quantity)
+			require.Equal(t, baseSnapshot.Reserved, after.Reserved)
+			require.Equal(t, baseSnapshot.Available, after.Available)
+		})
 	}
 }
 
@@ -419,41 +583,9 @@ func createProductViaService(
 		},
 		InitialQuantity: initialQuantity,
 	})
-	if err == nil {
-		return result
-	}
+	require.NoError(t, err)
 
-	if !strings.Contains(err.Error(), "no rows in result set") {
-		require.NoError(t, err)
-	}
-
-	_, insertErr := stack.DB.ExecContext(
-		context.Background(),
-		`INSERT INTO products (product_id, sku, name, price, currency_id, status) VALUES ($1, $2, $3, $4, $5, $6)`,
-		productID,
-		sku,
-		name,
-		int64(1500),
-		currencyID,
-		string(status),
-	)
-	require.NoError(t, insertErr)
-
-	_, stockErr := stack.DB.ExecContext(
-		context.Background(),
-		`INSERT INTO stock_records (product_id, quantity, reserved) VALUES ($1, $2, 0)`,
-		productID,
-		initialQuantity,
-	)
-	require.NoError(t, stockErr)
-
-	fallback, getErr := stack.CatalogService.GetProduct(context.Background(), productID)
-	require.NoError(t, getErr)
-
-	return catalog.CreateProductResult{
-		Product: fallback.Product,
-		Stock:   fallback.Stock,
-	}
+	return result
 }
 
 func getCurrencyID(t *testing.T, db *sql.DB, code string) uuid.UUID {
@@ -474,6 +606,54 @@ func getProductStatus(t *testing.T, db *sql.DB, productID uuid.UUID) domain.Prod
 	require.NoError(t, err)
 
 	return domain.ProductStatus(status)
+}
+
+type persistedProductSnapshot struct {
+	Name      string
+	Status    domain.ProductStatus
+	Quantity  int32
+	Reserved  int32
+	Available int32
+}
+
+func getPersistedProductSnapshot(t *testing.T, db *sql.DB, productID uuid.UUID) persistedProductSnapshot {
+	t.Helper()
+
+	var snapshot persistedProductSnapshot
+	var status string
+	err := db.QueryRowContext(
+		context.Background(),
+		`SELECT p.name, p.status, s.quantity, s.reserved, s.available
+		 FROM products p
+		 INNER JOIN stock_records s ON s.product_id = p.product_id
+		 WHERE p.product_id = $1`,
+		productID,
+	).Scan(&snapshot.Name, &status, &snapshot.Quantity, &snapshot.Reserved, &snapshot.Available)
+	require.NoError(t, err)
+
+	snapshot.Status = domain.ProductStatus(status)
+
+	return snapshot
+}
+
+func countProducts(t *testing.T, db *sql.DB) int {
+	t.Helper()
+
+	var count int
+	err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM products`).Scan(&count)
+	require.NoError(t, err)
+
+	return count
+}
+
+func countStockRecords(t *testing.T, db *sql.DB) int {
+	t.Helper()
+
+	var count int
+	err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM stock_records`).Scan(&count)
+	require.NoError(t, err)
+
+	return count
 }
 
 func getProductHTTP(t *testing.T, stack *testhelper.TestStack, productID string, expectedStatus int) dto.Product {
