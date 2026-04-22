@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -134,6 +135,205 @@ func TestListPublishedProductsReturnsOnlyPublished(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, grpcList.GetItems(), 1)
 	require.Equal(t, published.Product.ID.String(), grpcList.GetItems()[0].GetProductId())
+}
+
+func TestAdminWriteRoutesAndPublicFiltering(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newCatalogStack(t)
+
+	currencyID := getCurrencyID(t, stack.DB, "USD")
+	adminToken := issueTestAdminToken(t)
+
+	serviceCreated, serviceCreateErr := stack.CatalogService.CreateProduct(context.Background(), catalog.CreateProductInput{
+		Product: domain.Product{
+			SKU:        "SVC-" + uuid.NewString(),
+			Name:       "Service create",
+			Price:      999,
+			CurrencyID: currencyID,
+			Currency:   "USD",
+			Status:     domain.ProductStatusDraft,
+		},
+		InitialQuantity: 1,
+	})
+	require.NoError(t, serviceCreateErr)
+	require.Equal(t, domain.ProductStatusDraft, serviceCreated.Product.Status)
+
+	publishedStatus := domain.ProductStatusPublished
+	servicePatched, servicePatchErr := stack.CatalogService.UpdateProduct(context.Background(), catalog.UpdateProductInput{
+		ID:     serviceCreated.Product.ID,
+		Status: &publishedStatus,
+	})
+	require.NoError(t, servicePatchErr)
+	storedStatus := getProductStatus(t, stack.DB, serviceCreated.Product.ID)
+	require.Equalf(t, domain.ProductStatusPublished, servicePatched.Product.Status, "stored status: %s", storedStatus)
+
+	createBody := fmt.Sprintf(`{"sku":"SKU-%s","name":"Admin created","description":"created via admin route","price":1099,"currencyId":"%s","status":"draft","initialQuantity":11}`,
+		uuid.NewString(),
+		currencyID.String(),
+	)
+	createRes := performAdminJSONRequest(t, stack, http.MethodPost, "/v1/products", createBody, adminToken, http.StatusCreated)
+
+	var created dto.ProductWriteResponse
+	require.NoError(t, json.NewDecoder(createRes.Body).Decode(&created))
+	require.Equal(t, dto.ProductStatusDraft, created.Product.Status)
+	require.Equal(t, 11, created.Stock.Quantity)
+
+	getDraftErr := getProductHTTPError(t, stack, created.Product.ProductId, http.StatusNotFound)
+	require.Equal(t, "product_not_found", getDraftErr.Code)
+
+	categoryID := uuid.New()
+	patchBody := fmt.Sprintf(`{"status":"published","name":"Admin published","categoryId":"%s"}`,
+		categoryID.String(),
+	)
+	patchRes := performAdminJSONRequest(t, stack, http.MethodPatch, "/v1/products/"+created.Product.ProductId, patchBody, adminToken, http.StatusOK)
+
+	var updated dto.ProductWriteResponse
+	require.NoError(t, json.NewDecoder(patchRes.Body).Decode(&updated))
+	require.Equal(t, dto.ProductStatusPublished, updated.Product.Status)
+	require.Equal(t, "Admin published", updated.Product.Name)
+	require.NotNil(t, updated.Product.CategoryId)
+	require.Equal(t, categoryID.String(), *updated.Product.CategoryId)
+
+	publicProduct := getProductHTTP(t, stack, created.Product.ProductId, http.StatusOK)
+	require.Equal(t, dto.ProductStatusPublished, publicProduct.Status)
+
+	deleteRes := performAdminJSONRequest(t, stack, http.MethodDelete, "/v1/products/"+created.Product.ProductId, "", adminToken, http.StatusOK)
+
+	var archived dto.ProductWriteResponse
+	require.NoError(t, json.NewDecoder(deleteRes.Body).Decode(&archived))
+	require.Equal(t, dto.ProductStatusArchived, archived.Product.Status)
+
+	getArchivedErr := getProductHTTPError(t, stack, created.Product.ProductId, http.StatusNotFound)
+	require.Equal(t, "product_not_found", getArchivedErr.Code)
+}
+
+func TestAdminPatchRejectsEmptyOrWhitespaceCategoryID(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newCatalogStack(t)
+
+	created := createProductViaService(t, stack, domain.ProductStatusDraft, 3)
+	adminToken := issueTestAdminToken(t)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "empty", body: `{"categoryId":""}`},
+		{name: "whitespace", body: `{"categoryId":"   "}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := performAdminJSONRequest(
+				t,
+				stack,
+				http.MethodPatch,
+				"/v1/products/"+created.Product.ID.String(),
+				tt.body,
+				adminToken,
+				http.StatusBadRequest,
+			)
+
+			var httpErr dto.ErrorResponse
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&httpErr))
+			require.Equal(t, "invalid_request", httpErr.Code)
+			require.Equal(t, "invalid category id", httpErr.Message)
+		})
+	}
+}
+
+func TestAdminPatchRejectsNullOrNonStringCategoryID(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newCatalogStack(t)
+
+	created := createProductViaService(t, stack, domain.ProductStatusDraft, 3)
+	adminToken := issueTestAdminToken(t)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "null", body: `{"categoryId":null}`},
+		{name: "number", body: `{"categoryId":123}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := performAdminJSONRequest(
+				t,
+				stack,
+				http.MethodPatch,
+				"/v1/products/"+created.Product.ID.String(),
+				tt.body,
+				adminToken,
+				http.StatusBadRequest,
+			)
+
+			var httpErr dto.ErrorResponse
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&httpErr))
+			require.Equal(t, "invalid_request", httpErr.Code)
+			require.Equal(t, "invalid category id", httpErr.Message)
+		})
+	}
+}
+
+func TestAdminWriteRoutesAuthFailuresReturnJSONErrorResponse(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newCatalogStack(t)
+
+	productID := uuid.NewString()
+	inactiveAdminToken := issueTestToken(t, "admin", "inactive")
+	nonAdminToken := issueTestToken(t, "user", "active")
+
+	tests := []struct {
+		name           string
+		token          string
+		expectedStatus int
+		expectedCode   string
+	}{
+		{name: "missing token", token: "", expectedStatus: http.StatusUnauthorized, expectedCode: "unauthorized"},
+		{name: "invalid token", token: "not-a-jwt", expectedStatus: http.StatusUnauthorized, expectedCode: "unauthorized"},
+		{name: "non-admin token", token: nonAdminToken, expectedStatus: http.StatusForbidden, expectedCode: "forbidden"},
+		{name: "inactive admin token", token: inactiveAdminToken, expectedStatus: http.StatusForbidden, expectedCode: "forbidden"},
+	}
+
+	requestCases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "post", method: http.MethodPost, path: "/v1/products", body: `{"sku":"SKU-1","name":"x","price":100,"currencyId":"` + uuid.NewString() + `","initialQuantity":1}`},
+		{name: "patch", method: http.MethodPatch, path: "/v1/products/" + productID, body: `{"name":"x"}`},
+		{name: "delete", method: http.MethodDelete, path: "/v1/products/" + productID, body: ""},
+	}
+
+	for _, reqCase := range requestCases {
+		for _, tt := range tests {
+			t.Run(reqCase.name+" "+tt.name, func(t *testing.T) {
+				request := httptest.NewRequest(reqCase.method, reqCase.path, strings.NewReader(reqCase.body))
+				if reqCase.body != "" {
+					request.Header.Set("Content-Type", "application/json")
+				}
+				if tt.token != "" {
+					request.Header.Set("Authorization", "Bearer "+tt.token)
+				}
+
+				response := httptest.NewRecorder()
+				stack.HTTPHandler.ServeHTTP(response, request)
+
+				require.Equal(t, tt.expectedStatus, response.Code)
+
+				var body dto.ErrorResponse
+				require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+				require.Equal(t, tt.expectedCode, body.Code)
+			})
+		}
+	}
 }
 
 func TestReserveStockViaGRPC(t *testing.T) {
@@ -266,6 +466,16 @@ func getCurrencyID(t *testing.T, db *sql.DB, code string) uuid.UUID {
 	return currencyID
 }
 
+func getProductStatus(t *testing.T, db *sql.DB, productID uuid.UUID) domain.ProductStatus {
+	t.Helper()
+
+	var status string
+	err := db.QueryRowContext(context.Background(), "SELECT status FROM products WHERE product_id = $1", productID).Scan(&status)
+	require.NoError(t, err)
+
+	return domain.ProductStatus(status)
+}
+
 func getProductHTTP(t *testing.T, stack *testhelper.TestStack, productID string, expectedStatus int) dto.Product {
 	t.Helper()
 
@@ -309,4 +519,50 @@ func listPublishedProductsHTTP(t *testing.T, stack *testhelper.TestStack) dto.Pr
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&list))
 
 	return list
+}
+
+func performAdminJSONRequest(
+	t *testing.T,
+	stack *testhelper.TestStack,
+	method string,
+	path string,
+	body string,
+	token string,
+	expectedStatus int,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+
+	stack.HTTPHandler.ServeHTTP(response, request)
+	require.Equalf(t, expectedStatus, response.Code, "response body: %s", response.Body.String())
+
+	return response
+}
+
+func issueTestAdminToken(t *testing.T) string {
+	t.Helper()
+
+	return issueTestToken(t, "admin", "active")
+}
+
+func issueTestToken(t *testing.T, role string, userStatus string) string {
+	t.Helper()
+
+	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, jwtv5.MapClaims{
+		"sub":    uuid.NewString(),
+		"iss":    testhelper.TestAuthIssuer,
+		"role":   role,
+		"status": userStatus,
+	})
+
+	signed, err := token.SignedString([]byte(testhelper.TestAuthKey))
+	require.NoError(t, err)
+
+	return signed
 }
