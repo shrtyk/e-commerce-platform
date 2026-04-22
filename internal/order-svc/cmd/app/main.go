@@ -90,7 +90,7 @@ func main() {
 	}
 
 	typeRegistry := commonkafka.NewTypeRegistry()
-	err = typeRegistry.RegisterMessages(&orderv1.OrderCreated{}, &orderv1.OrderCancelled{})
+	err = typeRegistry.RegisterMessages(&orderv1.OrderCreated{}, &orderv1.OrderCancelled{}, &orderv1.OrderConfirmed{})
 	if err != nil {
 		panic(fmt.Errorf("register kafka type: %w", err))
 	}
@@ -191,11 +191,14 @@ func main() {
 	var paymentEventsWorker *adapterinboundkafka.PaymentEventsWorker
 	if cfg.PaymentEvents.Enabled {
 		paymentSerde := commonkafka.NewProtoSerde(schemaRegistryClient, commonkafka.NewDescriptorSchemaProvider())
-		if err := paymentSerde.RegisterType(context.Background(), cfg.PaymentEvents.Topic, &paymentv1.PaymentSucceeded{}); err != nil {
-			panic(fmt.Errorf("register payment succeeded schema: %w", err))
-		}
-		if err := paymentSerde.RegisterType(context.Background(), cfg.PaymentEvents.Topic, &paymentv1.PaymentFailed{}); err != nil {
-			panic(fmt.Errorf("register payment failed schema: %w", err))
+		if err := paymentSerde.RegisterTypes(
+			context.Background(),
+			cfg.PaymentEvents.Topic,
+			&paymentv1.PaymentInitiated{},
+			&paymentv1.PaymentSucceeded{},
+			&paymentv1.PaymentFailed{},
+		); err != nil {
+			panic(fmt.Errorf("register payment event schemas: %w", err))
 		}
 
 		paymentConsumer, err := commonkafka.NewConsumer(paymentEventsClient, paymentSerde)
