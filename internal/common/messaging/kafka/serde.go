@@ -163,6 +163,16 @@ func (s *ProtoSerde) RegisterType(ctx context.Context, topic string, prototype p
 	return nil
 }
 
+func (s *ProtoSerde) RegisterTypes(ctx context.Context, topic string, samples ...proto.Message) error {
+	for _, sample := range samples {
+		if err := s.RegisterType(ctx, topic, sample); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (s *ProtoSerde) registerDependencies(ctx context.Context, schemaDef SchemaDefinition) ([]sr.SchemaReference, error) {
 	if len(schemaDef.References) == 0 {
 		return nil, nil

@@ -3,6 +3,7 @@ package kafka
 import (
 	"testing"
 
+	notificationv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/notification/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
@@ -95,4 +96,22 @@ func TestTypeRegistryNewMessageNilReceiver(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "type registry is nil")
 	require.Nil(t, msg)
+}
+
+func TestTypeRegistryRegisterMessagesRegistersAllSamples(t *testing.T) {
+	registry := NewTypeRegistry()
+
+	err := registry.RegisterMessages(
+		&catalogv1.ProductCreated{},
+		&notificationv1.NotificationSent{},
+	)
+	require.NoError(t, err)
+
+	product, err := registry.NewMessage("ecommerce.catalog.v1.ProductCreated")
+	require.NoError(t, err)
+	require.IsType(t, &catalogv1.ProductCreated{}, product)
+
+	notification, err := registry.NewMessage("ecommerce.notification.v1.NotificationSent")
+	require.NoError(t, err)
+	require.IsType(t, &notificationv1.NotificationSent{}, notification)
 }

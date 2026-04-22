@@ -208,3 +208,28 @@ func TestProtoSerdeRegisterTypeFailsOnUnresolvedDependencyGraphOrOrder(t *testin
 		})
 	}
 }
+
+func TestProtoSerdeRegisterTypesRegistersAllMessages(t *testing.T) {
+	registry := srfake.New()
+	t.Cleanup(registry.Close)
+
+	registryClient, err := sr.NewClient(sr.URLs(registry.URL()))
+	require.NoError(t, err)
+
+	serde := NewProtoSerde(registryClient, staticSchemaProvider{})
+	ctx := context.Background()
+	topic := "order.events"
+
+	err = serde.RegisterTypes(
+		ctx,
+		topic,
+		&orderv1.OrderCreated{},
+		&orderv1.OrderCancelled{},
+	)
+	require.NoError(t, err)
+
+	subjects, err := registryClient.Subjects(ctx)
+	require.NoError(t, err)
+	require.Contains(t, subjects, TopicRecordNameSubject(topic, "ecommerce.order.v1.OrderCreated"))
+	require.Contains(t, subjects, TopicRecordNameSubject(topic, "ecommerce.order.v1.OrderCancelled"))
+}
