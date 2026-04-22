@@ -119,6 +119,22 @@ func (q *Queries) DeleteProduct(ctx context.Context, productID uuid.UUID) (Produ
 	return i, err
 }
 
+const getCurrencyByCode = `-- name: GetCurrencyByCode :one
+SELECT
+  id
+FROM
+  currencies
+WHERE
+  code = $1
+`
+
+func (q *Queries) GetCurrencyByCode(ctx context.Context, code string) (uuid.UUID, error) {
+	row := q.db.QueryRowContext(ctx, getCurrencyByCode, code)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getProductByID = `-- name: GetProductByID :one
 SELECT
   products.product_id, products.sku, products.name, products.description, products.price, products.currency_id, products.category_id, products.status, products.created_at, products.updated_at,

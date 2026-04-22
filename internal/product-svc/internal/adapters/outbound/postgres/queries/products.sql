@@ -18,6 +18,14 @@ FROM
 WHERE
   sku = sqlc.arg (sku);
 
+-- name: GetCurrencyByCode :one
+SELECT
+  id
+FROM
+  currencies
+WHERE
+  code = sqlc.arg (code);
+
 -- name: ListProducts :many
 SELECT
   sqlc.embed(products),

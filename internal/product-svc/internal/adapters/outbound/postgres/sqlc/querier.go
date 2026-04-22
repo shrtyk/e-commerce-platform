@@ -17,6 +17,7 @@ type Querier interface {
 	CreateProduct(ctx context.Context, arg CreateProductParams) (CreateProductRow, error)
 	CreateStockRecord(ctx context.Context, arg CreateStockRecordParams) (StockRecord, error)
 	DeleteProduct(ctx context.Context, productID uuid.UUID) (Product, error)
+	GetCurrencyByCode(ctx context.Context, code string) (uuid.UUID, error)
 	GetProductByID(ctx context.Context, productID uuid.UUID) (GetProductByIDRow, error)
 	GetProductBySKU(ctx context.Context, sku string) (GetProductBySKURow, error)
 	GetStockRecordByProductID(ctx context.Context, productID uuid.UUID) (StockRecord, error)

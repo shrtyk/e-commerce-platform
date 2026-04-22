@@ -109,6 +109,17 @@ func (s *CatalogService) CreateProduct(ctx context.Context, input CreateProductI
 		return CreateProductResult{}, ErrInvalidCreateProductInput
 	}
 
+	currencyID, err := s.repos.Products.GetCurrencyByCode(ctx, normalizedProduct.Currency)
+	if err != nil {
+		if errors.Is(err, outbound.ErrInvalidCurrency) {
+			return CreateProductResult{}, outbound.ErrInvalidCurrency
+		}
+
+		return CreateProductResult{}, fmt.Errorf("resolve currency by code: %w", err)
+	}
+
+	normalizedProduct.CurrencyID = currencyID
+
 	var result CreateProductResult
 	err = s.txProvider.WithTransaction(ctx, nil, func(uow tx.UnitOfWork[CatalogRepos]) error {
 		repos := uow.Repos()
@@ -389,12 +400,13 @@ func mergeProductUpdate(product domain.Product, input UpdateProductInput) domain
 func normalizeCreateProductInput(product domain.Product) (domain.Product, error) {
 	product.SKU = strings.TrimSpace(product.SKU)
 	product.Name = strings.TrimSpace(product.Name)
+	product.Currency = strings.TrimSpace(product.Currency)
 
 	if product.Status == domain.ProductStatusUnknown {
 		product.Status = domain.ProductStatusDraft
 	}
 
-	if product.SKU == "" || product.Name == "" || product.CurrencyID == uuid.Nil || product.Price < 0 || !isValidProductStatus(product.Status) {
+	if product.SKU == "" || product.Name == "" || product.Currency == "" || product.Price < 0 || !isValidProductStatus(product.Status) {
 		return domain.Product{}, ErrInvalidCreateProductInput
 	}
 

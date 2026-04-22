@@ -16,7 +16,7 @@ INSERT INTO
 VALUES
   ('USD', 'US Dollar', '$', 2),
   ('EUR', 'Euro', '€', 2),
-  ('RUB', 'Brazilian Real', 'R$', 2)
+  ('RUB', 'Russian Ruble', '₽', 2)
 ON CONFLICT (code) DO NOTHING;
 
 -- +goose StatementEnd

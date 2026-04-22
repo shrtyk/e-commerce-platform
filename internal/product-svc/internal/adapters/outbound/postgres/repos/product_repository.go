@@ -56,6 +56,19 @@ func (r *ProductRepository) GetBySKU(ctx context.Context, sku string) (domain.Pr
 	return mapProduct(row.Product, &row.Currency), nil
 }
 
+func (r *ProductRepository) GetCurrencyByCode(ctx context.Context, code string) (uuid.UUID, error) {
+	currencyID, err := r.queries.GetCurrencyByCode(ctx, code)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return uuid.Nil, outbound.ErrInvalidCurrency
+		}
+
+		return uuid.Nil, fmt.Errorf("get currency by code %q: %w", code, err)
+	}
+
+	return currencyID, nil
+}
+
 func (r *ProductRepository) List(ctx context.Context, params outbound.ProductListParams) ([]domain.Product, error) {
 	rows, err := r.queries.ListProducts(ctx, sqlc.ListProductsParams{
 		Limit:  params.Limit,
