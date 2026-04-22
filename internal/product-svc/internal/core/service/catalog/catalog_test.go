@@ -517,6 +517,7 @@ func TestUpdateProduct(t *testing.T) {
 }
 
 func TestReserveStock(t *testing.T) {
+	orderID := uuid.New()
 	productID := uuid.New()
 	stock := domain.StockRecord{StockRecordID: uuid.New(), ProductID: productID, Quantity: 10, Reserved: 3, Available: 7}
 	updated := domain.StockRecord{StockRecordID: stock.StockRecordID, ProductID: productID, Quantity: 10, Reserved: 5, Available: 5}
@@ -531,12 +532,15 @@ func TestReserveStock(t *testing.T) {
 	}{
 		{
 			name:  "success",
-			input: ReserveStockInput{ProductID: productID, Quantity: 2},
+			input: ReserveStockInput{OrderID: orderID, ProductID: productID, Quantity: 2},
 			setupMocks: func(stocks *outboundmocks.MockStockRepository) {
-				stocks.EXPECT().GetByProductID(testifymock.Anything, productID).Return(stock, nil)
+				stocks.EXPECT().GetByProductIDForUpdate(testifymock.Anything, productID).Return(stock, nil)
 				stocks.EXPECT().Update(testifymock.Anything, testifymock.MatchedBy(func(got domain.StockRecord) bool {
 					return got.StockRecordID == stock.StockRecordID && got.Reserved == 5
 				})).Return(updated, nil)
+				stocks.EXPECT().CreateReservation(testifymock.Anything, testifymock.MatchedBy(func(got outbound.StockReservation) bool {
+					return got.OrderID == orderID && got.ProductID == productID && got.Quantity == 2
+				})).Return(outbound.StockReservation{StockReservationID: uuid.New(), OrderID: orderID, ProductID: productID, Quantity: 2}, nil)
 			},
 		},
 		{
@@ -546,20 +550,21 @@ func TestReserveStock(t *testing.T) {
 		},
 		{
 			name:  "insufficient stock",
-			input: ReserveStockInput{ProductID: productID, Quantity: 8},
+			input: ReserveStockInput{OrderID: orderID, ProductID: productID, Quantity: 8},
 			setupMocks: func(stocks *outboundmocks.MockStockRepository) {
-				stocks.EXPECT().GetByProductID(testifymock.Anything, productID).Return(stock, nil)
+				stocks.EXPECT().GetByProductIDForUpdate(testifymock.Anything, productID).Return(stock, nil)
 			},
 			assertNoCalls: func(t *testing.T, stocks *outboundmocks.MockStockRepository) {
 				stocks.AssertNotCalled(t, "Update", testifymock.Anything, testifymock.Anything)
+				stocks.AssertNotCalled(t, "CreateReservation", testifymock.Anything, testifymock.Anything)
 			},
 			errIs: ErrInsufficientStock,
 		},
 		{
 			name:  "repo error",
-			input: ReserveStockInput{ProductID: productID, Quantity: 2},
+			input: ReserveStockInput{OrderID: orderID, ProductID: productID, Quantity: 2},
 			setupMocks: func(stocks *outboundmocks.MockStockRepository) {
-				stocks.EXPECT().GetByProductID(testifymock.Anything, productID).Return(domain.StockRecord{}, errors.New("db down"))
+				stocks.EXPECT().GetByProductIDForUpdate(testifymock.Anything, productID).Return(domain.StockRecord{}, errors.New("db down"))
 			},
 			errContains: "get stock by product id",
 		},
@@ -750,9 +755,11 @@ func TestCreateProductTxProviderError(t *testing.T) {
 }
 
 func TestReleaseStock(t *testing.T) {
+	orderID := uuid.New()
 	productID := uuid.New()
 	stock := domain.StockRecord{StockRecordID: uuid.New(), ProductID: productID, Quantity: 10, Reserved: 4, Available: 6}
 	updated := domain.StockRecord{StockRecordID: stock.StockRecordID, ProductID: productID, Quantity: 10, Reserved: 2, Available: 8}
+ 	reservation := outbound.StockReservation{StockReservationID: uuid.New(), OrderID: orderID, ProductID: productID, Quantity: 2}
 
 	tests := []struct {
 		name        string
@@ -763,12 +770,14 @@ func TestReleaseStock(t *testing.T) {
 	}{
 		{
 			name:  "success",
-			input: ReleaseStockInput{ProductID: productID, Quantity: 2},
+			input: ReleaseStockInput{OrderID: orderID},
 			setupMocks: func(stocks *outboundmocks.MockStockRepository) {
-				stocks.EXPECT().GetByProductID(testifymock.Anything, productID).Return(stock, nil)
+				stocks.EXPECT().ListReservationsByOrderID(testifymock.Anything, orderID).Return([]outbound.StockReservation{reservation}, nil)
+				stocks.EXPECT().GetByProductIDForUpdate(testifymock.Anything, productID).Return(stock, nil)
 				stocks.EXPECT().Update(testifymock.Anything, testifymock.MatchedBy(func(got domain.StockRecord) bool {
 					return got.StockRecordID == stock.StockRecordID && got.Reserved == 2
 				})).Return(updated, nil)
+				stocks.EXPECT().DeleteReservationsByOrderID(testifymock.Anything, orderID).Return(nil)
 			},
 		},
 		{
@@ -778,20 +787,29 @@ func TestReleaseStock(t *testing.T) {
 		},
 		{
 			name:  "release exceeds reserved",
-			input: ReleaseStockInput{ProductID: productID, Quantity: 5},
+			input: ReleaseStockInput{OrderID: orderID},
 			setupMocks: func(stocks *outboundmocks.MockStockRepository) {
-				stocks.EXPECT().GetByProductID(testifymock.Anything, productID).Return(stock, nil)
+				stocks.EXPECT().ListReservationsByOrderID(testifymock.Anything, orderID).Return([]outbound.StockReservation{{OrderID: orderID, ProductID: productID, Quantity: 5}}, nil)
+				stocks.EXPECT().GetByProductIDForUpdate(testifymock.Anything, productID).Return(stock, nil)
 			},
 			errIs: outbound.ErrInvalidStockUpdate,
 		},
 		{
 			name:  "update repo error",
-			input: ReleaseStockInput{ProductID: productID, Quantity: 2},
+			input: ReleaseStockInput{OrderID: orderID},
 			setupMocks: func(stocks *outboundmocks.MockStockRepository) {
-				stocks.EXPECT().GetByProductID(testifymock.Anything, productID).Return(stock, nil)
+				stocks.EXPECT().ListReservationsByOrderID(testifymock.Anything, orderID).Return([]outbound.StockReservation{reservation}, nil)
+				stocks.EXPECT().GetByProductIDForUpdate(testifymock.Anything, productID).Return(stock, nil)
 				stocks.EXPECT().Update(testifymock.Anything, testifymock.Anything).Return(domain.StockRecord{}, errors.New("update failed"))
 			},
 			errContains: "update stock record",
+		},
+		{
+			name:  "idempotent when no reservations",
+			input: ReleaseStockInput{OrderID: orderID},
+			setupMocks: func(stocks *outboundmocks.MockStockRepository) {
+				stocks.EXPECT().ListReservationsByOrderID(testifymock.Anything, orderID).Return(nil, nil)
+			},
 		},
 	}
 
@@ -820,7 +838,7 @@ func TestReleaseStock(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, int32(2), result.Stock.Reserved)
+			require.True(t, result.Released)
 		})
 	}
 }

@@ -404,7 +404,9 @@ func (_mock *MockProductRepository) GetCurrencyByCode(ctx context.Context, code 
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) uuid.UUID); ok {
 		r0 = returnFunc(ctx, code)
 	} else {
-		r0 = ret.Get(0).(uuid.UUID)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(uuid.UUID)
+		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
 		r1 = returnFunc(ctx, code)
@@ -444,8 +446,8 @@ func (_c *MockProductRepository_GetCurrencyByCode_Call) Run(run func(ctx context
 	return _c
 }
 
-func (_c *MockProductRepository_GetCurrencyByCode_Call) Return(currencyID uuid.UUID, err error) *MockProductRepository_GetCurrencyByCode_Call {
-	_c.Call.Return(currencyID, err)
+func (_c *MockProductRepository_GetCurrencyByCode_Call) Return(uUID uuid.UUID, err error) *MockProductRepository_GetCurrencyByCode_Call {
+	_c.Call.Return(uUID, err)
 	return _c
 }
 
@@ -681,6 +683,129 @@ func (_c *MockStockRepository_Create_Call) RunAndReturn(run func(ctx context.Con
 	return _c
 }
 
+// CreateReservation provides a mock function for the type MockStockRepository
+func (_mock *MockStockRepository) CreateReservation(ctx context.Context, reservation outbound.StockReservation) (outbound.StockReservation, error) {
+	ret := _mock.Called(ctx, reservation)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateReservation")
+	}
+
+	var r0 outbound.StockReservation
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, outbound.StockReservation) (outbound.StockReservation, error)); ok {
+		return returnFunc(ctx, reservation)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, outbound.StockReservation) outbound.StockReservation); ok {
+		r0 = returnFunc(ctx, reservation)
+	} else {
+		r0 = ret.Get(0).(outbound.StockReservation)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, outbound.StockReservation) error); ok {
+		r1 = returnFunc(ctx, reservation)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockStockRepository_CreateReservation_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateReservation'
+type MockStockRepository_CreateReservation_Call struct {
+	*mock.Call
+}
+
+// CreateReservation is a helper method to define mock.On call
+//   - ctx context.Context
+//   - reservation outbound.StockReservation
+func (_e *MockStockRepository_Expecter) CreateReservation(ctx interface{}, reservation interface{}) *MockStockRepository_CreateReservation_Call {
+	return &MockStockRepository_CreateReservation_Call{Call: _e.mock.On("CreateReservation", ctx, reservation)}
+}
+
+func (_c *MockStockRepository_CreateReservation_Call) Run(run func(ctx context.Context, reservation outbound.StockReservation)) *MockStockRepository_CreateReservation_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 outbound.StockReservation
+		if args[1] != nil {
+			arg1 = args[1].(outbound.StockReservation)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStockRepository_CreateReservation_Call) Return(stockReservation outbound.StockReservation, err error) *MockStockRepository_CreateReservation_Call {
+	_c.Call.Return(stockReservation, err)
+	return _c
+}
+
+func (_c *MockStockRepository_CreateReservation_Call) RunAndReturn(run func(ctx context.Context, reservation outbound.StockReservation) (outbound.StockReservation, error)) *MockStockRepository_CreateReservation_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DeleteReservationsByOrderID provides a mock function for the type MockStockRepository
+func (_mock *MockStockRepository) DeleteReservationsByOrderID(ctx context.Context, orderID uuid.UUID) error {
+	ret := _mock.Called(ctx, orderID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteReservationsByOrderID")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID) error); ok {
+		r0 = returnFunc(ctx, orderID)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockStockRepository_DeleteReservationsByOrderID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteReservationsByOrderID'
+type MockStockRepository_DeleteReservationsByOrderID_Call struct {
+	*mock.Call
+}
+
+// DeleteReservationsByOrderID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - orderID uuid.UUID
+func (_e *MockStockRepository_Expecter) DeleteReservationsByOrderID(ctx interface{}, orderID interface{}) *MockStockRepository_DeleteReservationsByOrderID_Call {
+	return &MockStockRepository_DeleteReservationsByOrderID_Call{Call: _e.mock.On("DeleteReservationsByOrderID", ctx, orderID)}
+}
+
+func (_c *MockStockRepository_DeleteReservationsByOrderID_Call) Run(run func(ctx context.Context, orderID uuid.UUID)) *MockStockRepository_DeleteReservationsByOrderID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uuid.UUID
+		if args[1] != nil {
+			arg1 = args[1].(uuid.UUID)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStockRepository_DeleteReservationsByOrderID_Call) Return(err error) *MockStockRepository_DeleteReservationsByOrderID_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockStockRepository_DeleteReservationsByOrderID_Call) RunAndReturn(run func(ctx context.Context, orderID uuid.UUID) error) *MockStockRepository_DeleteReservationsByOrderID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetByProductID provides a mock function for the type MockStockRepository
 func (_mock *MockStockRepository) GetByProductID(ctx context.Context, productID uuid.UUID) (domain.StockRecord, error) {
 	ret := _mock.Called(ctx, productID)
@@ -743,6 +868,140 @@ func (_c *MockStockRepository_GetByProductID_Call) Return(stockRecord domain.Sto
 }
 
 func (_c *MockStockRepository_GetByProductID_Call) RunAndReturn(run func(ctx context.Context, productID uuid.UUID) (domain.StockRecord, error)) *MockStockRepository_GetByProductID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetByProductIDForUpdate provides a mock function for the type MockStockRepository
+func (_mock *MockStockRepository) GetByProductIDForUpdate(ctx context.Context, productID uuid.UUID) (domain.StockRecord, error) {
+	ret := _mock.Called(ctx, productID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetByProductIDForUpdate")
+	}
+
+	var r0 domain.StockRecord
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID) (domain.StockRecord, error)); ok {
+		return returnFunc(ctx, productID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID) domain.StockRecord); ok {
+		r0 = returnFunc(ctx, productID)
+	} else {
+		r0 = ret.Get(0).(domain.StockRecord)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
+		r1 = returnFunc(ctx, productID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockStockRepository_GetByProductIDForUpdate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetByProductIDForUpdate'
+type MockStockRepository_GetByProductIDForUpdate_Call struct {
+	*mock.Call
+}
+
+// GetByProductIDForUpdate is a helper method to define mock.On call
+//   - ctx context.Context
+//   - productID uuid.UUID
+func (_e *MockStockRepository_Expecter) GetByProductIDForUpdate(ctx interface{}, productID interface{}) *MockStockRepository_GetByProductIDForUpdate_Call {
+	return &MockStockRepository_GetByProductIDForUpdate_Call{Call: _e.mock.On("GetByProductIDForUpdate", ctx, productID)}
+}
+
+func (_c *MockStockRepository_GetByProductIDForUpdate_Call) Run(run func(ctx context.Context, productID uuid.UUID)) *MockStockRepository_GetByProductIDForUpdate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uuid.UUID
+		if args[1] != nil {
+			arg1 = args[1].(uuid.UUID)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStockRepository_GetByProductIDForUpdate_Call) Return(stockRecord domain.StockRecord, err error) *MockStockRepository_GetByProductIDForUpdate_Call {
+	_c.Call.Return(stockRecord, err)
+	return _c
+}
+
+func (_c *MockStockRepository_GetByProductIDForUpdate_Call) RunAndReturn(run func(ctx context.Context, productID uuid.UUID) (domain.StockRecord, error)) *MockStockRepository_GetByProductIDForUpdate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListReservationsByOrderID provides a mock function for the type MockStockRepository
+func (_mock *MockStockRepository) ListReservationsByOrderID(ctx context.Context, orderID uuid.UUID) ([]outbound.StockReservation, error) {
+	ret := _mock.Called(ctx, orderID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListReservationsByOrderID")
+	}
+
+	var r0 []outbound.StockReservation
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID) ([]outbound.StockReservation, error)); ok {
+		return returnFunc(ctx, orderID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID) []outbound.StockReservation); ok {
+		r0 = returnFunc(ctx, orderID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]outbound.StockReservation)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
+		r1 = returnFunc(ctx, orderID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockStockRepository_ListReservationsByOrderID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListReservationsByOrderID'
+type MockStockRepository_ListReservationsByOrderID_Call struct {
+	*mock.Call
+}
+
+// ListReservationsByOrderID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - orderID uuid.UUID
+func (_e *MockStockRepository_Expecter) ListReservationsByOrderID(ctx interface{}, orderID interface{}) *MockStockRepository_ListReservationsByOrderID_Call {
+	return &MockStockRepository_ListReservationsByOrderID_Call{Call: _e.mock.On("ListReservationsByOrderID", ctx, orderID)}
+}
+
+func (_c *MockStockRepository_ListReservationsByOrderID_Call) Run(run func(ctx context.Context, orderID uuid.UUID)) *MockStockRepository_ListReservationsByOrderID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uuid.UUID
+		if args[1] != nil {
+			arg1 = args[1].(uuid.UUID)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockStockRepository_ListReservationsByOrderID_Call) Return(stockReservations []outbound.StockReservation, err error) *MockStockRepository_ListReservationsByOrderID_Call {
+	_c.Call.Return(stockReservations, err)
+	return _c
+}
+
+func (_c *MockStockRepository_ListReservationsByOrderID_Call) RunAndReturn(run func(ctx context.Context, orderID uuid.UUID) ([]outbound.StockReservation, error)) *MockStockRepository_ListReservationsByOrderID_Call {
 	_c.Call.Return(run)
 	return _c
 }

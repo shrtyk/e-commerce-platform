@@ -236,3 +236,65 @@ func TestStockRepositoryUpdate(t *testing.T) {
 		})
 	}
 }
+
+func TestStockRepositoryReservations(t *testing.T) {
+	now := time.Date(2026, time.April, 11, 12, 0, 0, 0, time.UTC)
+	orderID := uuid.New()
+	productID := uuid.New()
+	reservationID := uuid.New()
+
+	t.Run("create reservation", func(t *testing.T) {
+		repo := &StockRepository{queries: stubQuerier{
+			createReservationFunc: func(_ context.Context, arg sqlc.CreateStockReservationParams) (sqlc.StockReservation, error) {
+				require.Equal(t, orderID, arg.OrderID)
+				require.Equal(t, productID, arg.ProductID)
+				require.Equal(t, int32(3), arg.Quantity)
+
+				return sqlc.StockReservation{
+					StockReservationID: reservationID,
+					OrderID:            arg.OrderID,
+					ProductID:          arg.ProductID,
+					Quantity:           arg.Quantity,
+					CreatedAt:          now,
+					UpdatedAt:          now,
+				}, nil
+			},
+		}}
+
+		reservation, err := repo.CreateReservation(context.Background(), outbound.StockReservation{OrderID: orderID, ProductID: productID, Quantity: 3})
+		require.NoError(t, err)
+		require.Equal(t, reservationID, reservation.StockReservationID)
+	})
+
+	t.Run("list reservations by order id", func(t *testing.T) {
+		repo := &StockRepository{queries: stubQuerier{
+			listReservationsFunc: func(_ context.Context, gotOrderID uuid.UUID) ([]sqlc.StockReservation, error) {
+				require.Equal(t, orderID, gotOrderID)
+				return []sqlc.StockReservation{{
+					StockReservationID: reservationID,
+					OrderID:            orderID,
+					ProductID:          productID,
+					Quantity:           3,
+					CreatedAt:          now,
+					UpdatedAt:          now,
+				}}, nil
+			},
+		}}
+
+		reservations, err := repo.ListReservationsByOrderID(context.Background(), orderID)
+		require.NoError(t, err)
+		require.Len(t, reservations, 1)
+		require.Equal(t, productID, reservations[0].ProductID)
+	})
+
+	t.Run("delete reservations by order id", func(t *testing.T) {
+		repo := &StockRepository{queries: stubQuerier{
+			deleteReservationsFunc: func(_ context.Context, gotOrderID uuid.UUID) error {
+				require.Equal(t, orderID, gotOrderID)
+				return nil
+			},
+		}}
+
+		require.NoError(t, repo.DeleteReservationsByOrderID(context.Background(), orderID))
+	})
+}

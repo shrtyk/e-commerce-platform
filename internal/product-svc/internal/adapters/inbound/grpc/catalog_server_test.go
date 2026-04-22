@@ -220,6 +220,8 @@ func TestReserveStock(t *testing.T) {
 			expectedCode: codes.OK,
 			assert: func(t *testing.T, svc *stubCatalogService) {
 				require.Len(t, svc.reserveInputs, 2)
+				require.NotEqual(t, uuid.Nil, svc.reserveInputs[0].OrderID)
+				require.Equal(t, svc.reserveInputs[0].OrderID, svc.reserveInputs[1].OrderID)
 				require.Equal(t, int32(2), svc.reserveInputs[0].Quantity)
 			},
 		},
@@ -264,10 +266,53 @@ func TestReserveStock(t *testing.T) {
 }
 
 func TestReleaseStock(t *testing.T) {
-	server := NewCatalogServer(&stubCatalogService{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	response, err := server.ReleaseStock(context.Background(), &catalogv1.ReleaseStockRequest{OrderId: uuid.NewString()})
-	require.Nil(t, response)
-	require.Equal(t, codes.Unimplemented, status.Code(err))
+	orderID := uuid.New()
+
+	tests := []struct {
+		name         string
+		request      *catalogv1.ReleaseStockRequest
+		setup        func(*stubCatalogService)
+		expectedCode codes.Code
+		assert       func(*testing.T, *stubCatalogService, *catalogv1.ReleaseStockResponse)
+	}{
+		{
+			name:         "invalid order id",
+			request:      &catalogv1.ReleaseStockRequest{OrderId: "bad-order"},
+			expectedCode: codes.InvalidArgument,
+		},
+		{
+			name:         "success",
+			request:      &catalogv1.ReleaseStockRequest{OrderId: orderID.String()},
+			expectedCode: codes.OK,
+			assert: func(t *testing.T, svc *stubCatalogService, response *catalogv1.ReleaseStockResponse) {
+				require.True(t, response.GetAccepted())
+				require.Len(t, svc.releaseInputs, 1)
+				require.Equal(t, orderID, svc.releaseInputs[0].OrderID)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &stubCatalogService{}
+			if tt.setup != nil {
+				tt.setup(svc)
+			}
+
+			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			response, err := server.ReleaseStock(context.Background(), tt.request)
+			require.Equal(t, tt.expectedCode, status.Code(err))
+
+			if tt.expectedCode != codes.OK {
+				require.Nil(t, response)
+				return
+			}
+
+			if tt.assert != nil {
+				tt.assert(t, svc, response)
+			}
+		})
+	}
 }
 
 type stubCatalogService struct {
@@ -283,6 +328,7 @@ type stubCatalogService struct {
 
 	reserveInputs         []catalog.ReserveStockInput
 	reserveStockErrOnCall map[int]error
+	releaseInputs         []catalog.ReleaseStockInput
 }
 
 func (s *stubCatalogService) GetProduct(_ context.Context, _ uuid.UUID) (catalog.GetProductResult, error) {
@@ -306,6 +352,11 @@ func (s *stubCatalogService) ReserveStock(_ context.Context, input catalog.Reser
 	}
 
 	return catalog.ReserveStockResult{}, nil
+}
+
+func (s *stubCatalogService) ReleaseStock(_ context.Context, input catalog.ReleaseStockInput) (catalog.ReleaseStockResult, error) {
+	s.releaseInputs = append(s.releaseInputs, input)
+	return catalog.ReleaseStockResult{Released: true}, nil
 }
 
 func TestMapServiceErrorDefault(t *testing.T) {

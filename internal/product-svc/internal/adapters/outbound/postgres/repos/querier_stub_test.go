@@ -17,7 +17,11 @@ type stubQuerier struct {
 	listProductsFunc      func(ctx context.Context, arg sqlc.ListProductsParams) ([]sqlc.ListProductsRow, error)
 	createProductFunc     func(ctx context.Context, arg sqlc.CreateProductParams) (sqlc.CreateProductRow, error)
 	createStockFunc       func(ctx context.Context, arg sqlc.CreateStockRecordParams) (sqlc.StockRecord, error)
+	createReservationFunc func(ctx context.Context, arg sqlc.CreateStockReservationParams) (sqlc.StockReservation, error)
 	getStockFunc          func(ctx context.Context, productID uuid.UUID) (sqlc.StockRecord, error)
+	getStockForUpdateFunc func(ctx context.Context, productID uuid.UUID) (sqlc.StockRecord, error)
+	listReservationsFunc  func(ctx context.Context, orderID uuid.UUID) ([]sqlc.StockReservation, error)
+	deleteReservationsFunc func(ctx context.Context, orderID uuid.UUID) error
 	updateStockFunc       func(ctx context.Context, arg sqlc.UpdateStockRecordParams) (sqlc.StockRecord, error)
 	updateProductFunc     func(ctx context.Context, arg sqlc.UpdateProductParams) (sqlc.UpdateProductRow, error)
 	deleteProductFunc     func(ctx context.Context, productID uuid.UUID) (sqlc.Product, error)
@@ -77,12 +81,44 @@ func (s stubQuerier) CreateStockRecord(ctx context.Context, arg sqlc.CreateStock
 	return s.createStockFunc(ctx, arg)
 }
 
+func (s stubQuerier) CreateStockReservation(ctx context.Context, arg sqlc.CreateStockReservationParams) (sqlc.StockReservation, error) {
+	if s.createReservationFunc == nil {
+		return sqlc.StockReservation{}, fmt.Errorf("unexpected CreateStockReservation call")
+	}
+
+	return s.createReservationFunc(ctx, arg)
+}
+
 func (s stubQuerier) GetStockRecordByProductID(ctx context.Context, productID uuid.UUID) (sqlc.StockRecord, error) {
 	if s.getStockFunc == nil {
 		return sqlc.StockRecord{}, fmt.Errorf("unexpected GetStockRecordByProductID call")
 	}
 
 	return s.getStockFunc(ctx, productID)
+}
+
+func (s stubQuerier) GetStockRecordByProductIDForUpdate(ctx context.Context, productID uuid.UUID) (sqlc.StockRecord, error) {
+	if s.getStockForUpdateFunc == nil {
+		return sqlc.StockRecord{}, fmt.Errorf("unexpected GetStockRecordByProductIDForUpdate call")
+	}
+
+	return s.getStockForUpdateFunc(ctx, productID)
+}
+
+func (s stubQuerier) ListStockReservationsByOrderID(ctx context.Context, orderID uuid.UUID) ([]sqlc.StockReservation, error) {
+	if s.listReservationsFunc == nil {
+		return nil, fmt.Errorf("unexpected ListStockReservationsByOrderID call")
+	}
+
+	return s.listReservationsFunc(ctx, orderID)
+}
+
+func (s stubQuerier) DeleteStockReservationsByOrderID(ctx context.Context, orderID uuid.UUID) error {
+	if s.deleteReservationsFunc == nil {
+		return fmt.Errorf("unexpected DeleteStockReservationsByOrderID call")
+	}
+
+	return s.deleteReservationsFunc(ctx, orderID)
 }
 
 func (s stubQuerier) UpdateStockRecord(ctx context.Context, arg sqlc.UpdateStockRecordParams) (sqlc.StockRecord, error) {

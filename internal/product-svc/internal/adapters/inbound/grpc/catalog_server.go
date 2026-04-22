@@ -20,6 +20,7 @@ type catalogService interface {
 	GetProductBySKU(ctx context.Context, sku string) (catalog.GetProductResult, error)
 	ListProducts(ctx context.Context, params outbound.ProductListParams) ([]domain.Product, error)
 	ReserveStock(ctx context.Context, input catalog.ReserveStockInput) (catalog.ReserveStockResult, error)
+	ReleaseStock(ctx context.Context, input catalog.ReleaseStockInput) (catalog.ReleaseStockResult, error)
 }
 
 type CatalogServer struct {
@@ -110,7 +111,8 @@ func (s *CatalogServer) ListPublishedProducts(ctx context.Context, req *catalogv
 }
 
 func (s *CatalogServer) ReserveStock(ctx context.Context, req *catalogv1.ReserveStockRequest) (*catalogv1.ReserveStockResponse, error) {
-	if _, err := toOrderID(req.GetOrderId()); err != nil {
+	orderID, err := toOrderID(req.GetOrderId())
+	if err != nil {
 		return nil, err
 	}
 
@@ -129,7 +131,7 @@ func (s *CatalogServer) ReserveStock(ctx context.Context, req *catalogv1.Reserve
 			return nil, err
 		}
 
-		if _, err := s.service.ReserveStock(ctx, catalog.ReserveStockInput{ProductID: productID, Quantity: quantity}); err != nil {
+		if _, err := s.service.ReserveStock(ctx, catalog.ReserveStockInput{OrderID: orderID, ProductID: productID, Quantity: quantity}); err != nil {
 			return nil, mapServiceError(err)
 		}
 	}
@@ -151,6 +153,15 @@ func toOrderID(raw string) (uuid.UUID, error) {
 	return orderID, nil
 }
 
-func (s *CatalogServer) ReleaseStock(_ context.Context, _ *catalogv1.ReleaseStockRequest) (*catalogv1.ReleaseStockResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "release stock requires item-level input")
+func (s *CatalogServer) ReleaseStock(ctx context.Context, req *catalogv1.ReleaseStockRequest) (*catalogv1.ReleaseStockResponse, error) {
+	orderID, err := toOrderID(req.GetOrderId())
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := s.service.ReleaseStock(ctx, catalog.ReleaseStockInput{OrderID: orderID}); err != nil {
+		return nil, mapServiceError(err)
+	}
+
+	return &catalogv1.ReleaseStockResponse{Accepted: true}, nil
 }

@@ -44,7 +44,7 @@ func NewTestStack(t *testing.T, db *sql.DB) *TestStack {
 	outboxRepository := adapteroutbox.NewRepository(db)
 	eventPublisher := adapterevents.MustCreateOutboxEventPublisher(outboxRepository)
 
-	txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) catalog.CatalogRepos {
+		txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) catalog.CatalogRepos {
 		return catalog.CatalogRepos{
 			Products:  repos.NewProductRepositoryFromTx(tx),
 			Stocks:    repos.NewStockRepositoryFromTx(tx),

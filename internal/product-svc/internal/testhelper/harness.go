@@ -90,7 +90,7 @@ func RunMigrations(db *sql.DB) error {
 func CleanupDB(t *testing.T, db *sql.DB) {
 	t.Helper()
 
-	_, err := db.Exec(`TRUNCATE stock_records, products RESTART IDENTITY CASCADE`)
+	_, err := db.Exec(`TRUNCATE stock_reservations, stock_records, products RESTART IDENTITY CASCADE`)
 	commonintegration.EnsureNoError(t, err, "cleanup test database")
 }
 

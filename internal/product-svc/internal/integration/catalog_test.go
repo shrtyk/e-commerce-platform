@@ -566,6 +566,37 @@ func TestReserveStockRejectsInsufficient(t *testing.T) {
 	require.Equal(t, initialQuantity, after.Stock.Available)
 }
 
+func TestReleaseStockViaGRPC(t *testing.T) {
+	var initialQuantity int32 = 10
+	var reserveQuantity int32 = 4
+	orderID := uuid.NewString()
+
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newCatalogStack(t)
+
+	created := createProductViaService(t, stack, domain.ProductStatusPublished, initialQuantity)
+
+	grpcClient := catalogv1.NewCatalogServiceClient(stack.GRPCConn)
+	reserveResponse, err := grpcClient.ReserveStock(context.Background(), &catalogv1.ReserveStockRequest{
+		OrderId: orderID,
+		Items: []*catalogv1.ReservationItem{
+			{ProductId: created.Product.ID.String(), Quantity: int64(reserveQuantity)},
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, reserveResponse.GetAccepted())
+
+	releaseResponse, err := grpcClient.ReleaseStock(context.Background(), &catalogv1.ReleaseStockRequest{OrderId: orderID})
+	require.NoError(t, err)
+	require.True(t, releaseResponse.GetAccepted())
+
+	updated, err := stack.CatalogService.GetProduct(context.Background(), created.Product.ID)
+	require.NoError(t, err)
+	require.Equal(t, int32(0), updated.Stock.Reserved)
+	require.Equal(t, initialQuantity, updated.Stock.Available)
+}
+
 func newCatalogStack(t *testing.T) *testhelper.TestStack {
 	t.Helper()
 
