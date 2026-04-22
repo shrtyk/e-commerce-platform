@@ -153,6 +153,7 @@ paths:
       tags: [Catalog]
       operationId: listPublishedProducts
       summary: List published products
+      security: []
       responses:
         '200':
           description: Product list
@@ -160,11 +161,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProductListResponse'
+    post:
+      tags: [Catalog]
+      operationId: createProduct
+      summary: Create product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProductRequest'
+      responses:
+        '201':
+          description: Product created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductWriteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/products/{productId}:
     get:
       tags: [Catalog]
       operationId: getProductById
       summary: Get product by id
+      security: []
       parameters:
         - $ref: '#/components/parameters/ProductId'
       responses:
@@ -176,6 +203,56 @@ paths:
                 $ref: '#/components/schemas/Product'
         '404':
           $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Catalog]
+      operationId: updateProductById
+      summary: Update product by id
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProductRequest'
+      responses:
+        '200':
+          description: Product updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductWriteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Catalog]
+      operationId: deleteProductById
+      summary: Archive product by id (soft delete)
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Product archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductWriteResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/cart:
     get:
       tags: [Cart]
@@ -569,6 +646,7 @@ components:
           type: string
         categoryId:
           type: string
+          format: uuid
     ProductListResponse:
       type: object
       required: [items]
@@ -577,6 +655,77 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Product'
+    StockSummary:
+      type: object
+      required: [quantity, reserved, available, status]
+      properties:
+        quantity:
+          type: integer
+          minimum: 0
+        reserved:
+          type: integer
+          minimum: 0
+        available:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [in_stock, out_of_stock]
+    ProductWriteResponse:
+      type: object
+      required: [product, stock]
+      properties:
+        product:
+          $ref: '#/components/schemas/Product'
+        stock:
+          $ref: '#/components/schemas/StockSummary'
+    CreateProductRequest:
+      type: object
+      required: [sku, name, price, currencyId, initialQuantity]
+      properties:
+        sku:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        status:
+          type: string
+          enum: [draft, published, archived]
+        price:
+          type: integer
+          minimum: 0
+        currencyId:
+          type: string
+          format: uuid
+        categoryId:
+          type: string
+          format: uuid
+        initialQuantity:
+          type: integer
+          minimum: 0
+    UpdateProductRequest:
+      type: object
+      properties:
+        sku:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        status:
+          type: string
+          enum: [draft, published, archived]
+        price:
+          type: integer
+          minimum: 0
+        categoryId:
+          type: string
+          format: uuid
     CartItem:
       type: object
       required: [sku, quantity, unitPrice, lineTotal]
