@@ -681,7 +681,7 @@ components:
           $ref: '#/components/schemas/StockSummary'
     CreateProductRequest:
       type: object
-      required: [sku, name, price, currencyId, initialQuantity]
+      required: [sku, name, price, currencyCode, initialQuantity]
       properties:
         sku:
           type: string
@@ -697,9 +697,9 @@ components:
         price:
           type: integer
           minimum: 0
-        currencyId:
+        currencyCode:
           type: string
-          format: uuid
+          minLength: 1
         categoryId:
           type: string
           format: uuid

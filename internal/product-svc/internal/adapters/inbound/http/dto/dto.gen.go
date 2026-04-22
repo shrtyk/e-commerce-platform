@@ -47,7 +47,7 @@ const (
 // CreateProductRequest defines model for CreateProductRequest.
 type CreateProductRequest struct {
 	CategoryId      *openapi_types.UUID         `json:"categoryId,omitempty"`
-	CurrencyId      openapi_types.UUID          `json:"currencyId"`
+	CurrencyCode    string                      `json:"currencyCode"`
 	Description     *string                     `json:"description,omitempty"`
 	InitialQuantity int                         `json:"initialQuantity"`
 	Name            string                      `json:"name"`

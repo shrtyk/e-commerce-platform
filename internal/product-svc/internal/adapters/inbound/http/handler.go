@@ -221,12 +221,10 @@ func mapServiceError(err error) error {
 }
 
 func toCreateProductInput(request dto.CreateProductRequest) (catalog.CreateProductInput, error) {
-	currencyID := uuid.UUID(request.CurrencyId)
-	if currencyID == uuid.Nil {
+	currencyCode := strings.TrimSpace(request.CurrencyCode)
+	if currencyCode == "" {
 		return catalog.CreateProductInput{}, commonerrors.BadRequest("invalid_request", "invalid currency")
 	}
-
-	currencyIDCopy := currencyID
 
 	categoryID, err := parseOptionalOpenAPIUUID(request.CategoryId)
 	if err != nil {
@@ -249,7 +247,7 @@ func toCreateProductInput(request dto.CreateProductRequest) (catalog.CreateProdu
 			Name:        strings.TrimSpace(request.Name),
 			Description: description,
 			Price:       int64(request.Price),
-			CurrencyID:  currencyIDCopy,
+			Currency:    currencyCode,
 			CategoryID:  categoryID,
 			Status:      status,
 		},
