@@ -155,11 +155,14 @@ func main() {
 		defer orderEventsClient.Close()
 
 		orderSerde := commonkafka.NewProtoSerde(schemaRegistryClient, commonkafka.NewDescriptorSchemaProvider())
-		if err := orderSerde.RegisterType(context.Background(), cfg.OrderEvents.Topic, &orderv1.OrderConfirmed{}); err != nil {
-			panic(fmt.Errorf("register order confirmed schema: %w", err))
-		}
-		if err := orderSerde.RegisterType(context.Background(), cfg.OrderEvents.Topic, &orderv1.OrderCancelled{}); err != nil {
-			panic(fmt.Errorf("register order cancelled schema: %w", err))
+		if err := orderSerde.RegisterTypes(
+			context.Background(),
+			cfg.OrderEvents.Topic,
+			&orderv1.OrderCreated{},
+			&orderv1.OrderConfirmed{},
+			&orderv1.OrderCancelled{},
+		); err != nil {
+			panic(fmt.Errorf("register order event schemas: %w", err))
 		}
 
 		orderEventsConsumer, err := commonkafka.NewConsumer(orderEventsClient, orderSerde)
