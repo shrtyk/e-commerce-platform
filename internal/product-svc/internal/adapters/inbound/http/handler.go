@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	commonerrors "github.com/shrtyk/e-commerce-platform/internal/common/errors"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
@@ -17,10 +20,13 @@ import (
 )
 
 const defaultPublishedListLimit int32 = 100
+const maxPatchRequestBodyBytes int64 = 1 << 20
 
 type catalogService interface {
+	CreateProduct(ctx context.Context, input catalog.CreateProductInput) (catalog.CreateProductResult, error)
 	GetProduct(ctx context.Context, productID uuid.UUID) (catalog.GetProductResult, error)
 	ListProducts(ctx context.Context, params outbound.ProductListParams) ([]domain.Product, error)
+	UpdateProduct(ctx context.Context, input catalog.UpdateProductInput) (catalog.UpdateProductResult, error)
 }
 
 type CatalogHandler struct {
@@ -51,6 +57,11 @@ func (h *CatalogHandler) GetProductById(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	if result.Product.Status != domain.ProductStatusPublished {
+		h.writeError(w, r, commonerrors.NotFound("product_not_found", "product not found"))
+		return
+	}
+
 	h.writeJSON(w, http.StatusOK, toDTOProduct(result.Product))
 }
 
@@ -77,6 +88,108 @@ func (h *CatalogHandler) HandleOpenAPIError(w http.ResponseWriter, r *http.Reque
 	h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request parameters"))
 }
 
+func (h *CatalogHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
+	var request dto.CreateProductRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	input, err := toCreateProductInput(request)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+
+	result, err := h.catalogService.CreateProduct(r.Context(), input)
+	if err != nil {
+		h.writeError(w, r, mapServiceError(err))
+		return
+	}
+
+	h.writeJSON(w, http.StatusCreated, toDTOProductWriteResponse(result.Product, result.Stock))
+}
+
+func (h *CatalogHandler) UpdateProductById(w http.ResponseWriter, r *http.Request, productID dto.ProductId) {
+	id, err := uuid.Parse(productID)
+	if err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid product id"))
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxPatchRequestBodyBytes+1))
+	if err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	if int64(len(body)) > maxPatchRequestBodyBytes {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	if rawCategoryID, ok := raw["categoryId"]; ok {
+		if string(rawCategoryID) == "null" {
+			h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid category id"))
+			return
+		}
+
+		var categoryID string
+		if err := json.Unmarshal(rawCategoryID, &categoryID); err != nil {
+			h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid category id"))
+			return
+		}
+
+		if strings.TrimSpace(categoryID) == "" {
+			h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid category id"))
+			return
+		}
+	}
+
+	var request dto.UpdateProductRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+
+	input, err := toUpdateProductInput(id, request)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+
+	result, err := h.catalogService.UpdateProduct(r.Context(), input)
+	if err != nil {
+		h.writeError(w, r, mapServiceError(err))
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, toDTOProductWriteResponse(result.Product, result.Stock))
+}
+
+func (h *CatalogHandler) DeleteProductById(w http.ResponseWriter, r *http.Request, productID dto.ProductId) {
+	id, err := uuid.Parse(productID)
+	if err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid product id"))
+		return
+	}
+
+	status := domain.ProductStatusArchived
+	result, err := h.catalogService.UpdateProduct(r.Context(), catalog.UpdateProductInput{ID: id, Status: &status})
+	if err != nil {
+		h.writeError(w, r, mapServiceError(err))
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, toDTOProductWriteResponse(result.Product, result.Stock))
+}
+
 func (h *CatalogHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	httpErr := commonerrors.FromError(err)
 	commonerrors.WriteJSON(w, httpErr, transport.RequestIDFromContext(r.Context()))
@@ -92,15 +205,120 @@ func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, outbound.ErrProductNotFound):
 		return commonerrors.NotFound("product_not_found", "product not found")
+	case errors.Is(err, outbound.ErrProductAlreadyExists):
+		return commonerrors.Conflict("product_already_exists", "product already exists")
 	case errors.Is(err, outbound.ErrStockRecordNotFound):
 		return commonerrors.NotFound("stock_not_found", "stock record not found")
 	case errors.Is(err, catalog.ErrInvalidStockInput),
 		errors.Is(err, catalog.ErrInvalidCreateProductInput),
 		errors.Is(err, catalog.ErrInvalidUpdateProductInput),
+		errors.Is(err, outbound.ErrInvalidCurrency),
 		errors.Is(err, outbound.ErrInvalidStockUpdate):
 		return commonerrors.BadRequest("invalid_request", "invalid request")
 	default:
 		return commonerrors.InternalError("internal_error")
+	}
+}
+
+func toCreateProductInput(request dto.CreateProductRequest) (catalog.CreateProductInput, error) {
+	currencyID := uuid.UUID(request.CurrencyId)
+	if currencyID == uuid.Nil {
+		return catalog.CreateProductInput{}, commonerrors.BadRequest("invalid_request", "invalid currency")
+	}
+
+	currencyIDCopy := currencyID
+
+	categoryID, err := parseOptionalOpenAPIUUID(request.CategoryId)
+	if err != nil {
+		return catalog.CreateProductInput{}, commonerrors.BadRequest("invalid_request", "invalid category id")
+	}
+
+	status := domain.ProductStatusUnknown
+	if request.Status != nil {
+		status = domain.ProductStatus(*request.Status)
+	}
+
+	description := ""
+	if request.Description != nil {
+		description = strings.TrimSpace(*request.Description)
+	}
+
+	return catalog.CreateProductInput{
+		Product: domain.Product{
+			SKU:         strings.TrimSpace(request.Sku),
+			Name:        strings.TrimSpace(request.Name),
+			Description: description,
+			Price:       int64(request.Price),
+			CurrencyID:  currencyIDCopy,
+			CategoryID:  categoryID,
+			Status:      status,
+		},
+		InitialQuantity: int32(request.InitialQuantity),
+	}, nil
+}
+
+func toUpdateProductInput(id uuid.UUID, request dto.UpdateProductRequest) (catalog.UpdateProductInput, error) {
+	input := catalog.UpdateProductInput{ID: id}
+
+	if request.Sku != nil {
+		sku := strings.TrimSpace(*request.Sku)
+		input.SKU = &sku
+	}
+
+	if request.Name != nil {
+		name := strings.TrimSpace(*request.Name)
+		input.Name = &name
+	}
+
+	if request.Description != nil {
+		description := strings.TrimSpace(*request.Description)
+		input.Description = &description
+	}
+
+	if request.Price != nil {
+		price := int64(*request.Price)
+		input.Price = &price
+	}
+
+	if request.CategoryId != nil {
+		categoryID, err := parseOptionalOpenAPIUUID(request.CategoryId)
+		if err != nil {
+			return catalog.UpdateProductInput{}, commonerrors.BadRequest("invalid_request", "invalid category id")
+		}
+		input.CategoryID = categoryID
+	}
+
+	if request.Status != nil {
+		status := domain.ProductStatus(*request.Status)
+		input.Status = &status
+	}
+
+	return input, nil
+}
+
+func parseOptionalOpenAPIUUID(value *openapi_types.UUID) (*uuid.UUID, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	parsed := uuid.UUID(*value)
+
+	if parsed == uuid.Nil {
+		return nil, errors.New("uuid is nil")
+	}
+
+	return &parsed, nil
+}
+
+func toDTOProductWriteResponse(product domain.Product, stock domain.StockRecord) dto.ProductWriteResponse {
+	return dto.ProductWriteResponse{
+		Product: toDTOProduct(product),
+		Stock: dto.StockSummary{
+			Quantity:  int(stock.Quantity),
+			Reserved:  int(stock.Reserved),
+			Available: int(stock.Available),
+			Status:    dto.StockSummaryStatus(stock.Status),
+		},
 	}
 }
 
@@ -120,7 +338,7 @@ func toDTOProduct(product domain.Product) dto.Product {
 	}
 
 	if product.CategoryID != nil {
-		categoryID := product.CategoryID.String()
+		categoryID := openapi_types.UUID(*product.CategoryID)
 		response.CategoryId = &categoryID
 	}
 
@@ -130,12 +348,12 @@ func toDTOProduct(product domain.Product) dto.Product {
 func toDTOProductStatus(status domain.ProductStatus) dto.ProductStatus {
 	switch status {
 	case domain.ProductStatusDraft:
-		return dto.Draft
+		return dto.ProductStatusDraft
 	case domain.ProductStatusPublished:
-		return dto.Published
+		return dto.ProductStatusPublished
 	case domain.ProductStatusArchived:
-		return dto.Archived
+		return dto.ProductStatusArchived
 	default:
-		return dto.Draft
+		return dto.ProductStatusDraft
 	}
 }

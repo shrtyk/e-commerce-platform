@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 	grpcpkg "google.golang.org/grpc"
 
+	commonjwt "github.com/shrtyk/e-commerce-platform/internal/common/auth/jwt"
 	commonintegration "github.com/shrtyk/e-commerce-platform/internal/common/testhelper/integration"
 	"github.com/shrtyk/e-commerce-platform/internal/common/tx/sqltx"
 	adaptergrpc "github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/adapters/inbound/grpc"
@@ -22,6 +23,8 @@ import (
 
 const (
 	serviceName = "product-svc-test"
+	TestAuthKey = "product-svc-test-access-key"
+	TestAuthIssuer = "ecom-identity-svc"
 )
 
 type TestStack struct {
@@ -51,7 +54,8 @@ func NewTestStack(t *testing.T, db *sql.DB) *TestStack {
 
 	catalogService := catalog.NewCatalogService(productRepository, stockRepository, eventPublisher, txProvider, serviceName)
 	tracer := noop.NewTracerProvider().Tracer(serviceName)
-	httpHandler := adapterhttp.NewRouter(logger, serviceName, catalogService, tracer)
+	tokenVerifier := commonjwt.NewTokenVerifier(TestAuthKey, TestAuthIssuer)
+	httpHandler := adapterhttp.NewRouter(logger, serviceName, catalogService, tracer, tokenVerifier)
 	grpcServer := adaptergrpc.NewServer(logger, serviceName, catalogService, tracer)
 
 	grpcConn, stopGRPC := commonintegration.StartBufconnGRPCServer(t, "product-test", grpcServer)

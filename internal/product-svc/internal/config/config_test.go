@@ -35,6 +35,8 @@ func TestMustLoad(t *testing.T) {
 		require.Equal(t, 30*time.Second, cfg.Relay.RetryMaxBackoff)
 		require.Equal(t, "product-svc-relay-1", cfg.Relay.WorkerID)
 		require.Equal(t, 30*time.Second, cfg.Relay.StaleLockTTL)
+		require.Equal(t, "product-svc-test-key", cfg.Auth.AccessTokenKey)
+		require.Equal(t, "ecom-identity-svc", cfg.Auth.AccessTokenIssuer)
 	})
 
 	t.Run("panics when required field is missing", func(t *testing.T) {
@@ -48,6 +50,7 @@ func TestMustLoad(t *testing.T) {
 			{name: "missing postgres db", key: "POSTGRES_DB", wantInErr: "field \"Database\" is required"},
 			{name: "missing postgres user", key: "POSTGRES_USER", wantInErr: "field \"User\" is required"},
 			{name: "missing postgres password", key: "POSTGRES_PASSWORD", wantInErr: "field \"Password\" is required"},
+			{name: "missing auth access token key", key: "AUTH_ACCESS_TOKEN_KEY", wantInErr: "field \"AccessTokenKey\" is required"},
 		}
 
 		for _, tt := range tests {
@@ -99,6 +102,7 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("KAFKA_BROKERS", "kafka:9092")
 	t.Setenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317")
+	t.Setenv("AUTH_ACCESS_TOKEN_KEY", "product-svc-test-key")
 }
 
 func TestConfigMustLoadHelperProcess(t *testing.T) {
@@ -115,17 +119,18 @@ func runHelperProcess(t *testing.T, missingKey string) (string, error) {
 	args := []string{"-test.run", "TestConfigMustLoadHelperProcess"}
 	cmd := exec.Command(os.Args[0], args...)
 
-	env := []string{
-		helperProcessEnv + "=1",
-		"SERVICE_NAME=product-svc",
+		env := []string{
+			helperProcessEnv + "=1",
+			"SERVICE_NAME=product-svc",
 		"POSTGRES_HOST=postgres",
 		"POSTGRES_DB=product",
 		"POSTGRES_USER=product",
 		"POSTGRES_PASSWORD=secret",
 		"KAFKA_BROKERS=kafka:9092",
-		"SCHEMA_REGISTRY_URL=http://schema-registry:8081",
-		"OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317",
-	}
+			"SCHEMA_REGISTRY_URL=http://schema-registry:8081",
+			"OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317",
+			"AUTH_ACCESS_TOKEN_KEY=product-svc-test-key",
+		}
 
 	filtered := make([]string, 0, len(env))
 	for _, item := range env {
@@ -159,6 +164,7 @@ func runHelperProcessWithOverride(t *testing.T, key, value string, extra ...stri
 		"KAFKA_BROKERS=kafka:9092",
 		"SCHEMA_REGISTRY_URL=http://schema-registry:8081",
 		"OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317",
+		"AUTH_ACCESS_TOKEN_KEY=product-svc-test-key",
 	}
 
 	if key != "" {

@@ -13,6 +13,12 @@ import (
 type Config struct {
 	commoncfg.Config
 	Relay Relay `env-prefix:"OUTBOX_RELAY_"`
+	Auth  Auth  `env-prefix:"AUTH_"`
+}
+
+type Auth struct {
+	AccessTokenKey    string `env:"ACCESS_TOKEN_KEY" env-required:"true"`
+	AccessTokenIssuer string `env:"ACCESS_TOKEN_ISSUER" env-default:"ecom-identity-svc"`
 }
 
 type Relay struct {

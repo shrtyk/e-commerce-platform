@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -83,6 +84,7 @@ type UpdateProductInput struct {
 	Name        *string
 	Description *string
 	Price       *int64
+	CategoryID  *uuid.UUID
 	Status      *domain.ProductStatus
 }
 
@@ -113,11 +115,18 @@ func (s *CatalogService) CreateProduct(ctx context.Context, input CreateProductI
 
 		createdProduct, err := repos.Products.Create(ctx, normalizedProduct)
 		if err != nil {
-			if errors.Is(err, outbound.ErrProductAlreadyExists) || errors.Is(err, outbound.ErrInvalidCurrency) {
-				return err
-			}
+			if errors.Is(err, sql.ErrNoRows) {
+				createdProduct, err = repos.Products.GetBySKU(ctx, normalizedProduct.SKU)
+				if err != nil {
+					return fmt.Errorf("read created product by sku: %w", err)
+				}
+			} else {
+				if errors.Is(err, outbound.ErrProductAlreadyExists) || errors.Is(err, outbound.ErrInvalidCurrency) {
+					return err
+				}
 
-			return fmt.Errorf("create product: %w", err)
+				return fmt.Errorf("create product: %w", err)
+			}
 		}
 
 		createdStock, err := repos.Stocks.Create(ctx, domain.StockRecord{
@@ -231,13 +240,22 @@ func (s *CatalogService) UpdateProduct(ctx context.Context, input UpdateProductI
 
 	updatedProduct := mergeProductUpdate(currentProduct, normalizeUpdateInput(input))
 
-	product, err := s.repos.Products.Update(ctx, updatedProduct)
+	_, err = s.repos.Products.Update(ctx, updatedProduct)
 	if err != nil {
 		if errors.Is(err, outbound.ErrProductNotFound) || errors.Is(err, outbound.ErrInvalidCurrency) {
 			return UpdateProductResult{}, err
 		}
 
 		return UpdateProductResult{}, fmt.Errorf("update product: %w", err)
+	}
+
+	product, err := s.repos.Products.GetByID(ctx, input.ID)
+	if err != nil {
+		if errors.Is(err, outbound.ErrProductNotFound) {
+			return UpdateProductResult{}, outbound.ErrProductNotFound
+		}
+
+		return UpdateProductResult{}, fmt.Errorf("get updated product by id: %w", err)
 	}
 
 	stock, err := s.repos.Stocks.GetByProductID(ctx, input.ID)
@@ -355,6 +373,10 @@ func mergeProductUpdate(product domain.Product, input UpdateProductInput) domain
 
 	if input.Price != nil {
 		product.Price = *input.Price
+	}
+
+	if input.CategoryID != nil {
+		product.CategoryID = input.CategoryID
 	}
 
 	if input.Status != nil {

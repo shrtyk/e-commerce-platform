@@ -14,6 +14,7 @@ import (
 	"github.com/twmb/franz-go/pkg/sr"
 	"go.opentelemetry.io/otel"
 
+	commonjwt "github.com/shrtyk/e-commerce-platform/internal/common/auth/jwt"
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
 	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	commonkafka "github.com/shrtyk/e-commerce-platform/internal/common/messaging/kafka"
@@ -99,7 +100,8 @@ func main() {
 	})
 
 	catalogService := catalog.NewCatalogService(productsRepo, stocksRepo, outboxEventPublisher, txProvider, cfg.Service.Name)
-	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, catalogService, tracer)
+	tokenVerifier := commonjwt.NewTokenVerifier(cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenIssuer)
+	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, catalogService, tracer, tokenVerifier)
 	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, catalogService, tracer)
 
 	app := productapp.NewApplication(

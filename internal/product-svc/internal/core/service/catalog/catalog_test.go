@@ -69,6 +69,38 @@ func TestCreateProduct(t *testing.T) {
 			expectStock:   true,
 		},
 		{
+			name: "create returns no rows falls back to get by sku",
+			input: CreateProductInput{
+				Product: domain.Product{
+					SKU:        "SKU-NO-ROWS",
+					Name:       "Product",
+					Price:      1000,
+					CurrencyID: currencyID,
+					Currency:   "USD",
+					Status:     domain.ProductStatusDraft,
+				},
+				InitialQuantity: 3,
+			},
+			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository, publisher *outboundmocks.MockEventPublisher) {
+				created := domain.Product{ID: productID, SKU: "SKU-NO-ROWS", Name: "Product", Price: 1000, CurrencyID: currencyID, Currency: "USD", Status: domain.ProductStatusDraft}
+
+				products.EXPECT().
+					Create(testifymock.Anything, testifymock.Anything).
+					Return(domain.Product{}, sql.ErrNoRows)
+				products.EXPECT().
+					GetBySKU(testifymock.Anything, "SKU-NO-ROWS").
+					Return(created, nil)
+				stocks.EXPECT().
+					Create(testifymock.Anything, testifymock.Anything).
+					Return(domain.StockRecord{StockRecordID: uuid.New(), ProductID: productID, Quantity: 3, Reserved: 0, Available: 3, Status: domain.StockRecordStatusInStock}, nil)
+				publisher.EXPECT().
+					Publish(testifymock.Anything, testifymock.Anything).
+					Return(nil)
+			},
+			expectProduct: true,
+			expectStock:   true,
+		},
+		{
 			name: "invalid input",
 			input: CreateProductInput{
 				Product:         domain.Product{},
@@ -380,12 +412,14 @@ func TestUpdateProduct(t *testing.T) {
 	productID := uuid.New()
 	current := domain.Product{ID: productID, SKU: "SKU-1", Name: "Old", Price: 1000, Status: domain.ProductStatusDraft}
 	updated := domain.Product{ID: productID, SKU: "SKU-2", Name: "New", Price: 2000, Status: domain.ProductStatusPublished}
+	updatedStored := domain.Product{ID: productID, SKU: "SKU-2", Name: "New", Price: 2000, Status: domain.ProductStatusPublished, Currency: "USD"}
 	stock := domain.StockRecord{StockRecordID: uuid.New(), ProductID: productID, Quantity: 10, Reserved: 0, Available: 10}
 
 	newSKU := "SKU-2"
 	newName := "New"
 	newPrice := int64(2000)
 	newStatus := domain.ProductStatusPublished
+	newCategoryID := uuid.New()
 
 	tests := []struct {
 		name        string
@@ -396,10 +430,13 @@ func TestUpdateProduct(t *testing.T) {
 	}{
 		{
 			name:  "success",
-			input: UpdateProductInput{ID: productID, SKU: &newSKU, Name: &newName, Price: &newPrice, Status: &newStatus},
+			input: UpdateProductInput{ID: productID, SKU: &newSKU, Name: &newName, Price: &newPrice, Status: &newStatus, CategoryID: &newCategoryID},
 			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository) {
-				products.EXPECT().GetByID(testifymock.Anything, productID).Return(current, nil)
-				products.EXPECT().Update(testifymock.Anything, testifymock.Anything).Return(updated, nil)
+				products.EXPECT().GetByID(testifymock.Anything, productID).Return(current, nil).Once()
+				products.EXPECT().Update(testifymock.Anything, testifymock.MatchedBy(func(product domain.Product) bool {
+					return product.CategoryID != nil && *product.CategoryID == newCategoryID
+				})).Return(updated, nil)
+				products.EXPECT().GetByID(testifymock.Anything, productID).Return(updatedStored, nil).Once()
 				stocks.EXPECT().GetByProductID(testifymock.Anything, productID).Return(stock, nil)
 			},
 		},
@@ -415,6 +452,16 @@ func TestUpdateProduct(t *testing.T) {
 				products.EXPECT().GetByID(testifymock.Anything, productID).Return(domain.Product{}, outbound.ErrProductNotFound)
 			},
 			errIs: outbound.ErrProductNotFound,
+		},
+		{
+			name:  "updated read error",
+			input: UpdateProductInput{ID: productID, SKU: &newSKU},
+			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository) {
+				products.EXPECT().GetByID(testifymock.Anything, productID).Return(current, nil).Once()
+				products.EXPECT().Update(testifymock.Anything, testifymock.Anything).Return(updated, nil)
+				products.EXPECT().GetByID(testifymock.Anything, productID).Return(domain.Product{}, errors.New("read failed")).Once()
+			},
+			errContains: "get updated product by id",
 		},
 		{
 			name:  "update error",
