@@ -64,3 +64,12 @@ type StockRecord struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
+
+type StockReservation struct {
+	StockReservationID uuid.UUID
+	OrderID            uuid.UUID
+	ProductID          uuid.UUID
+	Quantity           int32
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}

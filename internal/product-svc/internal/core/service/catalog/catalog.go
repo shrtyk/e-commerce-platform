@@ -91,6 +91,7 @@ type UpdateProductInput struct {
 type UpdateProductResult = GetProductResult
 
 type ReserveStockInput struct {
+	OrderID   uuid.UUID
 	ProductID uuid.UUID
 	Quantity  int32
 }
@@ -99,9 +100,13 @@ type ReserveStockResult struct {
 	Stock domain.StockRecord
 }
 
-type ReleaseStockInput = ReserveStockInput
+type ReleaseStockInput struct {
+	OrderID uuid.UUID
+}
 
-type ReleaseStockResult = ReserveStockResult
+type ReleaseStockResult struct {
+	Released bool
+}
 
 func (s *CatalogService) CreateProduct(ctx context.Context, input CreateProductInput) (CreateProductResult, error) {
 	normalizedProduct, err := normalizeCreateProductInput(input.Product)
@@ -282,7 +287,7 @@ func (s *CatalogService) UpdateProduct(ctx context.Context, input UpdateProductI
 }
 
 func (s *CatalogService) ReserveStock(ctx context.Context, input ReserveStockInput) (ReserveStockResult, error) {
-	if input.ProductID == uuid.Nil || input.Quantity <= 0 {
+	if input.OrderID == uuid.Nil || input.ProductID == uuid.Nil || input.Quantity <= 0 {
 		return ReserveStockResult{}, ErrInvalidStockInput
 	}
 
@@ -290,7 +295,7 @@ func (s *CatalogService) ReserveStock(ctx context.Context, input ReserveStockInp
 	err := s.txProvider.WithTransaction(ctx, nil, func(uow tx.UnitOfWork[CatalogRepos]) error {
 		repos := uow.Repos()
 
-		stock, err := repos.Stocks.GetByProductID(ctx, input.ProductID)
+		stock, err := repos.Stocks.GetByProductIDForUpdate(ctx, input.ProductID)
 		if err != nil {
 			if errors.Is(err, outbound.ErrStockRecordNotFound) {
 				return outbound.ErrStockRecordNotFound
@@ -314,6 +319,14 @@ func (s *CatalogService) ReserveStock(ctx context.Context, input ReserveStockInp
 			return fmt.Errorf("update stock record: %w", err)
 		}
 
+		if _, err := repos.Stocks.CreateReservation(ctx, outbound.StockReservation{
+			OrderID:   input.OrderID,
+			ProductID: input.ProductID,
+			Quantity:  input.Quantity,
+		}); err != nil {
+			return fmt.Errorf("create stock reservation: %w", err)
+		}
+
 		result = ReserveStockResult{Stock: updated}
 
 		return nil
@@ -326,39 +339,53 @@ func (s *CatalogService) ReserveStock(ctx context.Context, input ReserveStockInp
 }
 
 func (s *CatalogService) ReleaseStock(ctx context.Context, input ReleaseStockInput) (ReleaseStockResult, error) {
-	if input.ProductID == uuid.Nil || input.Quantity <= 0 {
+	if input.OrderID == uuid.Nil {
 		return ReleaseStockResult{}, ErrInvalidStockInput
 	}
 
 	var result ReleaseStockResult
 	err := s.txProvider.WithTransaction(ctx, nil, func(uow tx.UnitOfWork[CatalogRepos]) error {
 		repos := uow.Repos()
-
-		stock, err := repos.Stocks.GetByProductID(ctx, input.ProductID)
+		reservations, err := repos.Stocks.ListReservationsByOrderID(ctx, input.OrderID)
 		if err != nil {
-			if errors.Is(err, outbound.ErrStockRecordNotFound) {
-				return outbound.ErrStockRecordNotFound
+			return fmt.Errorf("list stock reservations by order id: %w", err)
+		}
+
+		if len(reservations) == 0 {
+			result = ReleaseStockResult{Released: true}
+			return nil
+		}
+
+		for _, reservation := range reservations {
+			stock, err := repos.Stocks.GetByProductIDForUpdate(ctx, reservation.ProductID)
+			if err != nil {
+				if errors.Is(err, outbound.ErrStockRecordNotFound) {
+					return outbound.ErrStockRecordNotFound
+				}
+
+				return fmt.Errorf("get stock by product id: %w", err)
 			}
 
-			return fmt.Errorf("get stock by product id: %w", err)
-		}
-
-		if input.Quantity > stock.Reserved {
-			return outbound.ErrInvalidStockUpdate
-		}
-
-		stock.Reserved -= input.Quantity
-
-		updated, err := repos.Stocks.Update(ctx, stock)
-		if err != nil {
-			if errors.Is(err, outbound.ErrStockRecordNotFound) || errors.Is(err, outbound.ErrInvalidStockUpdate) {
-				return err
+			if reservation.Quantity > stock.Reserved {
+				return outbound.ErrInvalidStockUpdate
 			}
 
-			return fmt.Errorf("update stock record: %w", err)
+			stock.Reserved -= reservation.Quantity
+
+			if _, err := repos.Stocks.Update(ctx, stock); err != nil {
+				if errors.Is(err, outbound.ErrStockRecordNotFound) || errors.Is(err, outbound.ErrInvalidStockUpdate) {
+					return err
+				}
+
+				return fmt.Errorf("update stock record: %w", err)
+			}
 		}
 
-		result = ReleaseStockResult{Stock: updated}
+		if err := repos.Stocks.DeleteReservationsByOrderID(ctx, input.OrderID); err != nil {
+			return fmt.Errorf("delete stock reservations by order id: %w", err)
+		}
+
+		result = ReleaseStockResult{Released: true}
 
 		return nil
 	})

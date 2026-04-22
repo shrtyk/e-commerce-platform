@@ -45,6 +45,50 @@ func (q *Queries) CreateStockRecord(ctx context.Context, arg CreateStockRecordPa
 	return i, err
 }
 
+const createStockReservation = `-- name: CreateStockReservation :one
+INSERT INTO
+  stock_reservations (order_id, product_id, quantity)
+VALUES
+  (
+    $1,
+    $2,
+    $3
+  )
+RETURNING
+  stock_reservation_id, order_id, product_id, quantity, created_at, updated_at
+`
+
+type CreateStockReservationParams struct {
+	OrderID   uuid.UUID
+	ProductID uuid.UUID
+	Quantity  int32
+}
+
+func (q *Queries) CreateStockReservation(ctx context.Context, arg CreateStockReservationParams) (StockReservation, error) {
+	row := q.db.QueryRowContext(ctx, createStockReservation, arg.OrderID, arg.ProductID, arg.Quantity)
+	var i StockReservation
+	err := row.Scan(
+		&i.StockReservationID,
+		&i.OrderID,
+		&i.ProductID,
+		&i.Quantity,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const deleteStockReservationsByOrderID = `-- name: DeleteStockReservationsByOrderID :exec
+DELETE FROM stock_reservations
+WHERE
+  order_id = $1
+`
+
+func (q *Queries) DeleteStockReservationsByOrderID(ctx context.Context, orderID uuid.UUID) error {
+	_, err := q.db.ExecContext(ctx, deleteStockReservationsByOrderID, orderID)
+	return err
+}
+
 const getStockRecordByProductID = `-- name: GetStockRecordByProductID :one
 SELECT
   stock_record_id, product_id, quantity, reserved, available, created_at, updated_at
@@ -67,6 +111,72 @@ func (q *Queries) GetStockRecordByProductID(ctx context.Context, productID uuid.
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getStockRecordByProductIDForUpdate = `-- name: GetStockRecordByProductIDForUpdate :one
+SELECT
+  stock_record_id, product_id, quantity, reserved, available, created_at, updated_at
+FROM
+  stock_records
+WHERE
+  product_id = $1
+FOR UPDATE
+`
+
+func (q *Queries) GetStockRecordByProductIDForUpdate(ctx context.Context, productID uuid.UUID) (StockRecord, error) {
+	row := q.db.QueryRowContext(ctx, getStockRecordByProductIDForUpdate, productID)
+	var i StockRecord
+	err := row.Scan(
+		&i.StockRecordID,
+		&i.ProductID,
+		&i.Quantity,
+		&i.Reserved,
+		&i.Available,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listStockReservationsByOrderID = `-- name: ListStockReservationsByOrderID :many
+SELECT
+  stock_reservation_id, order_id, product_id, quantity, created_at, updated_at
+FROM
+  stock_reservations
+WHERE
+  order_id = $1
+ORDER BY
+  product_id
+`
+
+func (q *Queries) ListStockReservationsByOrderID(ctx context.Context, orderID uuid.UUID) ([]StockReservation, error) {
+	rows, err := q.db.QueryContext(ctx, listStockReservationsByOrderID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StockReservation
+	for rows.Next() {
+		var i StockReservation
+		if err := rows.Scan(
+			&i.StockReservationID,
+			&i.OrderID,
+			&i.ProductID,
+			&i.Quantity,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateStockRecord = `-- name: UpdateStockRecord :one
