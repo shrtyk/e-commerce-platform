@@ -14,6 +14,7 @@ import (
 	commonerrors "github.com/shrtyk/e-commerce-platform/internal/common/errors"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/inbound/http/dto"
+	checkoutgrpc "github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/adapters/outbound/checkout/grpc"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/core/ports/outbound"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/core/service/checkout"
 )
@@ -98,7 +99,9 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.checkoutService.Checkout(r.Context(), checkout.CheckoutInput{
+	ctx := checkoutgrpc.WithShopperAuthorization(r.Context(), r.Header.Get("Authorization"))
+
+	result, err := h.checkoutService.Checkout(ctx, checkout.CheckoutInput{
 		UserID:         claims.UserID,
 		IdempotencyKey: idempotencyKey,
 		PaymentMethod:  request.PaymentMethod,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	cartv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/cart/v1"
@@ -17,6 +18,8 @@ import (
 	paymentv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/core/ports/outbound"
 )
+
+type shopperAuthorizationContextKey struct{}
 
 type CheckoutSnapshotRepository struct {
 	cartClient    cartv1.CartServiceClient
@@ -31,7 +34,7 @@ func NewCheckoutSnapshotRepository(
 }
 
 func (a *CheckoutSnapshotRepository) GetCheckoutSnapshot(ctx context.Context, userID uuid.UUID) (outbound.CheckoutSnapshot, error) {
-	response, err := a.cartClient.GetCheckoutSnapshot(ctx, &cartv1.GetCheckoutSnapshotRequest{UserId: userID.String()})
+	response, err := a.cartClient.GetCheckoutSnapshot(withAuthorizationMetadata(ctx), &cartv1.GetCheckoutSnapshotRequest{UserId: userID.String()})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return outbound.CheckoutSnapshot{}, outbound.ErrCheckoutSnapshotNotFound
@@ -63,7 +66,7 @@ func (a *CheckoutSnapshotRepository) GetCheckoutSnapshot(ctx context.Context, us
 			return outbound.CheckoutSnapshot{}, fmt.Errorf("cart get checkout snapshot: %w", quantityErr)
 		}
 
-		productResponse, productErr := a.catalogClient.GetProductBySKU(ctx, &catalogv1.GetProductBySKURequest{Sku: item.GetSku()})
+		productResponse, productErr := a.catalogClient.GetProductBySKU(withoutAuthorizationMetadata(ctx), &catalogv1.GetProductBySKURequest{Sku: item.GetSku()})
 		if productErr != nil {
 			if status.Code(productErr) == codes.NotFound {
 				return outbound.CheckoutSnapshot{}, outbound.ErrStockReservationSKUNotFound
@@ -99,6 +102,36 @@ func (a *CheckoutSnapshotRepository) GetCheckoutSnapshot(ctx context.Context, us
 		TotalAmount: total.GetAmount(),
 		Items:       items,
 	}, nil
+}
+
+func WithShopperAuthorization(ctx context.Context, authorization string) context.Context {
+	authorization = strings.TrimSpace(authorization)
+	if authorization == "" {
+		return ctx
+	}
+
+	return context.WithValue(ctx, shopperAuthorizationContextKey{}, authorization)
+}
+
+func withAuthorizationMetadata(ctx context.Context) context.Context {
+	authorization, ok := ctx.Value(shopperAuthorizationContextKey{}).(string)
+	if !ok || strings.TrimSpace(authorization) == "" {
+		return ctx
+	}
+
+	return metadata.AppendToOutgoingContext(ctx, "authorization", authorization)
+}
+
+func withoutAuthorizationMetadata(ctx context.Context) context.Context {
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		return ctx
+	}
+
+	filtered := md.Copy()
+	delete(filtered, "authorization")
+
+	return metadata.NewOutgoingContext(ctx, filtered)
 }
 
 type StockReservationService struct {

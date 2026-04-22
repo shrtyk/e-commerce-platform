@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	cartv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/cart/v1"
@@ -354,6 +355,111 @@ func TestCheckoutSnapshotRepositoryGetCheckoutSnapshotMappings(t *testing.T) {
 		_, err := repo.GetCheckoutSnapshot(context.Background(), userID)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "quantity out of int32 range")
+	})
+}
+
+func TestCheckoutSnapshotRepositoryGetCheckoutSnapshotForwardsAuthorizationMetadataToCartOnly(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	repo := NewCheckoutSnapshotRepository(
+		fakeCartClient{
+			getCheckoutSnapshotFunc: func(ctx context.Context, req *cartv1.GetCheckoutSnapshotRequest, _ ...grpc.CallOption) (*cartv1.GetCheckoutSnapshotResponse, error) {
+				require.Equal(t, userID.String(), req.GetUserId())
+
+				md, ok := metadata.FromOutgoingContext(ctx)
+				require.True(t, ok)
+				headers := md.Get("authorization")
+				require.Len(t, headers, 1)
+				require.Equal(t, "Bearer shopper-token", headers[0])
+
+				return &cartv1.GetCheckoutSnapshotResponse{Snapshot: &cartv1.CheckoutSnapshot{
+					TotalAmount: &commonv1.Money{Amount: 500, Currency: "USD"},
+					Items: []*cartv1.CartItem{{
+						Sku:       "SKU-1",
+						Name:      "Product",
+						Quantity:  1,
+						UnitPrice: &commonv1.Money{Amount: 500, Currency: "USD"},
+						LineTotal: &commonv1.Money{Amount: 500, Currency: "USD"},
+					}},
+				}}, nil
+			},
+		},
+		fakeCatalogClient{
+			getProductBySKUFunc: func(ctx context.Context, req *catalogv1.GetProductBySKURequest, _ ...grpc.CallOption) (*catalogv1.GetProductBySKUResponse, error) {
+				require.Equal(t, "SKU-1", req.GetSku())
+
+				md, ok := metadata.FromOutgoingContext(ctx)
+				if ok {
+					require.Empty(t, md.Get("authorization"))
+				}
+
+				return &catalogv1.GetProductBySKUResponse{Product: &catalogv1.Product{ProductId: uuid.NewString()}}, nil
+			},
+		},
+	)
+
+	ctx := WithShopperAuthorization(context.Background(), "Bearer shopper-token")
+	snapshot, err := repo.GetCheckoutSnapshot(ctx, userID)
+	require.NoError(t, err)
+	require.Equal(t, userID, snapshot.UserID)
+	require.Equal(t, int64(500), snapshot.TotalAmount)
+	require.Equal(t, "USD", snapshot.Currency)
+	require.Len(t, snapshot.Items, 1)
+}
+
+func TestCheckoutSnapshotRepositoryGetCheckoutSnapshotDoesNotForwardBlankAuthorization(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	t.Run("missing authorization", func(t *testing.T) {
+		t.Parallel()
+
+		repo := NewCheckoutSnapshotRepository(
+			fakeCartClient{
+				getCheckoutSnapshotFunc: func(ctx context.Context, _ *cartv1.GetCheckoutSnapshotRequest, _ ...grpc.CallOption) (*cartv1.GetCheckoutSnapshotResponse, error) {
+					md, ok := metadata.FromOutgoingContext(ctx)
+					if ok {
+						require.Empty(t, md.Get("authorization"))
+					}
+
+					return &cartv1.GetCheckoutSnapshotResponse{Snapshot: &cartv1.CheckoutSnapshot{
+						TotalAmount: &commonv1.Money{Amount: 0, Currency: "USD"},
+						Items:       []*cartv1.CartItem{},
+					}}, nil
+				},
+			},
+			fakeCatalogClient{},
+		)
+
+		_, err := repo.GetCheckoutSnapshot(context.Background(), userID)
+		require.NoError(t, err)
+	})
+
+	t.Run("blank authorization", func(t *testing.T) {
+		t.Parallel()
+
+		repo := NewCheckoutSnapshotRepository(
+			fakeCartClient{
+				getCheckoutSnapshotFunc: func(ctx context.Context, _ *cartv1.GetCheckoutSnapshotRequest, _ ...grpc.CallOption) (*cartv1.GetCheckoutSnapshotResponse, error) {
+					md, ok := metadata.FromOutgoingContext(ctx)
+					if ok {
+						require.Empty(t, md.Get("authorization"))
+					}
+
+					return &cartv1.GetCheckoutSnapshotResponse{Snapshot: &cartv1.CheckoutSnapshot{
+						TotalAmount: &commonv1.Money{Amount: 0, Currency: "USD"},
+						Items:       []*cartv1.CartItem{},
+					}}, nil
+				},
+			},
+			fakeCatalogClient{},
+		)
+
+		ctx := WithShopperAuthorization(context.Background(), "   ")
+		_, err := repo.GetCheckoutSnapshot(ctx, userID)
+		require.NoError(t, err)
 	})
 }
 
