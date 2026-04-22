@@ -342,7 +342,7 @@ func TestCatalogWriteRoutesAsAdmin(t *testing.T) {
 	)
 
 	t.Run("create product", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/v1/products", strings.NewReader(`{"sku":"SKU-1","name":"Created product","description":"Created description","price":1299,"currencyId":"`+currencyID.String()+`","status":"draft","categoryId":"`+categoryID.String()+`","initialQuantity":25}`))
+		req := httptest.NewRequest(http.MethodPost, "/v1/products", strings.NewReader(`{"sku":"SKU-1","name":"Created product","description":"Created description","price":1299,"currencyCode":"USD","status":"draft","categoryId":"`+categoryID.String()+`","initialQuantity":25}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer admin-token")
 		res := httptest.NewRecorder()
@@ -357,6 +357,23 @@ func TestCatalogWriteRoutesAsAdmin(t *testing.T) {
 		require.Equal(t, dto.ProductStatusDraft, response.Product.Status)
 		require.Equal(t, 25, response.Stock.Quantity)
 		require.Equal(t, dto.InStock, response.Stock.Status)
+		require.Equal(t, "USD", svc.lastCreateInput.Product.Currency)
+	})
+
+	t.Run("create product rejects empty currency code", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/products", strings.NewReader(`{"sku":"SKU-1","name":"Created product","description":"Created description","price":1299,"currencyCode":"  ","status":"draft","categoryId":"`+categoryID.String()+`","initialQuantity":25}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer admin-token")
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		require.Equal(t, http.StatusBadRequest, res.Code)
+
+		var response dto.ErrorResponse
+		require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
+		require.Equal(t, "invalid_request", response.Code)
+		require.Equal(t, "invalid currency", response.Message)
 	})
 
 	t.Run("update product", func(t *testing.T) {

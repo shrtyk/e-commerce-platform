@@ -167,6 +167,67 @@ func TestProductRepositoryGetBySKU(t *testing.T) {
 	}
 }
 
+func TestProductRepositoryGetCurrencyByCode(t *testing.T) {
+	currencyID := uuid.New()
+
+	tests := []struct {
+		name      string
+		stub      stubQuerier
+		errIs     error
+		errPrefix string
+	}{
+		{
+			name: "found",
+			stub: stubQuerier{
+				getCurrencyByCodeFunc: func(_ context.Context, gotCode string) (uuid.UUID, error) {
+					require.Equal(t, "USD", gotCode)
+					return currencyID, nil
+				},
+			},
+		},
+		{
+			name: "not found",
+			stub: stubQuerier{
+				getCurrencyByCodeFunc: func(_ context.Context, _ string) (uuid.UUID, error) {
+					return uuid.Nil, sql.ErrNoRows
+				},
+			},
+			errIs: outbound.ErrInvalidCurrency,
+		},
+		{
+			name: "db error",
+			stub: stubQuerier{
+				getCurrencyByCodeFunc: func(_ context.Context, _ string) (uuid.UUID, error) {
+					return uuid.Nil, sql.ErrConnDone
+				},
+			},
+			errPrefix: "get currency by code",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &ProductRepository{queries: tt.stub}
+			id, err := repo.GetCurrencyByCode(context.Background(), "USD")
+
+			if tt.errIs != nil || tt.errPrefix != "" {
+				require.Error(t, err)
+				if tt.errIs != nil {
+					require.ErrorIs(t, err, tt.errIs)
+				}
+				if tt.errPrefix != "" {
+					require.ErrorContains(t, err, tt.errPrefix)
+				}
+				require.Equal(t, uuid.Nil, id)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, currencyID, id)
+		})
+	}
+}
+
 func TestProductRepositoryList(t *testing.T) {
 	now := time.Date(2026, time.April, 11, 12, 0, 0, 0, time.UTC)
 	currencyID := uuid.New()

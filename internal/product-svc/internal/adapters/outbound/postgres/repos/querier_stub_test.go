@@ -11,21 +11,22 @@ import (
 )
 
 type stubQuerier struct {
-	getProductByIDFunc   func(ctx context.Context, productID uuid.UUID) (sqlc.GetProductByIDRow, error)
-	getProductBySKUFunc  func(ctx context.Context, sku string) (sqlc.GetProductBySKURow, error)
-	listProductsFunc     func(ctx context.Context, arg sqlc.ListProductsParams) ([]sqlc.ListProductsRow, error)
-	createProductFunc    func(ctx context.Context, arg sqlc.CreateProductParams) (sqlc.CreateProductRow, error)
-	createStockFunc      func(ctx context.Context, arg sqlc.CreateStockRecordParams) (sqlc.StockRecord, error)
-	getStockFunc         func(ctx context.Context, productID uuid.UUID) (sqlc.StockRecord, error)
-	updateStockFunc      func(ctx context.Context, arg sqlc.UpdateStockRecordParams) (sqlc.StockRecord, error)
-	updateProductFunc    func(ctx context.Context, arg sqlc.UpdateProductParams) (sqlc.UpdateProductRow, error)
-	deleteProductFunc    func(ctx context.Context, productID uuid.UUID) (sqlc.Product, error)
-	appendOutboxFunc     func(ctx context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error)
-	claimOutboxFunc      func(ctx context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
-	claimStaleOutboxFunc func(ctx context.Context, arg sqlc.ClaimStaleInProgressOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
-	markRetryableFunc    func(ctx context.Context, arg sqlc.MarkOutboxRecordRetryableFailureParams) (int64, error)
-	markDeadFunc         func(ctx context.Context, arg sqlc.MarkOutboxRecordDeadParams) (int64, error)
-	markPublishedFunc    func(ctx context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error)
+	getProductByIDFunc    func(ctx context.Context, productID uuid.UUID) (sqlc.GetProductByIDRow, error)
+	getProductBySKUFunc   func(ctx context.Context, sku string) (sqlc.GetProductBySKURow, error)
+	getCurrencyByCodeFunc func(ctx context.Context, code string) (uuid.UUID, error)
+	listProductsFunc      func(ctx context.Context, arg sqlc.ListProductsParams) ([]sqlc.ListProductsRow, error)
+	createProductFunc     func(ctx context.Context, arg sqlc.CreateProductParams) (sqlc.CreateProductRow, error)
+	createStockFunc       func(ctx context.Context, arg sqlc.CreateStockRecordParams) (sqlc.StockRecord, error)
+	getStockFunc          func(ctx context.Context, productID uuid.UUID) (sqlc.StockRecord, error)
+	updateStockFunc       func(ctx context.Context, arg sqlc.UpdateStockRecordParams) (sqlc.StockRecord, error)
+	updateProductFunc     func(ctx context.Context, arg sqlc.UpdateProductParams) (sqlc.UpdateProductRow, error)
+	deleteProductFunc     func(ctx context.Context, productID uuid.UUID) (sqlc.Product, error)
+	appendOutboxFunc      func(ctx context.Context, arg sqlc.AppendOutboxRecordParams) (sqlc.OutboxRecord, error)
+	claimOutboxFunc       func(ctx context.Context, arg sqlc.ClaimPendingOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
+	claimStaleOutboxFunc  func(ctx context.Context, arg sqlc.ClaimStaleInProgressOutboxRecordsParams) ([]sqlc.OutboxRecord, error)
+	markRetryableFunc     func(ctx context.Context, arg sqlc.MarkOutboxRecordRetryableFailureParams) (int64, error)
+	markDeadFunc          func(ctx context.Context, arg sqlc.MarkOutboxRecordDeadParams) (int64, error)
+	markPublishedFunc     func(ctx context.Context, arg sqlc.MarkOutboxRecordPublishedParams) (int64, error)
 }
 
 func (s stubQuerier) GetProductByID(ctx context.Context, productID uuid.UUID) (sqlc.GetProductByIDRow, error) {
@@ -42,6 +43,14 @@ func (s stubQuerier) GetProductBySKU(ctx context.Context, sku string) (sqlc.GetP
 	}
 
 	return s.getProductBySKUFunc(ctx, sku)
+}
+
+func (s stubQuerier) GetCurrencyByCode(ctx context.Context, code string) (uuid.UUID, error) {
+	if s.getCurrencyByCodeFunc == nil {
+		return uuid.Nil, fmt.Errorf("unexpected GetCurrencyByCode call")
+	}
+
+	return s.getCurrencyByCodeFunc(ctx, code)
 }
 
 func (s stubQuerier) ListProducts(ctx context.Context, arg sqlc.ListProductsParams) ([]sqlc.ListProductsRow, error) {

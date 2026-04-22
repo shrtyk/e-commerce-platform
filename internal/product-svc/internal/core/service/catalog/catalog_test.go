@@ -33,16 +33,18 @@ func TestCreateProduct(t *testing.T) {
 			name: "success",
 			input: CreateProductInput{
 				Product: domain.Product{
-					SKU:        "SKU-1",
-					Name:       "Product",
-					Price:      1000,
-					CurrencyID: currencyID,
-					Currency:   "USD",
-					Status:     domain.ProductStatusPublished,
+					SKU:      "SKU-1",
+					Name:     "Product",
+					Price:    1000,
+					Currency: "USD",
+					Status:   domain.ProductStatusPublished,
 				},
 				InitialQuantity: 10,
 			},
 			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository, publisher *outboundmocks.MockEventPublisher) {
+				products.EXPECT().
+					GetCurrencyByCode(testifymock.Anything, "USD").
+					Return(currencyID, nil)
 				products.EXPECT().
 					Create(testifymock.Anything, testifymock.Anything).
 					Return(domain.Product{ID: productID, SKU: "SKU-1", Name: "Product", Price: 1000, CurrencyID: currencyID, Currency: "USD", Status: domain.ProductStatusPublished}, nil)
@@ -72,17 +74,20 @@ func TestCreateProduct(t *testing.T) {
 			name: "create returns no rows falls back to get by sku",
 			input: CreateProductInput{
 				Product: domain.Product{
-					SKU:        "SKU-NO-ROWS",
-					Name:       "Product",
-					Price:      1000,
-					CurrencyID: currencyID,
-					Currency:   "USD",
-					Status:     domain.ProductStatusDraft,
+					SKU:      "SKU-NO-ROWS",
+					Name:     "Product",
+					Price:    1000,
+					Currency: "USD",
+					Status:   domain.ProductStatusDraft,
 				},
 				InitialQuantity: 3,
 			},
 			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository, publisher *outboundmocks.MockEventPublisher) {
 				created := domain.Product{ID: productID, SKU: "SKU-NO-ROWS", Name: "Product", Price: 1000, CurrencyID: currencyID, Currency: "USD", Status: domain.ProductStatusDraft}
+
+				products.EXPECT().
+					GetCurrencyByCode(testifymock.Anything, "USD").
+					Return(currencyID, nil)
 
 				products.EXPECT().
 					Create(testifymock.Anything, testifymock.Anything).
@@ -111,9 +116,12 @@ func TestCreateProduct(t *testing.T) {
 		{
 			name: "duplicate product",
 			input: CreateProductInput{
-				Product: domain.Product{SKU: "SKU-1", Name: "Product", Price: 1000, CurrencyID: currencyID},
+				Product: domain.Product{SKU: "SKU-1", Name: "Product", Price: 1000, Currency: "USD"},
 			},
 			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository, publisher *outboundmocks.MockEventPublisher) {
+				products.EXPECT().
+					GetCurrencyByCode(testifymock.Anything, "USD").
+					Return(currencyID, nil)
 				products.EXPECT().
 					Create(testifymock.Anything, testifymock.Anything).
 					Return(domain.Product{}, outbound.ErrProductAlreadyExists)
@@ -127,9 +135,12 @@ func TestCreateProduct(t *testing.T) {
 		{
 			name: "publish event error",
 			input: CreateProductInput{
-				Product: domain.Product{SKU: "SKU-1", Name: "Product", Price: 1000, CurrencyID: currencyID, Currency: "USD"},
+				Product: domain.Product{SKU: "SKU-1", Name: "Product", Price: 1000, Currency: "USD"},
 			},
 			setupMocks: func(products *outboundmocks.MockProductRepository, stocks *outboundmocks.MockStockRepository, publisher *outboundmocks.MockEventPublisher) {
+				products.EXPECT().
+					GetCurrencyByCode(testifymock.Anything, "USD").
+					Return(currencyID, nil)
 				products.EXPECT().
 					Create(testifymock.Anything, testifymock.Anything).
 					Return(domain.Product{ID: productID, SKU: "SKU-1", Name: "Product", Price: 1000, CurrencyID: currencyID, Currency: "USD"}, nil)
@@ -597,6 +608,9 @@ func TestCreateProductStatusUnknownDefaultsToDraft(t *testing.T) {
 	svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), "product-svc")
 
 	products.EXPECT().
+		GetCurrencyByCode(testifymock.Anything, "USD").
+		Return(currencyID, nil)
+	products.EXPECT().
 		Create(testifymock.Anything, testifymock.MatchedBy(func(product domain.Product) bool {
 			return product.Status == domain.ProductStatusDraft
 		})).
@@ -610,11 +624,11 @@ func TestCreateProductStatusUnknownDefaultsToDraft(t *testing.T) {
 
 	result, err := svc.CreateProduct(context.Background(), CreateProductInput{
 		Product: domain.Product{
-			SKU:        " SKU-1 ",
-			Name:       " Product ",
-			Price:      100,
-			CurrencyID: currencyID,
-			Status:     domain.ProductStatusUnknown,
+			SKU:      " SKU-1 ",
+			Name:     " Product ",
+			Price:    100,
+			Currency: " USD ",
+			Status:   domain.ProductStatusUnknown,
 		},
 		InitialQuantity: 1,
 	})
@@ -645,6 +659,9 @@ func TestCreateProductProducerPropagationAndDefaultFallback(t *testing.T) {
 			svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), tt.configured)
 
 			products.EXPECT().
+				GetCurrencyByCode(testifymock.Anything, "USD").
+				Return(currencyID, nil)
+			products.EXPECT().
 				Create(testifymock.Anything, testifymock.Anything).
 				Return(domain.Product{ID: productID, SKU: "SKU-1", Name: "Product", Price: 100, CurrencyID: currencyID, Status: domain.ProductStatusDraft}, nil)
 
@@ -660,11 +677,11 @@ func TestCreateProductProducerPropagationAndDefaultFallback(t *testing.T) {
 
 			_, err := svc.CreateProduct(context.Background(), CreateProductInput{
 				Product: domain.Product{
-					SKU:        "SKU-1",
-					Name:       "Product",
-					Price:      100,
-					CurrencyID: currencyID,
-					Status:     domain.ProductStatusDraft,
+					SKU:      "SKU-1",
+					Name:     "Product",
+					Price:    100,
+					Currency: "USD",
+					Status:   domain.ProductStatusDraft,
 				},
 				InitialQuantity: 1,
 			})
@@ -674,7 +691,35 @@ func TestCreateProductProducerPropagationAndDefaultFallback(t *testing.T) {
 	}
 }
 
+func TestCreateProductRejectsUnknownCurrencyCode(t *testing.T) {
+	products := outboundmocks.NewMockProductRepository(t)
+	stocks := outboundmocks.NewMockStockRepository(t)
+	publisher := outboundmocks.NewMockEventPublisher(t)
+	svc := NewCatalogService(products, stocks, publisher, newStubProvider(products, stocks, publisher), "product-svc")
+
+	products.EXPECT().
+		GetCurrencyByCode(testifymock.Anything, "NOPE").
+		Return(uuid.Nil, outbound.ErrInvalidCurrency)
+
+	_, err := svc.CreateProduct(context.Background(), CreateProductInput{
+		Product: domain.Product{
+			SKU:      "SKU-1",
+			Name:     "Product",
+			Price:    100,
+			Currency: "NOPE",
+			Status:   domain.ProductStatusDraft,
+		},
+		InitialQuantity: 1,
+	})
+
+	require.ErrorIs(t, err, outbound.ErrInvalidCurrency)
+	products.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	stocks.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	publisher.AssertNotCalled(t, "Publish", testifymock.Anything, testifymock.Anything)
+}
+
 func TestCreateProductTxProviderError(t *testing.T) {
+	currencyID := uuid.New()
 	products := outboundmocks.NewMockProductRepository(t)
 	stocks := outboundmocks.NewMockStockRepository(t)
 	publisher := outboundmocks.NewMockEventPublisher(t)
@@ -683,14 +728,17 @@ func TestCreateProductTxProviderError(t *testing.T) {
 	provider.err = txErr
 
 	svc := NewCatalogService(products, stocks, publisher, provider, "product-svc")
+	products.EXPECT().
+		GetCurrencyByCode(testifymock.Anything, "USD").
+		Return(currencyID, nil)
 
 	_, err := svc.CreateProduct(context.Background(), CreateProductInput{
 		Product: domain.Product{
-			SKU:        "SKU-1",
-			Name:       "Product",
-			Price:      100,
-			CurrencyID: uuid.New(),
-			Status:     domain.ProductStatusDraft,
+			SKU:      "SKU-1",
+			Name:     "Product",
+			Price:    100,
+			Currency: "USD",
+			Status:   domain.ProductStatusDraft,
 		},
 		InitialQuantity: 1,
 	})

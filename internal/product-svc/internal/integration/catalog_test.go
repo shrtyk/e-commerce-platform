@@ -142,17 +142,15 @@ func TestAdminWriteRoutesAndPublicFiltering(t *testing.T) {
 	testhelper.CleanupDB(t, harness.DB)
 	stack := newCatalogStack(t)
 
-	currencyID := getCurrencyID(t, stack.DB, "USD")
 	adminToken := issueTestAdminToken(t)
 
 	serviceCreated, serviceCreateErr := stack.CatalogService.CreateProduct(context.Background(), catalog.CreateProductInput{
 		Product: domain.Product{
-			SKU:        "SVC-" + uuid.NewString(),
-			Name:       "Service create",
-			Price:      999,
-			CurrencyID: currencyID,
-			Currency:   "USD",
-			Status:     domain.ProductStatusDraft,
+			SKU:      "SVC-" + uuid.NewString(),
+			Name:     "Service create",
+			Price:    999,
+			Currency: "USD",
+			Status:   domain.ProductStatusDraft,
 		},
 		InitialQuantity: 1,
 	})
@@ -169,9 +167,8 @@ func TestAdminWriteRoutesAndPublicFiltering(t *testing.T) {
 	require.Equal(t, domain.ProductStatusPublished, servicePatched.Product.Status)
 	require.Equal(t, domain.ProductStatusPublished, storedStatus)
 
-	createBody := fmt.Sprintf(`{"sku":"SKU-%s","name":"Admin created","description":"created via admin route","price":1099,"currencyId":"%s","status":"draft","initialQuantity":11}`,
+	createBody := fmt.Sprintf(`{"sku":"SKU-%s","name":"Admin created","description":"created via admin route","price":1099,"currencyCode":"USD","status":"draft","initialQuantity":11}`,
 		uuid.NewString(),
-		currencyID.String(),
 	)
 	createRes := performAdminJSONRequest(t, stack, http.MethodPost, "/v1/products", createBody, adminToken, http.StatusCreated)
 
@@ -215,6 +212,25 @@ func TestAdminWriteRoutesAndPublicFiltering(t *testing.T) {
 
 	getArchivedErr := getProductHTTPError(t, stack, created.Product.ProductId, http.StatusNotFound)
 	require.Equal(t, "product_not_found", getArchivedErr.Code)
+}
+
+func TestAdminCreateAcceptsSeededUSDCurrencyCode(t *testing.T) {
+	harness := testhelper.IntegrationHarness(t)
+	testhelper.CleanupDB(t, harness.DB)
+	stack := newCatalogStack(t)
+
+	adminToken := issueTestAdminToken(t)
+
+	createBody := fmt.Sprintf(`{"sku":"SKU-%s","name":"Admin created","description":"created via admin route","price":1099,"currencyCode":"USD","status":"draft","initialQuantity":11}`,
+		uuid.NewString(),
+	)
+
+	createRes := performAdminJSONRequest(t, stack, http.MethodPost, "/v1/products", createBody, adminToken, http.StatusCreated)
+
+	var created dto.ProductWriteResponse
+	require.NoError(t, json.NewDecoder(createRes.Body).Decode(&created))
+	require.Equal(t, dto.ProductStatusDraft, created.Product.Status)
+	require.Equal(t, 11, created.Stock.Quantity)
 }
 
 func TestAdminPatchAndDeleteMissingProductReturnNotFound(t *testing.T) {
@@ -352,7 +368,6 @@ func TestAdminWriteRoutesAuthFailuresReturnJSONErrorResponse(t *testing.T) {
 	baseCount := countProducts(t, stack.DB)
 	baseStockCount := countStockRecords(t, stack.DB)
 	baseSnapshot := getPersistedProductSnapshot(t, stack.DB, protectedProduct.Product.ID)
-	currencyID := getCurrencyID(t, stack.DB, "USD")
 
 	inactiveAdminToken := issueTestToken(t, "admin", "inactive")
 	nonAdminToken := issueTestToken(t, "user", "active")
@@ -375,7 +390,7 @@ func TestAdminWriteRoutesAuthFailuresReturnJSONErrorResponse(t *testing.T) {
 		path   string
 		body   string
 	}{
-		{name: "post", method: http.MethodPost, path: "/v1/products", body: `{"sku":"SKU-` + uuid.NewString() + `","name":"x","price":100,"currencyId":"` + currencyID.String() + `","initialQuantity":1}`},
+		{name: "post", method: http.MethodPost, path: "/v1/products", body: `{"sku":"SKU-` + uuid.NewString() + `","name":"x","price":100,"currencyCode":"USD","initialQuantity":1}`},
 		{name: "patch", method: http.MethodPatch, path: "/v1/products/" + productID, body: `{"name":"forbidden-update","status":"archived"}`},
 		{name: "delete", method: http.MethodDelete, path: "/v1/products/" + productID, body: ""},
 	}
@@ -420,7 +435,6 @@ func TestAdminCreateRejectsInvalidPayloadNoPersistenceSideEffects(t *testing.T) 
 	stack := newCatalogStack(t)
 
 	adminToken := issueTestAdminToken(t)
-	currencyID := getCurrencyID(t, stack.DB, "USD")
 	baseCount := countProducts(t, stack.DB)
 	baseStockCount := countStockRecords(t, stack.DB)
 
@@ -430,8 +444,8 @@ func TestAdminCreateRejectsInvalidPayloadNoPersistenceSideEffects(t *testing.T) 
 		expectedMessage string
 	}{
 		{name: "malformed json", body: `{"sku":`, expectedMessage: "invalid request body"},
-		{name: "zero currency", body: `{"sku":"SKU-` + uuid.NewString() + `","name":"Name","price":100,"currencyId":"00000000-0000-0000-0000-000000000000","initialQuantity":1}`, expectedMessage: "invalid currency"},
-		{name: "zero category", body: `{"sku":"SKU-` + uuid.NewString() + `","name":"Name","price":100,"currencyId":"` + currencyID.String() + `","categoryId":"00000000-0000-0000-0000-000000000000","initialQuantity":1}`, expectedMessage: "invalid category id"},
+		{name: "blank currency code", body: `{"sku":"SKU-` + uuid.NewString() + `","name":"Name","price":100,"currencyCode":"   ","initialQuantity":1}`, expectedMessage: "invalid currency"},
+		{name: "zero category", body: `{"sku":"SKU-` + uuid.NewString() + `","name":"Name","price":100,"currencyCode":"USD","categoryId":"00000000-0000-0000-0000-000000000000","initialQuantity":1}`, expectedMessage: "invalid category id"},
 	}
 
 	for _, tt := range tests {
@@ -566,36 +580,24 @@ func createProductViaService(
 ) catalog.CreateProductResult {
 	t.Helper()
 
-	currencyID := getCurrencyID(t, stack.DB, "USD")
 	productID := uuid.New()
 	sku := "SKU-" + uuid.NewString()
 	name := "Product " + uuid.NewString()
 
 	result, err := stack.CatalogService.CreateProduct(context.Background(), catalog.CreateProductInput{
 		Product: domain.Product{
-			ID:         productID,
-			SKU:        sku,
-			Name:       name,
-			Price:      1500,
-			CurrencyID: currencyID,
-			Currency:   "USD",
-			Status:     status,
+			ID:       productID,
+			SKU:      sku,
+			Name:     name,
+			Price:    1500,
+			Currency: "USD",
+			Status:   status,
 		},
 		InitialQuantity: initialQuantity,
 	})
 	require.NoError(t, err)
 
 	return result
-}
-
-func getCurrencyID(t *testing.T, db *sql.DB, code string) uuid.UUID {
-	t.Helper()
-
-	var currencyID uuid.UUID
-	err := db.QueryRowContext(context.Background(), "SELECT id FROM currencies WHERE code = $1", code).Scan(&currencyID)
-	require.NoError(t, err)
-
-	return currencyID
 }
 
 func getProductStatus(t *testing.T, db *sql.DB, productID uuid.UUID) domain.ProductStatus {
