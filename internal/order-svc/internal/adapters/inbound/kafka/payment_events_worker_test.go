@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	commonv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1"
@@ -13,6 +14,7 @@ import (
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/core/service/checkout"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kerr"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -98,6 +100,7 @@ func TestPaymentEventsWorkerTickSuccessCommitsOffset(t *testing.T) {
 	eventID := uuid.New()
 	handlerCalls := 0
 	commitCalls := 0
+	published := make([]commonkafka.EventEnvelope, 0)
 
 	worker, err := NewPaymentEventsWorker(
 		consumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
@@ -118,7 +121,10 @@ func TestPaymentEventsWorkerTickSuccessCommitsOffset(t *testing.T) {
 			require.Equal(t, orderID, input.OrderID)
 			return nil
 		}},
-		eventPublisherStub{},
+		eventPublisherStub{publishFunc: func(_ context.Context, envelope commonkafka.EventEnvelope) error {
+			published = append(published, envelope)
+			return nil
+		}},
 		consumerIdempotencyRepositoryStub{},
 		PaymentEventsWorkerConfig{PollInterval: 25, ConsumerGroupName: "order-svc-payment-events-v1", MaxRetryAttempts: 3},
 	)
@@ -127,6 +133,7 @@ func TestPaymentEventsWorkerTickSuccessCommitsOffset(t *testing.T) {
 	require.NoError(t, worker.Tick(context.Background()))
 	require.Equal(t, 1, handlerCalls)
 	require.Equal(t, 1, commitCalls)
+	require.Len(t, published, 0)
 }
 
 func TestPaymentEventsWorkerTickDuplicateReplaySkipsHandlerAndCommits(t *testing.T) {
@@ -135,6 +142,7 @@ func TestPaymentEventsWorkerTickDuplicateReplaySkipsHandlerAndCommits(t *testing
 	eventID := uuid.New()
 	handlerCalls := 0
 	commitCalls := 0
+	published := make([]commonkafka.EventEnvelope, 0)
 
 	worker, err := NewPaymentEventsWorker(
 		consumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
@@ -154,7 +162,10 @@ func TestPaymentEventsWorkerTickDuplicateReplaySkipsHandlerAndCommits(t *testing
 			handlerCalls++
 			return nil
 		}},
-		eventPublisherStub{},
+		eventPublisherStub{publishFunc: func(_ context.Context, envelope commonkafka.EventEnvelope) error {
+			published = append(published, envelope)
+			return nil
+		}},
 		consumerIdempotencyRepositoryStub{existsFunc: func(context.Context, uuid.UUID, string) (bool, error) {
 			return true, nil
 		}},
@@ -165,6 +176,7 @@ func TestPaymentEventsWorkerTickDuplicateReplaySkipsHandlerAndCommits(t *testing
 	require.NoError(t, worker.Tick(context.Background()))
 	require.Equal(t, 0, handlerCalls)
 	require.Equal(t, 1, commitCalls)
+	require.Len(t, published, 0)
 }
 
 func TestPaymentEventsWorkerTickRetriableErrorRepublishRetryThenCommit(t *testing.T) {
@@ -616,4 +628,163 @@ func TestPaymentEventsWorkerTickMalformedRetryHeadersDeterministic(t *testing.T)
 	require.Len(t, published, 1)
 	require.Equal(t, "payment.events.retry", published[0].Topic)
 	require.Equal(t, "1", published[0].Headers[commonkafka.HeaderRetryAttempt])
+}
+
+func TestPaymentEventsWorkerTickReliabilityHeaderContract(t *testing.T) {
+	t.Parallel()
+
+	consumerGroup := "order-svc-payment-events-v1"
+	firstFailedAt := time.Date(2026, 4, 23, 9, 0, 0, 0, time.UTC)
+
+	testCases := []struct {
+		name              string
+		envelope          commonkafka.EventEnvelope
+		message           proto.Message
+		handleSucceededErr error
+		expectedTopic     string
+		expectedAttempt   string
+		expectedErrorCode string
+		expectedErrorMsg  string
+		errorMsgContains  string
+		expectedDLQReason string
+		expectedFirstFail time.Time
+	}{
+		{
+			name: "retriable routes retry with required headers",
+			envelope: commonkafka.EventEnvelope{
+				Topic:   "payment.events",
+				Key:     []byte("order-key"),
+				Payload: []byte("payload-body"),
+			},
+			message: &paymentv1.PaymentSucceeded{
+				Metadata:    &commonv1.EventMetadata{EventId: uuid.NewString()},
+				OrderId:     uuid.NewString(),
+				ProcessedAt: timestamppb.Now(),
+			},
+			handleSucceededErr: commonkafka.ClassifyError(kerr.LeaderNotAvailable),
+			expectedTopic:      "payment.events.retry",
+			expectedAttempt:    "1",
+			expectedErrorCode:  "ORDER_HANDLE_PAYMENT_SUCCEEDED_FAILED",
+			errorMsgContains:   "LEADER_NOT_AVAILABLE",
+		},
+		{
+			name: "non-retryable routes dlq with reason non-retryable",
+			envelope: commonkafka.EventEnvelope{
+				Topic:   "payment.events",
+				Key:     []byte("order-key"),
+				Payload: []byte("payload-body"),
+			},
+			message:           &commonv1.EventMetadata{},
+			expectedTopic:     "payment.events.dlq",
+			expectedAttempt:   "0",
+			expectedErrorCode: "ORDER_INVALID_EVENT_PAYLOAD",
+			expectedErrorMsg:  "unsupported payment event message: *commonv1.EventMetadata",
+			expectedDLQReason: commonkafka.DLQReasonNonRetryable,
+		},
+		{
+			name: "max attempts exceeded routes dlq with reason max-attempts-exceeded",
+			envelope: commonkafka.EventEnvelope{
+				Topic:   "payment.events.retry",
+				Key:     []byte("order-key"),
+				Payload: []byte("payload-body"),
+				Headers: map[string]string{
+					commonkafka.HeaderRetryAttempt:       "3",
+					commonkafka.HeaderRetryMaxAttempts:   "3",
+					commonkafka.HeaderRetryOriginalTopic: "payment.events",
+					commonkafka.HeaderRetryFirstFailedAt: firstFailedAt.Format(time.RFC3339),
+				},
+			},
+			message: &paymentv1.PaymentSucceeded{
+				Metadata:    &commonv1.EventMetadata{EventId: uuid.NewString()},
+				OrderId:     uuid.NewString(),
+				ProcessedAt: timestamppb.Now(),
+			},
+			handleSucceededErr: commonkafka.ClassifyError(kerr.LeaderNotAvailable),
+			expectedTopic:      "payment.events.dlq",
+			expectedAttempt:    "3",
+			expectedErrorCode:  "ORDER_HANDLE_PAYMENT_SUCCEEDED_FAILED",
+			errorMsgContains:   "LEADER_NOT_AVAILABLE",
+			expectedDLQReason:  commonkafka.DLQReasonMaxAttemptsExceeded,
+			expectedFirstFail:  firstFailedAt,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			commitCalls := 0
+			published := make([]commonkafka.EventEnvelope, 0, 1)
+
+			worker, err := NewPaymentEventsWorker(
+				consumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
+					return []commonkafka.ConsumedMessage{{
+						Envelope: tc.envelope,
+						Message:  tc.message,
+					}}, nil
+				}, commitFunc: func(context.Context) error {
+					commitCalls++
+					return nil
+				}},
+				paymentOutcomeHandlerStub{handleSucceededFunc: func(context.Context, checkout.HandlePaymentSucceededInput) error {
+					return tc.handleSucceededErr
+				}},
+				eventPublisherStub{publishFunc: func(_ context.Context, envelope commonkafka.EventEnvelope) error {
+					published = append(published, envelope)
+					return nil
+				}},
+				consumerIdempotencyRepositoryStub{},
+				PaymentEventsWorkerConfig{PollInterval: 25, ConsumerGroupName: consumerGroup, MaxRetryAttempts: 3},
+			)
+			require.NoError(t, err)
+
+			require.NoError(t, worker.Tick(context.Background()))
+			require.Equal(t, 1, commitCalls)
+			require.Len(t, published, 1)
+			require.Equal(t, tc.expectedTopic, published[0].Topic)
+			require.Equal(t, []byte("order-key"), published[0].Key)
+			require.Equal(t, []byte("payload-body"), published[0].Payload)
+
+			headers := published[0].Headers
+			require.Equal(t, tc.expectedAttempt, headers[commonkafka.HeaderRetryAttempt])
+			require.Equal(t, "3", headers[commonkafka.HeaderRetryMaxAttempts])
+			require.Equal(t, "payment.events", headers[commonkafka.HeaderRetryOriginalTopic])
+			if tc.expectedFirstFail.IsZero() {
+				assertHeaderRFC3339(t, headers, commonkafka.HeaderRetryFirstFailedAt)
+			} else {
+				require.Equal(t, tc.expectedFirstFail.Format(time.RFC3339), headers[commonkafka.HeaderRetryFirstFailedAt])
+			}
+			assertHeaderRFC3339(t, headers, commonkafka.HeaderRetryLastFailedAt)
+			require.Equal(t, tc.expectedErrorCode, headers[commonkafka.HeaderRetryErrorCode])
+			if tc.expectedErrorMsg != "" {
+				require.Equal(t, tc.expectedErrorMsg, headers[commonkafka.HeaderRetryErrorMessage])
+			} else {
+				require.Contains(t, headers[commonkafka.HeaderRetryErrorMessage], tc.errorMsgContains)
+			}
+			require.Equal(t, consumerGroup, headers[commonkafka.HeaderRetryConsumerGroup])
+
+			if tc.expectedDLQReason == "" {
+				require.Empty(t, headers[commonkafka.HeaderDLQReason])
+				require.Empty(t, headers[commonkafka.HeaderDLQAt])
+				return
+			}
+
+			require.Equal(t, tc.expectedDLQReason, headers[commonkafka.HeaderDLQReason])
+			assertHeaderRFC3339(t, headers, commonkafka.HeaderDLQAt)
+		})
+	}
+}
+
+func assertHeaderRFC3339(t *testing.T, headers map[string]string, key string) {
+	t.Helper()
+
+	raw := headers[key]
+	require.NotEmpty(t, raw)
+
+	parsed, err := time.Parse(time.RFC3339, raw)
+	require.NoError(t, err)
+
+	_, offset := parsed.Zone()
+	require.Equal(t, 0, offset)
 }

@@ -71,6 +71,8 @@ func TestOrderEventsWorkerIntegration(t *testing.T) {
 			require.Equal(t, row.EventName, row.Headers[commonkafka.HeaderEventName])
 			require.Equal(t, correlationID, row.Headers[commonkafka.HeaderCorrelationID])
 		}
+
+		require.Empty(t, stack.publisher.Published())
 	})
 
 	t.Run("order cancelled creates sent notification with cancelled body", func(t *testing.T) {
@@ -97,6 +99,8 @@ func TestOrderEventsWorkerIntegration(t *testing.T) {
 
 		outboxRows := stack.queries.mustListOutboxByAggregateID(t, request.DeliveryRequestID)
 		require.Equal(t, []string{"notification.delivery_requested", "notification.sent"}, outboxEventNames(outboxRows))
+
+		require.Empty(t, stack.publisher.Published())
 	})
 
 	t.Run("idempotent replay does not create duplicate work", func(t *testing.T) {
@@ -119,6 +123,7 @@ func TestOrderEventsWorkerIntegration(t *testing.T) {
 		require.Equal(t, 2, stack.queries.mustCountOutboxByAggregateID(t, request.DeliveryRequestID))
 		require.Equal(t, 1, stack.queries.mustCountConsumerIdempotencyByGroup(t, eventID, integrationConsumerGroup))
 		require.Equal(t, 1, stack.queries.mustCountConsumerIdempotencyByGroup(t, eventID, integrationConsumerGroup+".delivery-results"))
+		require.Empty(t, stack.publisher.Published())
 	})
 
 	t.Run("provider failure marks request failed and replay stays idempotent", func(t *testing.T) {
@@ -183,6 +188,48 @@ func TestOrderEventsWorkerIntegration(t *testing.T) {
 		})
 		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryFirstFailedAt)
 		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryLastFailedAt)
+		require.Empty(t, published[0].Headers[commonkafka.HeaderDLQReason])
+		require.Empty(t, published[0].Headers[commonkafka.HeaderDLQAt])
+	})
+
+	t.Run("malformed retry headers fallback deterministically on retry path", func(t *testing.T) {
+		stack := newCleanIntegrationStack(t)
+
+		eventID := uuid.New()
+		orderID := uuid.New()
+		message := buildOrderConfirmedMessage(eventID, orderID, "retry-malformed-user@example.com", "corr-retry-malformed")
+		message.Envelope.Key = []byte("order-key")
+		message.Envelope.Payload = []byte("payload-body")
+		message.Envelope.Topic = "order.events.retry"
+		message.Envelope.Headers = map[string]string{
+			commonkafka.HeaderRetryAttempt:       "bad",
+			commonkafka.HeaderRetryMaxAttempts:   "bad",
+			commonkafka.HeaderRetryOriginalTopic: "order.events",
+			commonkafka.HeaderRetryFirstFailedAt: "bad-ts",
+		}
+
+		stack.deliveryProvider.inner = failingDeliveryProvider{err: errors.New("provider unavailable")}
+		stack.consumer.SetMessages(message)
+
+		require.NoError(t, stack.worker.Tick(context.Background()))
+
+		published := stack.publisher.Published()
+		require.Len(t, published, 1)
+		require.Equal(t, "order.events.retry", published[0].Topic)
+		require.Equal(t, []byte("order-key"), published[0].Key)
+		require.Equal(t, []byte("payload-body"), published[0].Payload)
+		assertRetryHeadersPresent(t, published[0].Headers, retryHeaderPresenceExpectations{
+			Attempt:       "1",
+			MaxAttempts:   "3",
+			OriginalTopic: "order.events",
+			ErrorCode:     "NOTIFICATION_HANDLE_ORDER_EVENT_FAILED",
+			ErrorMessage:  "send delivery: provider unavailable",
+			ConsumerGroup: integrationConsumerGroup,
+		})
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryFirstFailedAt)
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryLastFailedAt)
+		require.Empty(t, published[0].Headers[commonkafka.HeaderDLQReason])
+		require.Empty(t, published[0].Headers[commonkafka.HeaderDLQAt])
 	})
 
 	t.Run("invalid payload republishes to dlq topic", func(t *testing.T) {
@@ -213,6 +260,47 @@ func TestOrderEventsWorkerIntegration(t *testing.T) {
 		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryFirstFailedAt)
 		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryLastFailedAt)
 		require.Equal(t, commonkafka.DLQReasonNonRetryable, published[0].Headers[commonkafka.HeaderDLQReason])
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderDLQAt)
+	})
+
+	t.Run("retriable error at max attempts republishes to dlq with max-attempts-exceeded reason", func(t *testing.T) {
+		stack := newCleanIntegrationStack(t)
+
+		eventID := uuid.New()
+		orderID := uuid.New()
+		firstFailedAt := time.Date(2026, 4, 23, 9, 0, 0, 0, time.UTC)
+		message := buildOrderConfirmedMessage(eventID, orderID, "retry-max-user@example.com", "corr-retry-max")
+		message.Envelope.Key = []byte("order-key")
+		message.Envelope.Payload = []byte("payload-body")
+		message.Envelope.Topic = "order.events.retry"
+		message.Envelope.Headers = map[string]string{
+			commonkafka.HeaderRetryAttempt:       "3",
+			commonkafka.HeaderRetryMaxAttempts:   "3",
+			commonkafka.HeaderRetryOriginalTopic: "order.events",
+			commonkafka.HeaderRetryFirstFailedAt: firstFailedAt.Format(time.RFC3339),
+		}
+
+		stack.deliveryProvider.inner = failingDeliveryProvider{err: errors.New("provider unavailable")}
+		stack.consumer.SetMessages(message)
+
+		require.NoError(t, stack.worker.Tick(context.Background()))
+
+		published := stack.publisher.Published()
+		require.Len(t, published, 1)
+		require.Equal(t, "order.events.dlq", published[0].Topic)
+		require.Equal(t, []byte("order-key"), published[0].Key)
+		require.Equal(t, []byte("payload-body"), published[0].Payload)
+		assertRetryHeadersPresent(t, published[0].Headers, retryHeaderPresenceExpectations{
+			Attempt:       "3",
+			MaxAttempts:   "3",
+			OriginalTopic: "order.events",
+			ErrorCode:     "NOTIFICATION_HANDLE_ORDER_EVENT_FAILED",
+			ErrorMessage:  "send delivery: provider unavailable",
+			ConsumerGroup: integrationConsumerGroup,
+		})
+		require.Equal(t, firstFailedAt.Format(time.RFC3339), published[0].Headers[commonkafka.HeaderRetryFirstFailedAt])
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryLastFailedAt)
+		require.Equal(t, commonkafka.DLQReasonMaxAttemptsExceeded, published[0].Headers[commonkafka.HeaderDLQReason])
 		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderDLQAt)
 	})
 
@@ -698,6 +786,9 @@ func assertRFC3339TimestampHeader(t *testing.T, headers map[string]string, key s
 	raw := headers[key]
 	require.NotEmpty(t, raw)
 
-	_, err := time.Parse(time.RFC3339, raw)
+	parsed, err := time.Parse(time.RFC3339, raw)
 	require.NoError(t, err)
+
+	_, offset := parsed.Zone()
+	require.Equal(t, 0, offset)
 }
