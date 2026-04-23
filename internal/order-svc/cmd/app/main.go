@@ -61,6 +61,7 @@ func main() {
 	db := adapterpostgres.MustCreatePostgres(cfg.Postgres, cfg.Timeouts)
 	orderRepository := adapterpostgresrepos.NewOrderRepository(db)
 	sagaRepository := adapterpostgresrepos.NewOrderSagaStateRepository(db)
+	consumerIdempotencyRepository := adapterpostgresrepos.NewConsumerIdempotencyRepository(db)
 	outboxRepo := adapteroutbox.NewRepository(db)
 	outboxEventPublisher := adapterevents.MustCreateOutboxEventPublisher(outboxRepo)
 
@@ -71,12 +72,13 @@ func main() {
 	}
 	defer kafkaClient.Close()
 
-	var paymentEventsClient *commonkafka.Client
+	var paymentEventsClient *kgo.Client
 	if cfg.PaymentEvents.Enabled {
-		paymentEventsClient, err = commonkafka.NewClient(
+		paymentEventsClient, err = kgo.NewClient(
 			kgo.SeedBrokers(kafkaBrokers...),
 			kgo.ConsumerGroup(cfg.PaymentEvents.GroupID),
-			kgo.ConsumeTopics(cfg.PaymentEvents.Topic),
+			kgo.ConsumeTopics(cfg.PaymentEvents.Topic, cfg.PaymentEvents.Topic+".retry"),
+			kgo.DisableAutoCommit(),
 		)
 		if err != nil {
 			panic(fmt.Errorf("create payment events kafka client: %w", err))
@@ -201,15 +203,45 @@ func main() {
 			panic(fmt.Errorf("register payment event schemas: %w", err))
 		}
 
+		if err := paymentSerde.RegisterTypes(
+			context.Background(),
+			cfg.PaymentEvents.Topic+".retry",
+			&paymentv1.PaymentInitiated{},
+			&paymentv1.PaymentSucceeded{},
+			&paymentv1.PaymentFailed{},
+		); err != nil {
+			panic(fmt.Errorf("register payment retry event schemas: %w", err))
+		}
+
 		paymentConsumer, err := commonkafka.NewConsumer(paymentEventsClient, paymentSerde)
 		if err != nil {
 			panic(fmt.Errorf("create payment events consumer: %w", err))
 		}
 
+		paymentConsumerWithManualCommit, err := commonkafka.NewConsumerWithManualCommit(paymentConsumer, paymentEventsClient)
+		if err != nil {
+			panic(fmt.Errorf("create payment events manual commit consumer: %w", err))
+		}
+
+		kafkaPublisher, err := commonkafka.NewProducer(
+			kafkaClient,
+			paymentSerde,
+			commonkafka.DefaultRetryPolicy(),
+		)
+		if err != nil {
+			panic(fmt.Errorf("create payment events publisher: %w", err))
+		}
+
 		paymentEventsWorker, err = adapterinboundkafka.NewPaymentEventsWorker(
-			paymentConsumer,
+			paymentConsumerWithManualCommit,
 			checkoutService,
-			adapterinboundkafka.PaymentEventsWorkerConfig{PollInterval: cfg.PaymentEvents.PollInterval},
+			kafkaPublisher,
+			consumerIdempotencyRepository,
+			adapterinboundkafka.PaymentEventsWorkerConfig{
+				PollInterval:     cfg.PaymentEvents.PollInterval,
+				ConsumerGroupName: cfg.PaymentEvents.GroupID,
+				MaxRetryAttempts: cfg.PaymentEvents.MaxRetryAttempts,
+			},
 		)
 		if err != nil {
 			panic(fmt.Errorf("create payment events worker: %w", err))

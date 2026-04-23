@@ -33,19 +33,6 @@ import (
 	"github.com/shrtyk/e-commerce-platform/internal/notification-svc/internal/core/service/notification"
 )
 
-type orderEventsConsumerWithCommit struct {
-	consumer *commonkafka.Consumer
-	client   *kgo.Client
-}
-
-func (c orderEventsConsumerWithCommit) Poll(ctx context.Context) ([]commonkafka.ConsumedMessage, error) {
-	return c.consumer.Poll(ctx)
-}
-
-func (c orderEventsConsumerWithCommit) CommitUncommittedOffsets(ctx context.Context) error {
-	return c.client.CommitUncommittedOffsets(ctx)
-}
-
 func main() {
 	cfg := config.MustLoad()
 
@@ -170,9 +157,9 @@ func main() {
 			panic(fmt.Errorf("create order events consumer: %w", err))
 		}
 
-		orderEventsConsumerWithManualCommit := orderEventsConsumerWithCommit{
-			consumer: orderEventsConsumer,
-			client:   orderEventsClient,
+		orderEventsConsumerWithManualCommit, err := commonkafka.NewConsumerWithManualCommit(orderEventsConsumer, orderEventsClient)
+		if err != nil {
+			panic(fmt.Errorf("create order events manual commit consumer: %w", err))
 		}
 
 		orderEventsWorker, err := adapterinboundkafka.NewOrderEventsWorker(
