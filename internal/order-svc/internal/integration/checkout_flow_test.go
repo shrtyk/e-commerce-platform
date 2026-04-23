@@ -37,7 +37,7 @@ func TestCreateOrderHTTPPersistsOrder(t *testing.T) {
 	productID := uuid.New()
 	idempotencyKey := "idem-happy-path"
 
-	stack.CartServer.SetSnapshot(&cartv1.CheckoutSnapshot{
+	checkoutSnapshot := &cartv1.CheckoutSnapshot{
 		UserId:   userID.String(),
 		Currency: "USD",
 		Items: []*cartv1.CartItem{{
@@ -48,27 +48,45 @@ func TestCreateOrderHTTPPersistsOrder(t *testing.T) {
 			LineTotal: &commonv1.Money{Amount: 3000, Currency: "USD"},
 		}},
 		TotalAmount: &commonv1.Money{Amount: 3000, Currency: "USD"},
-	})
+	}
+	stack.CartServer.SetSnapshot(checkoutSnapshot)
 	stack.CatalogServer.UpsertProduct(testhelper.CatalogProduct{
 		ProductID: productID.String(),
 		SKU:       "SKU-INT-1",
-		Name:      "Integration Product",
-		Price:     1500,
+		Name:      "Catalog Name Should Not Win",
+		Price:     9999,
 		Currency:  "USD",
 	})
 
 	order := createOrderHTTP(t, stack, token, idempotencyKey, dto.CreateOrderRequest{PaymentMethod: stringPtr("card")}, http.StatusAccepted)
 	require.Equal(t, userID.String(), order.UserId)
 	require.Equal(t, dto.AwaitingPayment, order.Status)
-	require.Equal(t, 3000, order.TotalAmount)
+	require.Equal(t, int(checkoutSnapshot.GetTotalAmount().GetAmount()), order.TotalAmount)
+	require.Equal(t, checkoutSnapshot.GetCurrency(), order.Currency)
 	require.Len(t, order.Items, 1)
 	require.Equal(t, productID.String(), order.Items[0].ProductId)
-	require.Equal(t, "SKU-INT-1", stringValue(order.Items[0].Sku))
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetSku(), stringValue(order.Items[0].Sku))
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetName(), stringValue(order.Items[0].Name))
+	require.Equal(t, int(checkoutSnapshot.GetItems()[0].GetQuantity()), order.Items[0].Quantity)
+	require.Equal(t, int(checkoutSnapshot.GetItems()[0].GetUnitPrice().GetAmount()), order.Items[0].UnitPrice)
+	require.Equal(t, int(checkoutSnapshot.GetItems()[0].GetLineTotal().GetAmount()), order.Items[0].LineTotal)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetLineTotal().GetCurrency(), stringValue(order.Items[0].Currency))
 
 	dbOrder := readOrderRow(t, stack.DB, order.OrderId)
 	require.Equal(t, userID, dbOrder.UserID)
 	require.Equal(t, "awaiting_payment", dbOrder.Status)
-	require.Equal(t, int64(3000), dbOrder.TotalAmount)
+	require.Equal(t, checkoutSnapshot.GetCurrency(), dbOrder.Currency)
+	require.Equal(t, checkoutSnapshot.GetTotalAmount().GetAmount(), dbOrder.TotalAmount)
+
+	dbItems := readOrderItemsByOrderID(t, stack.DB, order.OrderId)
+	require.Len(t, dbItems, len(checkoutSnapshot.GetItems()))
+	require.Equal(t, productID, dbItems[0].ProductID)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetSku(), dbItems[0].SKU)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetName(), dbItems[0].Name)
+	require.Equal(t, int32(checkoutSnapshot.GetItems()[0].GetQuantity()), dbItems[0].Quantity)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetUnitPrice().GetAmount(), dbItems[0].UnitPrice)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetLineTotal().GetAmount(), dbItems[0].LineTotal)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetLineTotal().GetCurrency(), dbItems[0].Currency)
 
 	saga := readSagaStateRow(t, stack.DB, order.OrderId)
 	require.Equal(t, "succeeded", saga.StockStage)
@@ -234,7 +252,7 @@ func TestCreateOrderGRPCPersistsOrder(t *testing.T) {
 	productID := uuid.New()
 	idempotencyKey := "idem-grpc-happy-path"
 
-	stack.CartServer.SetSnapshot(&cartv1.CheckoutSnapshot{
+	checkoutSnapshot := &cartv1.CheckoutSnapshot{
 		UserId:   userID.String(),
 		Currency: "USD",
 		Items: []*cartv1.CartItem{{
@@ -245,12 +263,13 @@ func TestCreateOrderGRPCPersistsOrder(t *testing.T) {
 			LineTotal: &commonv1.Money{Amount: 3000, Currency: "USD"},
 		}},
 		TotalAmount: &commonv1.Money{Amount: 3000, Currency: "USD"},
-	})
+	}
+	stack.CartServer.SetSnapshot(checkoutSnapshot)
 	stack.CatalogServer.UpsertProduct(testhelper.CatalogProduct{
 		ProductID: productID.String(),
 		SKU:       "SKU-GRPC-1",
-		Name:      "Integration Product",
-		Price:     1500,
+		Name:      "Catalog Name Should Not Win",
+		Price:     9999,
 		Currency:  "USD",
 	})
 
@@ -263,15 +282,33 @@ func TestCreateOrderGRPCPersistsOrder(t *testing.T) {
 	require.NotNil(t, res.GetOrder())
 	require.Equal(t, userID.String(), res.GetOrder().GetUserId())
 	require.Equal(t, orderv1.OrderStatus_ORDER_STATUS_AWAITING_PAYMENT, res.GetOrder().GetStatus())
-	require.Equal(t, int64(3000), res.GetOrder().GetTotalAmount().GetAmount())
+	require.Equal(t, checkoutSnapshot.GetTotalAmount().GetAmount(), res.GetOrder().GetTotalAmount().GetAmount())
+	require.Equal(t, checkoutSnapshot.GetCurrency(), res.GetOrder().GetCurrency())
 	require.Len(t, res.GetOrder().GetItems(), 1)
 	require.Equal(t, productID.String(), res.GetOrder().GetItems()[0].GetProductId())
-	require.Equal(t, "SKU-GRPC-1", res.GetOrder().GetItems()[0].GetSku())
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetSku(), res.GetOrder().GetItems()[0].GetSku())
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetName(), res.GetOrder().GetItems()[0].GetName())
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetQuantity(), res.GetOrder().GetItems()[0].GetQuantity())
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetUnitPrice().GetAmount(), res.GetOrder().GetItems()[0].GetUnitPrice().GetAmount())
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetLineTotal().GetAmount(), res.GetOrder().GetItems()[0].GetLineTotal().GetAmount())
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetUnitPrice().GetCurrency(), res.GetOrder().GetItems()[0].GetUnitPrice().GetCurrency())
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetLineTotal().GetCurrency(), res.GetOrder().GetItems()[0].GetLineTotal().GetCurrency())
 
 	dbOrder := readOrderRow(t, stack.DB, res.GetOrder().GetOrderId())
 	require.Equal(t, userID, dbOrder.UserID)
 	require.Equal(t, "awaiting_payment", dbOrder.Status)
-	require.Equal(t, int64(3000), dbOrder.TotalAmount)
+	require.Equal(t, checkoutSnapshot.GetCurrency(), dbOrder.Currency)
+	require.Equal(t, checkoutSnapshot.GetTotalAmount().GetAmount(), dbOrder.TotalAmount)
+
+	dbItems := readOrderItemsByOrderID(t, stack.DB, res.GetOrder().GetOrderId())
+	require.Len(t, dbItems, len(checkoutSnapshot.GetItems()))
+	require.Equal(t, productID, dbItems[0].ProductID)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetSku(), dbItems[0].SKU)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetName(), dbItems[0].Name)
+	require.Equal(t, int32(checkoutSnapshot.GetItems()[0].GetQuantity()), dbItems[0].Quantity)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetUnitPrice().GetAmount(), dbItems[0].UnitPrice)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetLineTotal().GetAmount(), dbItems[0].LineTotal)
+	require.Equal(t, checkoutSnapshot.GetItems()[0].GetLineTotal().GetCurrency(), dbItems[0].Currency)
 
 	saga := readSagaStateRow(t, stack.DB, res.GetOrder().GetOrderId())
 	require.Equal(t, "succeeded", saga.StockStage)
@@ -777,6 +814,7 @@ type orderRow struct {
 	OrderID     uuid.UUID
 	UserID      uuid.UUID
 	Status      string
+	Currency    string
 	TotalAmount int64
 }
 
@@ -801,9 +839,11 @@ type outboxEventRow struct {
 type orderItemRow struct {
 	ProductID uuid.UUID
 	SKU       string
+	Name      string
 	Quantity  int32
 	UnitPrice int64
 	LineTotal int64
+	Currency  string
 }
 
 func newCleanOrderStack(t *testing.T) *testhelper.TestStack {
@@ -872,8 +912,8 @@ func getOrderHTTPError(t *testing.T, stack *testhelper.TestStack, token string, 
 func readOrderRow(t *testing.T, db *sql.DB, orderID string) orderRow {
 	t.Helper()
 	var row orderRow
-	err := db.QueryRowContext(context.Background(), `SELECT order_id, user_id, status::text, total_amount FROM orders WHERE order_id = $1`, orderID).
-		Scan(&row.OrderID, &row.UserID, &row.Status, &row.TotalAmount)
+	err := db.QueryRowContext(context.Background(), `SELECT order_id, user_id, status::text, currency, total_amount FROM orders WHERE order_id = $1`, orderID).
+		Scan(&row.OrderID, &row.UserID, &row.Status, &row.Currency, &row.TotalAmount)
 	require.NoError(t, err)
 	return row
 }
@@ -901,9 +941,9 @@ func readSingleOrderRowByStatus(t *testing.T, db *sql.DB, orderStatus string) or
 	var row orderRow
 	err := db.QueryRowContext(
 		context.Background(),
-		`SELECT order_id, user_id, status::text, total_amount FROM orders WHERE status = $1 ORDER BY created_at ASC LIMIT 1`,
+		`SELECT order_id, user_id, status::text, currency, total_amount FROM orders WHERE status = $1 ORDER BY created_at ASC LIMIT 1`,
 		orderStatus,
-	).Scan(&row.OrderID, &row.UserID, &row.Status, &row.TotalAmount)
+	).Scan(&row.OrderID, &row.UserID, &row.Status, &row.Currency, &row.TotalAmount)
 	require.NoError(t, err)
 	return row
 }
@@ -912,7 +952,7 @@ func readOrderItemsByOrderID(t *testing.T, db *sql.DB, orderID string) []orderIt
 	t.Helper()
 	rows, err := db.QueryContext(
 		context.Background(),
-		`SELECT product_id, sku, quantity, unit_price, line_total FROM order_items WHERE order_id = $1 ORDER BY created_at ASC, order_item_id ASC`,
+		`SELECT product_id, sku, name, quantity, unit_price, line_total, currency FROM order_items WHERE order_id = $1 ORDER BY created_at ASC, order_item_id ASC`,
 		orderID,
 	)
 	require.NoError(t, err)
@@ -921,7 +961,7 @@ func readOrderItemsByOrderID(t *testing.T, db *sql.DB, orderID string) []orderIt
 	var result []orderItemRow
 	for rows.Next() {
 		var row orderItemRow
-		require.NoError(t, rows.Scan(&row.ProductID, &row.SKU, &row.Quantity, &row.UnitPrice, &row.LineTotal))
+		require.NoError(t, rows.Scan(&row.ProductID, &row.SKU, &row.Name, &row.Quantity, &row.UnitPrice, &row.LineTotal, &row.Currency))
 		result = append(result, row)
 	}
 	require.NoError(t, rows.Err())
