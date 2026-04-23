@@ -42,6 +42,18 @@ type notificationServiceStub struct {
 	handleOrderEventFunc func(ctx context.Context, input notification.HandleOrderEventInput) error
 }
 
+type orderEventsPublisherStub struct {
+	publishFunc func(ctx context.Context, envelope commonkafka.EventEnvelope) error
+}
+
+func (s orderEventsPublisherStub) Publish(ctx context.Context, envelope commonkafka.EventEnvelope) error {
+	if s.publishFunc == nil {
+		return nil
+	}
+
+	return s.publishFunc(ctx, envelope)
+}
+
 func (s notificationServiceStub) HandleOrderEvent(ctx context.Context, input notification.HandleOrderEventInput) error {
 	if s.handleOrderEventFunc == nil {
 		return nil
@@ -84,7 +96,8 @@ func TestOrderEventsWorkerTickHandlesOrderConfirmed(t *testing.T) {
 				return nil
 			},
 		},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+		orderEventsPublisherStub{},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
 	)
 	require.NoError(t, err)
 	worker.now = func() time.Time { return now }
@@ -115,7 +128,8 @@ func TestOrderEventsWorkerTickUsesMetadataCorrelationIDWhenPresent(t *testing.T)
 				return nil
 			},
 		},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+		orderEventsPublisherStub{},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
 	)
 	require.NoError(t, err)
 
@@ -145,7 +159,8 @@ func TestOrderEventsWorkerTickUsesEnvelopeCorrelationIDWhenMetadataBlank(t *test
 				return nil
 			},
 		},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+		orderEventsPublisherStub{},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
 	)
 	require.NoError(t, err)
 
@@ -179,7 +194,8 @@ func TestOrderEventsWorkerTickHandlesOrderCancelled(t *testing.T) {
 				return nil
 			},
 		},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+		orderEventsPublisherStub{},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
 	)
 	require.NoError(t, err)
 
@@ -212,7 +228,8 @@ func TestOrderEventsWorkerTickIdempotentReplaySkipsProcessedRequest(t *testing.T
 				return nil
 			},
 		},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+		orderEventsPublisherStub{},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
 	)
 	require.NoError(t, err)
 
@@ -232,8 +249,8 @@ func TestOrderEventsWorkerTickContinuesAfterMalformedPayload(t *testing.T) {
 		testLogger(),
 		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
 			return []commonkafka.ConsumedMessage{
-				{Message: newOrderConfirmedEvent("not-uuid", uuid.NewString(), "user-1")},
-				{Message: newOrderConfirmedEvent(validEventID.String(), uuid.NewString(), "user-1")},
+				{Envelope: commonkafka.EventEnvelope{Topic: "order.events"}, Message: newOrderConfirmedEvent("not-uuid", uuid.NewString(), "user-1")},
+				{Envelope: commonkafka.EventEnvelope{Topic: "order.events"}, Message: newOrderConfirmedEvent(validEventID.String(), uuid.NewString(), "user-1")},
 			}, nil
 		}, commitFunc: func(context.Context) error {
 			commitCalls++
@@ -246,7 +263,8 @@ func TestOrderEventsWorkerTickContinuesAfterMalformedPayload(t *testing.T) {
 				return nil
 			},
 		},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+		orderEventsPublisherStub{},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
 	)
 	require.NoError(t, err)
 
@@ -255,19 +273,18 @@ func TestOrderEventsWorkerTickContinuesAfterMalformedPayload(t *testing.T) {
 	require.Equal(t, 1, commitCalls)
 }
 
-func TestOrderEventsWorkerTickReturnsErrorWithoutCommitOnServiceError(t *testing.T) {
+func TestOrderEventsWorkerTickRepublishesRetryAndCommitsOnServiceError(t *testing.T) {
 	t.Parallel()
 
 	firstEventID := uuid.New()
-	secondEventID := uuid.New()
 	commitCalls := 0
+	published := make([]commonkafka.EventEnvelope, 0, 1)
 
 	worker, err := NewOrderEventsWorker(
 		testLogger(),
 		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
 			return []commonkafka.ConsumedMessage{
-				{Message: newOrderConfirmedEvent(firstEventID.String(), uuid.NewString(), "user-1")},
-				{Message: newOrderConfirmedEvent(secondEventID.String(), uuid.NewString(), "user-2")},
+				{Envelope: commonkafka.EventEnvelope{Topic: "order.events", Key: []byte("order-key"), Payload: []byte("payload-body")}, Message: newOrderConfirmedEvent(firstEventID.String(), uuid.NewString(), "user-1")},
 			}, nil
 		}, commitFunc: func(context.Context) error {
 			commitCalls++
@@ -278,18 +295,32 @@ func TestOrderEventsWorkerTickReturnsErrorWithoutCommitOnServiceError(t *testing
 				if input.EventID == firstEventID {
 					return errors.New("service boom")
 				}
-
-				require.NotEqual(t, secondEventID, input.EventID)
-
 				return nil
 			},
 		},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+		orderEventsPublisherStub{publishFunc: func(_ context.Context, envelope commonkafka.EventEnvelope) error {
+			published = append(published, envelope)
+			return nil
+		}},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
 	)
 	require.NoError(t, err)
 
-	require.ErrorContains(t, worker.Tick(context.Background()), "retryable order event handling")
-	require.Equal(t, 0, commitCalls)
+	require.NoError(t, worker.Tick(context.Background()))
+	require.Equal(t, 1, commitCalls)
+	require.Len(t, published, 1)
+	require.Equal(t, "order.events.retry", published[0].Topic)
+	assertRetryHeaders(t, published[0].Headers, retryHeaderExpectations{
+		Attempt:       "1",
+		MaxAttempts:   "3",
+		OriginalTopic: "order.events",
+		ErrorCode:     "NOTIFICATION_HANDLE_ORDER_EVENT_FAILED",
+		ErrorMessage:  "service boom",
+		ConsumerGroup: "notification-svc-order-events-v1",
+	})
+	require.Equal(t, "1", published[0].Headers[commonkafka.HeaderRetryAttempt])
+	require.Equal(t, []byte("order-key"), published[0].Key)
+	require.Equal(t, []byte("payload-body"), published[0].Payload)
 }
 
 func TestOrderEventsWorkerTickPollErrorIsRecoverable(t *testing.T) {
@@ -301,7 +332,8 @@ func TestOrderEventsWorkerTickPollErrorIsRecoverable(t *testing.T) {
 			return nil, errors.New("poll boom")
 		}},
 		notificationServiceStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+		orderEventsPublisherStub{},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
 	)
 	require.NoError(t, err)
 
@@ -323,11 +355,236 @@ func TestOrderEventsWorkerTickCommitErrorReturnsError(t *testing.T) {
 			return errors.New("commit boom")
 		}},
 		notificationServiceStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1"},
+		orderEventsPublisherStub{},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
 	)
 	require.NoError(t, err)
 
 	require.ErrorContains(t, worker.Tick(context.Background()), "commit order event offsets")
+}
+
+func TestOrderEventsWorkerTickRoutesNonRetriableToDLQAndCommits(t *testing.T) {
+	t.Parallel()
+
+	commitCalls := 0
+	published := make([]commonkafka.EventEnvelope, 0, 1)
+
+	worker, err := NewOrderEventsWorker(
+		testLogger(),
+		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
+			return []commonkafka.ConsumedMessage{{
+				Envelope: commonkafka.EventEnvelope{Topic: "order.events", Key: []byte("order-key"), Payload: []byte("payload-body")},
+				Message:  newOrderConfirmedEvent("not-uuid", uuid.NewString(), "user-1"),
+			}}, nil
+		}, commitFunc: func(context.Context) error {
+			commitCalls++
+			return nil
+		}},
+		notificationServiceStub{},
+		orderEventsPublisherStub{publishFunc: func(_ context.Context, envelope commonkafka.EventEnvelope) error {
+			published = append(published, envelope)
+			return nil
+		}},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, worker.Tick(context.Background()))
+	require.Equal(t, 1, commitCalls)
+	require.Len(t, published, 1)
+	require.Equal(t, "order.events.dlq", published[0].Topic)
+	assertRetryHeaders(t, published[0].Headers, retryHeaderExpectations{
+		Attempt:       "0",
+		MaxAttempts:   "3",
+		OriginalTopic: "order.events",
+		ErrorCode:     "NOTIFICATION_INVALID_EVENT_PAYLOAD",
+		ErrorMessage:  "parse order confirmed: parse event id: invalid UUID length: 8",
+		ConsumerGroup: "notification-svc-order-events-v1",
+	})
+	require.Equal(t, commonkafka.DLQReasonNonRetryable, published[0].Headers[commonkafka.HeaderDLQReason])
+	assertHeaderRFC3339(t, published[0].Headers, commonkafka.HeaderDLQAt)
+}
+
+func TestOrderEventsWorkerTickServiceNonRetriableErrorRoutesDLQ(t *testing.T) {
+	t.Parallel()
+
+	eventID := uuid.New()
+	commitCalls := 0
+	published := make([]commonkafka.EventEnvelope, 0, 1)
+
+	worker, err := NewOrderEventsWorker(
+		testLogger(),
+		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
+			return []commonkafka.ConsumedMessage{{
+				Envelope: commonkafka.EventEnvelope{Topic: "order.events", Key: []byte("order-key"), Payload: []byte("payload-body")},
+				Message:  newOrderConfirmedEvent(eventID.String(), uuid.NewString(), "user-1"),
+			}}, nil
+		}, commitFunc: func(context.Context) error {
+			commitCalls++
+			return nil
+		}},
+		notificationServiceStub{handleOrderEventFunc: func(context.Context, notification.HandleOrderEventInput) error {
+			return commonkafka.ClassifyError(errors.New("policy validation failed"))
+		}},
+		orderEventsPublisherStub{publishFunc: func(_ context.Context, envelope commonkafka.EventEnvelope) error {
+			published = append(published, envelope)
+			return nil
+		}},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, worker.Tick(context.Background()))
+	require.Equal(t, 1, commitCalls)
+	require.Len(t, published, 1)
+	require.Equal(t, "order.events.dlq", published[0].Topic)
+	assertRetryHeaders(t, published[0].Headers, retryHeaderExpectations{
+		Attempt:       "0",
+		MaxAttempts:   "3",
+		OriginalTopic: "order.events",
+		ErrorCode:     "NOTIFICATION_HANDLE_ORDER_EVENT_FAILED",
+		ErrorMessage:  "policy validation failed",
+		ConsumerGroup: "notification-svc-order-events-v1",
+	})
+	require.Equal(t, commonkafka.DLQReasonNonRetryable, published[0].Headers[commonkafka.HeaderDLQReason])
+	assertHeaderRFC3339(t, published[0].Headers, commonkafka.HeaderDLQAt)
+}
+
+func TestOrderEventsWorkerTickRetriableAtMaxRoutesDLQAndCommits(t *testing.T) {
+	t.Parallel()
+
+	firstFailedAt := time.Date(2026, 4, 23, 9, 0, 0, 0, time.UTC)
+	eventID := uuid.New()
+	commitCalls := 0
+	published := make([]commonkafka.EventEnvelope, 0, 1)
+
+	worker, err := NewOrderEventsWorker(
+		testLogger(),
+		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
+			return []commonkafka.ConsumedMessage{{
+				Envelope: commonkafka.EventEnvelope{
+					Topic:   "order.events.retry",
+					Key:     []byte("order-key"),
+					Payload: []byte("payload-body"),
+					Headers: map[string]string{
+						commonkafka.HeaderRetryAttempt:       "3",
+						commonkafka.HeaderRetryMaxAttempts:   "3",
+						commonkafka.HeaderRetryOriginalTopic: "order.events",
+						commonkafka.HeaderRetryFirstFailedAt: firstFailedAt.Format(time.RFC3339),
+					},
+				},
+				Message: newOrderConfirmedEvent(eventID.String(), uuid.NewString(), "user-1"),
+			}}, nil
+		}, commitFunc: func(context.Context) error {
+			commitCalls++
+			return nil
+		}},
+		notificationServiceStub{handleOrderEventFunc: func(context.Context, notification.HandleOrderEventInput) error {
+			return errors.New("service boom")
+		}},
+		orderEventsPublisherStub{publishFunc: func(_ context.Context, envelope commonkafka.EventEnvelope) error {
+			published = append(published, envelope)
+			return nil
+		}},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, worker.Tick(context.Background()))
+	require.Equal(t, 1, commitCalls)
+	require.Len(t, published, 1)
+	require.Equal(t, "order.events.dlq", published[0].Topic)
+	assertRetryHeaders(t, published[0].Headers, retryHeaderExpectations{
+		Attempt:       "3",
+		MaxAttempts:   "3",
+		OriginalTopic: "order.events",
+		FirstFailedAt: firstFailedAt,
+		ErrorCode:     "NOTIFICATION_HANDLE_ORDER_EVENT_FAILED",
+		ErrorMessage:  "service boom",
+		ConsumerGroup: "notification-svc-order-events-v1",
+	})
+	require.Equal(t, commonkafka.DLQReasonMaxAttemptsExceeded, published[0].Headers[commonkafka.HeaderDLQReason])
+	assertHeaderRFC3339(t, published[0].Headers, commonkafka.HeaderDLQAt)
+}
+
+func TestOrderEventsWorkerTickUnsupportedMessageRoutesDLQ(t *testing.T) {
+	t.Parallel()
+
+	commitCalls := 0
+	published := make([]commonkafka.EventEnvelope, 0, 1)
+	serviceCalled := false
+
+	worker, err := NewOrderEventsWorker(
+		testLogger(),
+		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
+			return []commonkafka.ConsumedMessage{{
+				Envelope: commonkafka.EventEnvelope{Topic: "order.events", Key: []byte("order-key"), Payload: []byte("payload-body")},
+				Message:  &commonv1.EventMetadata{},
+			}}, nil
+		}, commitFunc: func(context.Context) error {
+			commitCalls++
+			return nil
+		}},
+		notificationServiceStub{handleOrderEventFunc: func(context.Context, notification.HandleOrderEventInput) error {
+			serviceCalled = true
+			return nil
+		}},
+		orderEventsPublisherStub{publishFunc: func(_ context.Context, envelope commonkafka.EventEnvelope) error {
+			published = append(published, envelope)
+			return nil
+		}},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, worker.Tick(context.Background()))
+	require.False(t, serviceCalled)
+	require.Equal(t, 1, commitCalls)
+	require.Len(t, published, 1)
+	require.Equal(t, "order.events.dlq", published[0].Topic)
+	assertRetryHeaders(t, published[0].Headers, retryHeaderExpectations{
+		Attempt:       "0",
+		MaxAttempts:   "3",
+		OriginalTopic: "order.events",
+		ErrorCode:     "NOTIFICATION_INVALID_EVENT_PAYLOAD",
+		ErrorMessage:  "unsupported order event message: *commonv1.EventMetadata",
+		ConsumerGroup: "notification-svc-order-events-v1",
+	})
+	require.Equal(t, commonkafka.DLQReasonNonRetryable, published[0].Headers[commonkafka.HeaderDLQReason])
+	assertHeaderRFC3339(t, published[0].Headers, commonkafka.HeaderDLQAt)
+}
+
+func TestOrderEventsWorkerTickRepublishFailureSkipsCommit(t *testing.T) {
+	t.Parallel()
+
+	eventID := uuid.New()
+	commitCalls := 0
+
+	worker, err := NewOrderEventsWorker(
+		testLogger(),
+		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
+			return []commonkafka.ConsumedMessage{{
+				Envelope: commonkafka.EventEnvelope{Topic: "order.events", Key: []byte("order-key"), Payload: []byte("payload-body")},
+				Message:  newOrderConfirmedEvent(eventID.String(), uuid.NewString(), "user-1"),
+			}}, nil
+		}, commitFunc: func(context.Context) error {
+			commitCalls++
+			return nil
+		}},
+		notificationServiceStub{handleOrderEventFunc: func(context.Context, notification.HandleOrderEventInput) error {
+			return errors.New("service boom")
+		}},
+		orderEventsPublisherStub{publishFunc: func(context.Context, commonkafka.EventEnvelope) error {
+			return errors.New("publish boom")
+		}},
+		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+	)
+	require.NoError(t, err)
+
+	err = worker.Tick(context.Background())
+	require.Error(t, err)
+	require.ErrorContains(t, err, "republish order event")
+	require.Equal(t, 0, commitCalls)
 }
 
 func testLogger() *slog.Logger {
@@ -367,4 +624,48 @@ func newOrderCancelledEvent(eventID string, orderID string, userID string, reaso
 		CancelReasonCode:    reasonCode,
 		CancelReasonMessage: reasonMessage,
 	}
+}
+
+type retryHeaderExpectations struct {
+	Attempt       string
+	MaxAttempts   string
+	OriginalTopic string
+	FirstFailedAt time.Time
+	LastFailedAt  time.Time
+	ErrorCode     string
+	ErrorMessage  string
+	ConsumerGroup string
+}
+
+func assertRetryHeaders(t *testing.T, headers map[string]string, expected retryHeaderExpectations) {
+	t.Helper()
+
+	require.Equal(t, expected.Attempt, headers[commonkafka.HeaderRetryAttempt])
+	require.Equal(t, expected.MaxAttempts, headers[commonkafka.HeaderRetryMaxAttempts])
+	require.Equal(t, expected.OriginalTopic, headers[commonkafka.HeaderRetryOriginalTopic])
+	if expected.FirstFailedAt.IsZero() {
+		assertHeaderRFC3339(t, headers, commonkafka.HeaderRetryFirstFailedAt)
+	} else {
+		require.Equal(t, expected.FirstFailedAt.Format(time.RFC3339), headers[commonkafka.HeaderRetryFirstFailedAt])
+	}
+
+	if expected.LastFailedAt.IsZero() {
+		assertHeaderRFC3339(t, headers, commonkafka.HeaderRetryLastFailedAt)
+	} else {
+		require.Equal(t, expected.LastFailedAt.Format(time.RFC3339), headers[commonkafka.HeaderRetryLastFailedAt])
+	}
+
+	require.Equal(t, expected.ErrorCode, headers[commonkafka.HeaderRetryErrorCode])
+	require.Equal(t, expected.ErrorMessage, headers[commonkafka.HeaderRetryErrorMessage])
+	require.Equal(t, expected.ConsumerGroup, headers[commonkafka.HeaderRetryConsumerGroup])
+}
+
+func assertHeaderRFC3339(t *testing.T, headers map[string]string, key string) {
+	t.Helper()
+
+	raw := headers[key]
+	require.NotEmpty(t, raw)
+
+	_, err := time.Parse(time.RFC3339, raw)
+	require.NoError(t, err)
 }

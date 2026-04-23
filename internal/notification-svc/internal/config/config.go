@@ -17,10 +17,11 @@ type Config struct {
 }
 
 type OrderEvents struct {
-	Enabled      bool          `env:"ENABLED" env-default:"true"`
-	Topic        string        `env:"TOPIC" env-default:"order.events"`
-	GroupID      string        `env:"GROUP_ID" env-default:"notification-svc-order-events-v1"`
-	PollInterval time.Duration `env:"POLL_INTERVAL" env-default:"500ms"`
+	Enabled          bool          `env:"ENABLED" env-default:"true"`
+	Topic            string        `env:"TOPIC" env-default:"order.events"`
+	GroupID          string        `env:"GROUP_ID" env-default:"notification-svc-order-events-v1"`
+	PollInterval     time.Duration `env:"POLL_INTERVAL" env-default:"500ms"`
+	MaxRetryAttempts int           `env:"MAX_RETRY_ATTEMPTS" env-default:"3"`
 }
 
 type Relay struct {
@@ -56,6 +57,10 @@ func MustLoad() Config {
 
 	if cfg.OrderEvents.PollInterval <= 0 {
 		panic(fmt.Errorf("field \"OrderEvents.PollInterval\" must be positive"))
+	}
+
+	if cfg.OrderEvents.MaxRetryAttempts < 1 {
+		panic(fmt.Errorf("field \"OrderEvents.MaxRetryAttempts\" must be >= 1"))
 	}
 
 	validateRelay(cfg.Relay)

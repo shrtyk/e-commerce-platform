@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -152,11 +153,103 @@ func TestOrderEventsWorkerIntegration(t *testing.T) {
 		require.Equal(t, 1, stack.queries.mustCountConsumerIdempotencyByGroup(t, eventID, integrationConsumerGroup))
 		require.Equal(t, 1, stack.queries.mustCountConsumerIdempotencyByGroup(t, eventID, integrationConsumerGroup+".delivery-results"))
 	})
+
+	t.Run("retriable service error republishes to retry topic", func(t *testing.T) {
+		stack := newCleanIntegrationStack(t)
+
+		eventID := uuid.New()
+		orderID := uuid.New()
+		message := buildOrderConfirmedMessage(eventID, orderID, "retry-user@example.com", "corr-retry")
+		message.Envelope.Key = []byte("order-key")
+		message.Envelope.Payload = []byte("payload-body")
+
+		stack.deliveryProvider.inner = failingDeliveryProvider{err: errors.New("provider unavailable")}
+		stack.consumer.SetMessages(message)
+
+		require.NoError(t, stack.worker.Tick(context.Background()))
+
+		published := stack.publisher.Published()
+		require.Len(t, published, 1)
+		require.Equal(t, "order.events.retry", published[0].Topic)
+		require.Equal(t, []byte("order-key"), published[0].Key)
+		require.Equal(t, []byte("payload-body"), published[0].Payload)
+		assertRetryHeadersPresent(t, published[0].Headers, retryHeaderPresenceExpectations{
+			Attempt:       "1",
+			MaxAttempts:   "3",
+			OriginalTopic: "order.events",
+			ErrorCode:     "NOTIFICATION_HANDLE_ORDER_EVENT_FAILED",
+			ErrorMessage:  "send delivery: provider unavailable",
+			ConsumerGroup: integrationConsumerGroup,
+		})
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryFirstFailedAt)
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryLastFailedAt)
+	})
+
+	t.Run("invalid payload republishes to dlq topic", func(t *testing.T) {
+		stack := newCleanIntegrationStack(t)
+
+		message := buildOrderConfirmedMessage(uuid.New(), uuid.New(), "bad-user@example.com", "corr-dlq")
+		message.Envelope.Key = []byte("order-key")
+		message.Envelope.Payload = []byte("payload-body")
+		message.Message = newOrderConfirmedProto("not-a-uuid", uuid.NewString(), "bad-user@example.com", "corr-dlq")
+
+		stack.consumer.SetMessages(message)
+
+		require.NoError(t, stack.worker.Tick(context.Background()))
+
+		published := stack.publisher.Published()
+		require.Len(t, published, 1)
+		require.Equal(t, "order.events.dlq", published[0].Topic)
+		require.Equal(t, []byte("order-key"), published[0].Key)
+		require.Equal(t, []byte("payload-body"), published[0].Payload)
+		assertRetryHeadersPresent(t, published[0].Headers, retryHeaderPresenceExpectations{
+			Attempt:       "0",
+			MaxAttempts:   "3",
+			OriginalTopic: "order.events",
+			ErrorCode:     "NOTIFICATION_INVALID_EVENT_PAYLOAD",
+			ErrorMessage:  "parse order confirmed: parse event id: invalid UUID length: 10",
+			ConsumerGroup: integrationConsumerGroup,
+		})
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryFirstFailedAt)
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryLastFailedAt)
+		require.Equal(t, commonkafka.DLQReasonNonRetryable, published[0].Headers[commonkafka.HeaderDLQReason])
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderDLQAt)
+	})
+
+	t.Run("unsupported order event message routes to dlq and keeps contract", func(t *testing.T) {
+		stack := newCleanIntegrationStack(t)
+
+		message := buildOrderConfirmedMessage(uuid.New(), uuid.New(), "unsupported-user@example.com", "corr-unsupported")
+		message.Envelope.Key = []byte("order-key")
+		message.Envelope.Payload = []byte("payload-body")
+		message.Message = &commonv1.EventMetadata{}
+
+		stack.consumer.SetMessages(message)
+
+		require.NoError(t, stack.worker.Tick(context.Background()))
+
+		published := stack.publisher.Published()
+		require.Len(t, published, 1)
+		require.Equal(t, "order.events.dlq", published[0].Topic)
+		assertRetryHeadersPresent(t, published[0].Headers, retryHeaderPresenceExpectations{
+			Attempt:       "0",
+			MaxAttempts:   "3",
+			OriginalTopic: "order.events",
+			ErrorCode:     "NOTIFICATION_INVALID_EVENT_PAYLOAD",
+			ErrorMessage:  "unsupported order event message: *commonv1.EventMetadata",
+			ConsumerGroup: integrationConsumerGroup,
+		})
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryFirstFailedAt)
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderRetryLastFailedAt)
+		require.Equal(t, commonkafka.DLQReasonNonRetryable, published[0].Headers[commonkafka.HeaderDLQReason])
+		assertRFC3339TimestampHeader(t, published[0].Headers, commonkafka.HeaderDLQAt)
+	})
 }
 
 type integrationStack struct {
 	worker           *adapterkafka.OrderEventsWorker
 	consumer         *queuedConsumer
+	publisher        *capturingPublisher
 	deliveryProvider *capturingDeliveryProvider
 	queries          *dbAsserter
 }
@@ -168,6 +261,7 @@ func newCleanIntegrationStack(t *testing.T) *integrationStack {
 	testhelper.CleanupDB(t, harness.DB)
 
 	consumer := &queuedConsumer{}
+	publisher := &capturingPublisher{}
 	deliveryProvider := &capturingDeliveryProvider{inner: provider.NewStubProvider()}
 
 	deliveryRequestRepository := adapterpostgresrepos.NewDeliveryRequestRepository(harness.DB)
@@ -197,9 +291,11 @@ func newCleanIntegrationStack(t *testing.T) *integrationStack {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		consumer,
 		notificationService,
+		publisher,
 		adapterkafka.OrderEventsWorkerConfig{
 			PollInterval:      time.Millisecond,
 			ConsumerGroupName: integrationConsumerGroup,
+			MaxRetryAttempts:  3,
 		},
 	)
 	require.NoError(t, err)
@@ -207,6 +303,7 @@ func newCleanIntegrationStack(t *testing.T) *integrationStack {
 	return &integrationStack{
 		worker:           worker,
 		consumer:         consumer,
+		publisher:        publisher,
 		deliveryProvider: deliveryProvider,
 		queries:          &dbAsserter{db: harness.DB},
 	}
@@ -238,10 +335,39 @@ func (c *queuedConsumer) CommitUncommittedOffsets(context.Context) error {
 	return nil
 }
 
+type capturingPublisher struct {
+	mu        sync.Mutex
+	envelopes []commonkafka.EventEnvelope
+}
+
+func (p *capturingPublisher) Publish(_ context.Context, envelope commonkafka.EventEnvelope) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.envelopes = append(p.envelopes, envelope)
+
+	return nil
+}
+
+func (p *capturingPublisher) Published() []commonkafka.EventEnvelope {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return append([]commonkafka.EventEnvelope(nil), p.envelopes...)
+}
+
 type capturingDeliveryProvider struct {
 	mu     sync.Mutex
 	inner  outbound.DeliveryProvider
 	inputs []outbound.SendDeliveryInput
+}
+
+type failingDeliveryProvider struct {
+	err error
+}
+
+func (p failingDeliveryProvider) Send(context.Context, outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
+	return outbound.SendDeliveryResult{}, p.err
 }
 
 func (p *capturingDeliveryProvider) Send(ctx context.Context, input outbound.SendDeliveryInput) (outbound.SendDeliveryResult, error) {
@@ -492,6 +618,21 @@ func buildOrderConfirmedMessage(eventID uuid.UUID, orderID uuid.UUID, userID str
 	}
 }
 
+func newOrderConfirmedProto(eventID string, orderID string, userID string, correlationID string) *orderv1.OrderConfirmed {
+	return &orderv1.OrderConfirmed{
+		Metadata: &commonv1.EventMetadata{
+			EventId:       eventID,
+			EventName:     "order.confirmed",
+			Producer:      "order-svc",
+			OccurredAt:    timestamppb.New(time.Now().UTC()),
+			CorrelationId: correlationID,
+			SchemaVersion: "1",
+		},
+		OrderId: orderID,
+		UserId:  userID,
+	}
+}
+
 func buildOrderCancelledMessage(eventID uuid.UUID, orderID uuid.UUID, userID string, correlationID string, reasonCode string, reasonMessage string) commonkafka.ConsumedMessage {
 	return commonkafka.ConsumedMessage{
 		Envelope: commonkafka.EventEnvelope{
@@ -529,4 +670,34 @@ func outboxEventNames(rows []outboxRow) []string {
 	}
 
 	return names
+}
+
+type retryHeaderPresenceExpectations struct {
+	Attempt       string
+	MaxAttempts   string
+	OriginalTopic string
+	ErrorCode     string
+	ErrorMessage  string
+	ConsumerGroup string
+}
+
+func assertRetryHeadersPresent(t *testing.T, headers map[string]string, expected retryHeaderPresenceExpectations) {
+	t.Helper()
+
+	require.Equal(t, expected.Attempt, headers[commonkafka.HeaderRetryAttempt])
+	require.Equal(t, expected.MaxAttempts, headers[commonkafka.HeaderRetryMaxAttempts])
+	require.Equal(t, expected.OriginalTopic, headers[commonkafka.HeaderRetryOriginalTopic])
+	require.Equal(t, expected.ErrorCode, headers[commonkafka.HeaderRetryErrorCode])
+	require.Equal(t, expected.ErrorMessage, headers[commonkafka.HeaderRetryErrorMessage])
+	require.Equal(t, expected.ConsumerGroup, headers[commonkafka.HeaderRetryConsumerGroup])
+}
+
+func assertRFC3339TimestampHeader(t *testing.T, headers map[string]string, key string) {
+	t.Helper()
+
+	raw := headers[key]
+	require.NotEmpty(t, raw)
+
+	_, err := time.Parse(time.RFC3339, raw)
+	require.NoError(t, err)
 }

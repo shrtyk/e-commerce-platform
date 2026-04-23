@@ -133,7 +133,7 @@ func main() {
 		orderEventsClient, err := kgo.NewClient(
 			kgo.SeedBrokers(kafkaBrokers...),
 			kgo.ConsumerGroup(cfg.OrderEvents.GroupID),
-			kgo.ConsumeTopics(cfg.OrderEvents.Topic),
+			kgo.ConsumeTopics(orderEventsTopics(cfg.OrderEvents.Topic)...),
 			kgo.DisableAutoCommit(),
 		)
 		if err != nil {
@@ -152,6 +152,16 @@ func main() {
 			panic(fmt.Errorf("register order event schemas: %w", err))
 		}
 
+		if err := orderSerde.RegisterTypes(
+			context.Background(),
+			cfg.OrderEvents.Topic+".retry",
+			&orderv1.OrderCreated{},
+			&orderv1.OrderConfirmed{},
+			&orderv1.OrderCancelled{},
+		); err != nil {
+			panic(fmt.Errorf("register order retry event schemas: %w", err))
+		}
+
 		orderEventsConsumer, err := commonkafka.NewConsumer(orderEventsClient, orderSerde)
 		if err != nil {
 			panic(fmt.Errorf("create order events consumer: %w", err))
@@ -162,13 +172,24 @@ func main() {
 			panic(fmt.Errorf("create order events manual commit consumer: %w", err))
 		}
 
+		orderEventsPublisher, err := commonkafka.NewProducer(
+			relayKafkaClient,
+			orderSerde,
+			commonkafka.DefaultRetryPolicy(),
+		)
+		if err != nil {
+			panic(fmt.Errorf("create order events publisher: %w", err))
+		}
+
 		orderEventsWorker, err := adapterinboundkafka.NewOrderEventsWorker(
 			logger,
 			orderEventsConsumerWithManualCommit,
 			notificationService,
+			orderEventsPublisher,
 			adapterinboundkafka.OrderEventsWorkerConfig{
 				PollInterval:      cfg.OrderEvents.PollInterval,
 				ConsumerGroupName: cfg.OrderEvents.GroupID,
+				MaxRetryAttempts:  cfg.OrderEvents.MaxRetryAttempts,
 			},
 		)
 		if err != nil {
@@ -184,4 +205,8 @@ func main() {
 	if err := app.Run(ctx); err != nil {
 		panic(fmt.Errorf("run app: %w", err))
 	}
+}
+
+func orderEventsTopics(topic string) []string {
+	return []string{topic, topic + ".retry"}
 }

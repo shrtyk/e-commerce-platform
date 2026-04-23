@@ -36,6 +36,7 @@ func TestMustLoad(t *testing.T) {
 		require.Equal(t, "order.events", cfg.OrderEvents.Topic)
 		require.Equal(t, "notification-svc-order-events-v1", cfg.OrderEvents.GroupID)
 		require.Equal(t, "500ms", cfg.OrderEvents.PollInterval.String())
+		require.Equal(t, 3, cfg.OrderEvents.MaxRetryAttempts)
 		require.Equal(t, 100, cfg.Relay.BatchSize)
 		require.Equal(t, "500ms", cfg.Relay.Interval.String())
 		require.Equal(t, "1s", cfg.Relay.RetryBaseBackoff.String())
@@ -138,12 +139,23 @@ func TestMustLoad(t *testing.T) {
 		})
 	})
 
+	t.Run("panics on non-positive order events max retry attempts", func(t *testing.T) {
+		setRequiredEnv(t)
+		t.Setenv("ORDER_EVENTS_ENABLED", "true")
+		t.Setenv("ORDER_EVENTS_MAX_RETRY_ATTEMPTS", "0")
+
+		require.PanicsWithError(t, "field \"OrderEvents.MaxRetryAttempts\" must be >= 1", func() {
+			_ = config.MustLoad()
+		})
+	})
+
 	t.Run("does not validate order events fields when disabled", func(t *testing.T) {
 		setRequiredEnv(t)
 		t.Setenv("ORDER_EVENTS_ENABLED", "false")
 		t.Setenv("ORDER_EVENTS_TOPIC", "   ")
 		t.Setenv("ORDER_EVENTS_GROUP_ID", "   ")
 		t.Setenv("ORDER_EVENTS_POLL_INTERVAL", "0s")
+		t.Setenv("ORDER_EVENTS_MAX_RETRY_ATTEMPTS", "0")
 
 		require.NotPanics(t, func() {
 			cfg := config.MustLoad()

@@ -11,6 +11,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestOrderEventsTopicsIncludesMainAndRetry(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, []string{"order.events", "order.events.retry"}, orderEventsTopics("order.events"))
+}
+
 type notificationTestSchemaRegistry struct {
 	subjects []string
 	nextID   int
@@ -46,5 +52,26 @@ func TestOrderEventSerdeRegistersAllConsumedTypes(t *testing.T) {
 		commonkafka.TopicRecordNameSubject("order.events", "ecommerce.order.v1.OrderCreated"),
 		commonkafka.TopicRecordNameSubject("order.events", "ecommerce.order.v1.OrderConfirmed"),
 		commonkafka.TopicRecordNameSubject("order.events", "ecommerce.order.v1.OrderCancelled"),
+	}, registry.subjects)
+}
+
+func TestOrderEventSerdeRegistersRetryTopicTypes(t *testing.T) {
+	t.Parallel()
+
+	registry := &notificationTestSchemaRegistry{}
+	serde := commonkafka.NewProtoSerde(registry, notificationTestSchemaProvider{})
+
+	err := serde.RegisterTypes(
+		context.Background(),
+		"order.events.retry",
+		&orderv1.OrderCreated{},
+		&orderv1.OrderConfirmed{},
+		&orderv1.OrderCancelled{},
+	)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{
+		commonkafka.TopicRecordNameSubject("order.events.retry", "ecommerce.order.v1.OrderCreated"),
+		commonkafka.TopicRecordNameSubject("order.events.retry", "ecommerce.order.v1.OrderConfirmed"),
+		commonkafka.TopicRecordNameSubject("order.events.retry", "ecommerce.order.v1.OrderCancelled"),
 	}, registry.subjects)
 }

@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -20,6 +19,9 @@ const (
 	cancelledTemplateKey  = "order-cancelled"
 	confirmedBodyTemplate = "order %s confirmed"
 	cancelledBodyTemplate = "order %s cancelled: %s"
+
+	errorCodeHandleOrderEvent = "NOTIFICATION_HANDLE_ORDER_EVENT_FAILED"
+	errorCodeInvalidPayload   = "NOTIFICATION_INVALID_EVENT_PAYLOAD"
 )
 
 type orderEventsConsumer interface {
@@ -31,9 +33,14 @@ type orderEventsNotificationService interface {
 	HandleOrderEvent(ctx context.Context, input notification.HandleOrderEventInput) error
 }
 
+type eventPublisher interface {
+	Publish(ctx context.Context, envelope commonkafka.EventEnvelope) error
+}
+
 type OrderEventsWorkerConfig struct {
 	PollInterval      time.Duration
 	ConsumerGroupName string
+	MaxRetryAttempts  int
 }
 
 func (c OrderEventsWorkerConfig) Validate() error {
@@ -45,12 +52,18 @@ func (c OrderEventsWorkerConfig) Validate() error {
 		return fmt.Errorf("consumer group name must be non-empty")
 	}
 
+	if c.MaxRetryAttempts < 1 {
+		return fmt.Errorf("max retry attempts must be >= 1")
+	}
+
 	return nil
 }
 
 type OrderEventsWorker struct {
 	consumer            orderEventsConsumer
 	notificationService orderEventsNotificationService
+	publisher           eventPublisher
+	router              *commonkafka.ReliabilityRouter
 	logger              *slog.Logger
 	config              OrderEventsWorkerConfig
 	ticker              func(time.Duration) ticker
@@ -78,6 +91,7 @@ func NewOrderEventsWorker(
 	logger *slog.Logger,
 	consumer orderEventsConsumer,
 	notificationService orderEventsNotificationService,
+	publisher eventPublisher,
 	cfg OrderEventsWorkerConfig,
 ) (*OrderEventsWorker, error) {
 	if logger == nil {
@@ -92,13 +106,24 @@ func NewOrderEventsWorker(
 		return nil, fmt.Errorf("notification service is nil")
 	}
 
+	if publisher == nil {
+		return nil, fmt.Errorf("order events publisher is nil")
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate order events worker config: %w", err)
+	}
+
+	router, err := commonkafka.NewReliabilityRouter(cfg.ConsumerGroupName, cfg.MaxRetryAttempts)
+	if err != nil {
+		return nil, fmt.Errorf("create reliability router: %w", err)
 	}
 
 	return &OrderEventsWorker{
 		consumer:            consumer,
 		notificationService: notificationService,
+		publisher:           publisher,
+		router:              router,
 		logger:              logger,
 		config:              cfg,
 		ticker: func(d time.Duration) ticker {
@@ -149,12 +174,7 @@ func (w *OrderEventsWorker) Tick(ctx context.Context) error {
 
 	for _, message := range messages {
 		if err := w.handleMessage(ctx, message); err != nil {
-			if !errors.Is(err, errRetriableOrderEvent) {
-				w.logger.WarnContext(ctx, "order events worker skip non-retriable message", slog.Any("error", err))
-				continue
-			}
-
-			return fmt.Errorf("retryable order event handling: %w", err)
+			return err
 		}
 	}
 
@@ -176,19 +196,32 @@ func (w *OrderEventsWorker) handleMessage(ctx context.Context, consumed commonka
 	case *orderv1.OrderCancelled:
 		return w.handleOrderCancelled(ctx, consumed, payload)
 	default:
-		return nil
+		return w.routeAndRepublishFailure(
+			ctx,
+			consumed,
+			commonkafka.FailureNonRetriable,
+			errorCodeInvalidPayload,
+			fmt.Sprintf("unsupported order event message: %T", payload),
+		)
 	}
 }
 
 func (w *OrderEventsWorker) handleOrderConfirmed(ctx context.Context, consumed commonkafka.ConsumedMessage, payload *orderv1.OrderConfirmed) error {
 	eventID, orderID, userID, err := parseOrderEvent(payload.GetMetadata().GetEventId(), payload.GetOrderId(), payload.GetUserId())
 	if err != nil {
-		return fmt.Errorf("parse order confirmed: %w", err)
+		return w.routeAndRepublishFailure(
+			ctx,
+			consumed,
+			commonkafka.FailureNonRetriable,
+			errorCodeInvalidPayload,
+			fmt.Sprintf("parse order confirmed: %v", err),
+		)
 	}
 
 	correlationID := correlationIDFromConsumedEvent(consumed, payload.GetMetadata(), eventID)
 
 	return w.handleOrderEvent(ctx, handleOrderEventInput{
+		consumed:      consumed,
 		eventID:       eventID,
 		sourceEventID: orderID,
 		correlationID: correlationID,
@@ -202,7 +235,13 @@ func (w *OrderEventsWorker) handleOrderConfirmed(ctx context.Context, consumed c
 func (w *OrderEventsWorker) handleOrderCancelled(ctx context.Context, consumed commonkafka.ConsumedMessage, payload *orderv1.OrderCancelled) error {
 	eventID, orderID, userID, err := parseOrderEvent(payload.GetMetadata().GetEventId(), payload.GetOrderId(), payload.GetUserId())
 	if err != nil {
-		return fmt.Errorf("parse order cancelled: %w", err)
+		return w.routeAndRepublishFailure(
+			ctx,
+			consumed,
+			commonkafka.FailureNonRetriable,
+			errorCodeInvalidPayload,
+			fmt.Sprintf("parse order cancelled: %v", err),
+		)
 	}
 
 	correlationID := correlationIDFromConsumedEvent(consumed, payload.GetMetadata(), eventID)
@@ -216,6 +255,7 @@ func (w *OrderEventsWorker) handleOrderCancelled(ctx context.Context, consumed c
 	}
 
 	return w.handleOrderEvent(ctx, handleOrderEventInput{
+		consumed:      consumed,
 		eventID:       eventID,
 		sourceEventID: orderID,
 		correlationID: correlationID,
@@ -227,6 +267,7 @@ func (w *OrderEventsWorker) handleOrderCancelled(ctx context.Context, consumed c
 }
 
 type handleOrderEventInput struct {
+	consumed      commonkafka.ConsumedMessage
 	eventID       uuid.UUID
 	sourceEventID uuid.UUID
 	correlationID string
@@ -250,13 +291,52 @@ func (w *OrderEventsWorker) handleOrderEvent(ctx context.Context, input handleOr
 		AttemptedAt:       w.now().UTC(),
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %w", errRetriableOrderEvent, err)
+		classification := commonkafka.FailureRetriable
+		if commonkafka.IsNonRetriable(err) {
+			classification = commonkafka.FailureNonRetriable
+		}
+
+		return w.routeAndRepublishFailure(ctx, input.consumed, classification, errorCodeHandleOrderEvent, err.Error())
 	}
 
 	return nil
 }
 
-var errRetriableOrderEvent = errors.New("retriable order event")
+func (w *OrderEventsWorker) routeAndRepublishFailure(
+	ctx context.Context,
+	consumed commonkafka.ConsumedMessage,
+	classification commonkafka.FailureClassification,
+	errorCode string,
+	errorMessage string,
+) error {
+	decision, err := w.router.RouteFailure(consumed.Envelope, classification, errorCode, compactErrorMessage(errorMessage))
+	if err != nil {
+		return fmt.Errorf("route order event failure: %w", err)
+	}
+
+	if decision.Target == commonkafka.RoutingTargetNone {
+		return nil
+	}
+
+	if err := w.publisher.Publish(ctx, decision.Envelope); err != nil {
+		return fmt.Errorf("republish order event to %s: %w", decision.Envelope.Topic, err)
+	}
+
+	return nil
+}
+
+func compactErrorMessage(message string) string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return "unknown"
+	}
+
+	if len(trimmed) <= 512 {
+		return trimmed
+	}
+
+	return trimmed[:512]
+}
 
 func correlationIDFromConsumedEvent(consumed commonkafka.ConsumedMessage, metadata interface{ GetCorrelationId() string }, eventID uuid.UUID) string {
 	if metadata != nil {
