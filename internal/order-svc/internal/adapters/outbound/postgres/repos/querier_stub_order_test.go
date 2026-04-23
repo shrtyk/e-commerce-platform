@@ -24,6 +24,22 @@ func (s stubQuerier) CreateOrderCheckoutIdempotency(ctx context.Context, arg sql
 	return s.order.createOrderCheckoutIdempotencyFunc(ctx, arg)
 }
 
+func (s stubQuerier) CreateConsumerIdempotency(ctx context.Context, arg sqlc.CreateConsumerIdempotencyParams) error {
+	if s.order.createConsumerIdempotencyFunc == nil {
+		return unexpectedQuerierCall("CreateConsumerIdempotency")
+	}
+
+	return s.order.createConsumerIdempotencyFunc(ctx, arg)
+}
+
+func (s stubQuerier) ConsumerIdempotencyExists(ctx context.Context, arg sqlc.ConsumerIdempotencyExistsParams) (bool, error) {
+	if s.order.consumerIdempotencyExistsFunc == nil {
+		return false, unexpectedQuerierCall("ConsumerIdempotencyExists")
+	}
+
+	return s.order.consumerIdempotencyExistsFunc(ctx, arg)
+}
+
 func (s stubQuerier) GetOrderByID(ctx context.Context, orderID uuid.UUID) (sqlc.Order, error) {
 	if s.order.getOrderByIDFunc == nil {
 		return sqlc.Order{}, unexpectedQuerierCall("GetOrderByID")

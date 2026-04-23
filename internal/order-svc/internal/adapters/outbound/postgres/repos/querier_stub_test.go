@@ -17,6 +17,8 @@ type stubQuerier struct {
 
 type orderQuerierStub struct {
 	createOrderFunc                              func(ctx context.Context, arg sqlc.CreateOrderParams) (sqlc.Order, error)
+	createConsumerIdempotencyFunc                func(ctx context.Context, arg sqlc.CreateConsumerIdempotencyParams) error
+	consumerIdempotencyExistsFunc                func(ctx context.Context, arg sqlc.ConsumerIdempotencyExistsParams) (bool, error)
 	createOrderCheckoutIdempotencyFunc           func(ctx context.Context, arg sqlc.CreateOrderCheckoutIdempotencyParams) error
 	getCheckoutIdempotencyPayloadFingerprintFunc func(ctx context.Context, arg sqlc.GetCheckoutIdempotencyPayloadFingerprintParams) (string, error)
 	getOrderByIDFunc                             func(ctx context.Context, orderID uuid.UUID) (sqlc.Order, error)

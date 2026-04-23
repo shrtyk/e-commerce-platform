@@ -51,6 +51,27 @@ func TestPaymentEventSerdeRegistersAllPaymentTypes(t *testing.T) {
 	}, registry.subjects)
 }
 
+func TestPaymentEventSerdeRegistersRetryTopicTypes(t *testing.T) {
+	t.Parallel()
+
+	registry := &testSchemaRegistry{}
+	serde := commonkafka.NewProtoSerde(registry, testSchemaProvider{})
+
+	err := serde.RegisterTypes(
+		context.Background(),
+		"payment.events.retry",
+		&paymentv1.PaymentInitiated{},
+		&paymentv1.PaymentSucceeded{},
+		&paymentv1.PaymentFailed{},
+	)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{
+		commonkafka.TopicRecordNameSubject("payment.events.retry", "ecommerce.payment.v1.PaymentInitiated"),
+		commonkafka.TopicRecordNameSubject("payment.events.retry", "ecommerce.payment.v1.PaymentSucceeded"),
+		commonkafka.TopicRecordNameSubject("payment.events.retry", "ecommerce.payment.v1.PaymentFailed"),
+	}, registry.subjects)
+}
+
 func TestOrderRelayTypeRegistryRegistersConfirmed(t *testing.T) {
 	t.Parallel()
 

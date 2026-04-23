@@ -403,6 +403,54 @@ func (q *Queries) CreateOrderCheckoutIdempotency(ctx context.Context, arg Create
 	return err
 }
 
+const createConsumerIdempotency = `-- name: CreateConsumerIdempotency :exec
+INSERT INTO
+  order_consumer_idempotency (event_id, consumer_group_name)
+VALUES
+  (
+    $1,
+    $2
+  )
+`
+
+type CreateConsumerIdempotencyParams struct {
+	EventID           uuid.UUID
+	ConsumerGroupName string
+}
+
+func (q *Queries) CreateConsumerIdempotency(ctx context.Context, arg CreateConsumerIdempotencyParams) error {
+	_, err := q.db.ExecContext(ctx, createConsumerIdempotency,
+		arg.EventID,
+		arg.ConsumerGroupName,
+	)
+	return err
+}
+
+const consumerIdempotencyExists = `-- name: ConsumerIdempotencyExists :one
+SELECT
+  EXISTS (
+    SELECT
+      1
+    FROM
+      order_consumer_idempotency
+    WHERE
+      event_id = $1
+      AND consumer_group_name = $2
+  )
+`
+
+type ConsumerIdempotencyExistsParams struct {
+	EventID           uuid.UUID
+	ConsumerGroupName string
+}
+
+func (q *Queries) ConsumerIdempotencyExists(ctx context.Context, arg ConsumerIdempotencyExistsParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, consumerIdempotencyExists, arg.EventID, arg.ConsumerGroupName)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const createOrderItem = `-- name: CreateOrderItem :one
 INSERT INTO
   order_items (

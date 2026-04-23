@@ -26,10 +26,11 @@ type Relay struct {
 }
 
 type PaymentEvents struct {
-	Enabled      bool          `env:"ENABLED" env-default:"true"`
-	Topic        string        `env:"TOPIC" env-default:"payment.events"`
-	GroupID      string        `env:"GROUP_ID" env-default:"order-svc-payment-events-v1"`
-	PollInterval time.Duration `env:"POLL_INTERVAL" env-default:"500ms"`
+	Enabled          bool          `env:"ENABLED" env-default:"true"`
+	Topic            string        `env:"TOPIC" env-default:"payment.events"`
+	GroupID          string        `env:"GROUP_ID" env-default:"order-svc-payment-events-v1"`
+	PollInterval     time.Duration `env:"POLL_INTERVAL" env-default:"500ms"`
+	MaxRetryAttempts int           `env:"MAX_RETRY_ATTEMPTS" env-default:"3"`
 }
 
 func MustLoad() Config {
@@ -79,6 +80,10 @@ func MustLoad() Config {
 
 	if cfg.PaymentEvents.PollInterval <= 0 {
 		panic(fmt.Errorf("field \"PaymentEvents.PollInterval\" must be positive"))
+	}
+
+	if cfg.PaymentEvents.MaxRetryAttempts < 1 {
+		panic(fmt.Errorf("field \"PaymentEvents.MaxRetryAttempts\" must be >= 1"))
 	}
 
 	return cfg

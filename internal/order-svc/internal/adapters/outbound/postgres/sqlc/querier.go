@@ -16,7 +16,9 @@ type Querier interface {
 	ClaimPendingOutboxRecords(ctx context.Context, arg ClaimPendingOutboxRecordsParams) ([]OutboxRecord, error)
 	ClaimStaleInProgressOutboxRecords(ctx context.Context, arg ClaimStaleInProgressOutboxRecordsParams) ([]OutboxRecord, error)
 	ClearOrderSagaLastErrorCode(ctx context.Context, orderID uuid.UUID) (OrderSagaState, error)
+	ConsumerIdempotencyExists(ctx context.Context, arg ConsumerIdempotencyExistsParams) (bool, error)
 	CreateOrder(ctx context.Context, arg CreateOrderParams) (Order, error)
+	CreateConsumerIdempotency(ctx context.Context, arg CreateConsumerIdempotencyParams) error
 	CreateOrderCheckoutIdempotency(ctx context.Context, arg CreateOrderCheckoutIdempotencyParams) error
 	CreateOrderItem(ctx context.Context, arg CreateOrderItemParams) (OrderItem, error)
 	CreateOrderSagaState(ctx context.Context, arg CreateOrderSagaStateParams) (OrderSagaState, error)

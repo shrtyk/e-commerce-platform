@@ -33,6 +33,7 @@ func TestMustLoad(t *testing.T) {
 	require.Equal(t, "payment.events", cfg.PaymentEvents.Topic)
 	require.Equal(t, "order-svc-payment-events-v1", cfg.PaymentEvents.GroupID)
 	require.Equal(t, 500*time.Millisecond, cfg.PaymentEvents.PollInterval)
+	require.Equal(t, 3, cfg.PaymentEvents.MaxRetryAttempts)
 }
 
 func TestMustLoadDefaults(t *testing.T) {
