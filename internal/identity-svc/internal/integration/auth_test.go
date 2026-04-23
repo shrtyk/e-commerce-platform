@@ -122,7 +122,7 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, response.Code)
 	var unauthorized dto.ErrorResponse
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&unauthorized))
-	require.Equal(t, "unauthorized", unauthorized.Code)
+	require.Equal(t, "invalid_credentials", unauthorized.Code)
 }
 
 func TestRegisterRejectsDuplicateEmail(t *testing.T) {
