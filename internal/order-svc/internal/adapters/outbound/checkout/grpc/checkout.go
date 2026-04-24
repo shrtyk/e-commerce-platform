@@ -16,6 +16,7 @@ import (
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
 	commonv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1"
 	paymentv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1"
+	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/core/ports/outbound"
 )
 
@@ -114,6 +115,8 @@ func WithShopperAuthorization(ctx context.Context, authorization string) context
 }
 
 func withAuthorizationMetadata(ctx context.Context) context.Context {
+	ctx = withPropagationMetadata(ctx)
+
 	authorization, ok := ctx.Value(shopperAuthorizationContextKey{}).(string)
 	if !ok || strings.TrimSpace(authorization) == "" {
 		return ctx
@@ -123,6 +126,8 @@ func withAuthorizationMetadata(ctx context.Context) context.Context {
 }
 
 func withoutAuthorizationMetadata(ctx context.Context) context.Context {
+	ctx = withPropagationMetadata(ctx)
+
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
 		return ctx
@@ -132,6 +137,17 @@ func withoutAuthorizationMetadata(ctx context.Context) context.Context {
 	delete(filtered, "authorization")
 
 	return metadata.NewOutgoingContext(ctx, filtered)
+}
+
+func withPropagationMetadata(ctx context.Context) context.Context {
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if ok {
+		md = md.Copy()
+	}
+
+	md = observability.InjectGRPCMetadata(ctx, md)
+
+	return metadata.NewOutgoingContext(ctx, md)
 }
 
 type StockReservationService struct {
@@ -151,7 +167,7 @@ func (a *StockReservationService) ReserveStock(ctx context.Context, input outbou
 		})
 	}
 
-	_, err := a.client.ReserveStock(ctx, &catalogv1.ReserveStockRequest{
+	_, err := a.client.ReserveStock(withPropagationMetadata(ctx), &catalogv1.ReserveStockRequest{
 		OrderId: input.OrderID.String(),
 		Items:   items,
 	})
@@ -180,7 +196,7 @@ func NewStockReleaseService(client catalogv1.CatalogServiceClient) *StockRelease
 }
 
 func (a *StockReleaseService) ReleaseStock(ctx context.Context, input outbound.ReleaseStockInput) error {
-	_, err := a.client.ReleaseStock(ctx, &catalogv1.ReleaseStockRequest{OrderId: input.OrderID.String()})
+	_, err := a.client.ReleaseStock(withPropagationMetadata(ctx), &catalogv1.ReleaseStockRequest{OrderId: input.OrderID.String()})
 	if err == nil {
 		return nil
 	}
@@ -206,7 +222,7 @@ func NewCheckoutPaymentService(client paymentv1.PaymentServiceClient) *CheckoutP
 }
 
 func (a *CheckoutPaymentService) InitiatePayment(ctx context.Context, input outbound.InitiatePaymentInput) error {
-	response, err := a.client.InitiatePayment(ctx, &paymentv1.InitiatePaymentRequest{
+	response, err := a.client.InitiatePayment(withPropagationMetadata(ctx), &paymentv1.InitiatePaymentRequest{
 		OrderId: input.OrderID.String(),
 		Amount: &commonv1.Money{
 			Amount:   input.Amount,

@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 )
 
@@ -104,12 +105,13 @@ func (p *MiddlewaresProvider) Recovery(next http.Handler) http.Handler {
 func (p *MiddlewaresProvider) Tracing(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		spanName := fmt.Sprintf("%s %s", r.Method, r.URL.Path)
-		ctx, span := p.tracer.Start(r.Context(), spanName, trace.WithSpanKind(trace.SpanKindServer))
+		ctx := observability.ExtractHTTPHeaders(r.Context(), r.Header)
+		ctx, span := p.tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindServer))
 		defer span.End()
 
-		traceID := span.SpanContext().TraceID().String()
-		if traceID != "00000000000000000000000000000000" {
-			w.Header().Set("X-Trace-ID", traceID)
+		sc := span.SpanContext()
+		if sc.IsValid() {
+			w.Header().Set("X-Trace-ID", sc.TraceID().String())
 		}
 
 		ww := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}

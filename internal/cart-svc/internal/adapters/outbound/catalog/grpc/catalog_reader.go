@@ -7,6 +7,8 @@ import (
 
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/core/ports/outbound"
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
+	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -20,7 +22,7 @@ func NewCatalogReader(client catalogv1.CatalogServiceClient) *CatalogReader {
 }
 
 func (r *CatalogReader) GetProductBySKU(ctx context.Context, sku string) (outbound.CatalogProduct, error) {
-	response, err := r.client.GetProductBySKU(ctx, &catalogv1.GetProductBySKURequest{Sku: sku})
+	response, err := r.client.GetProductBySKU(withPropagationMetadata(ctx), &catalogv1.GetProductBySKURequest{Sku: sku})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return outbound.CatalogProduct{}, outbound.ErrProductNotFound
@@ -50,4 +52,15 @@ func (r *CatalogReader) GetProductBySKU(ctx context.Context, sku string) (outbou
 		Currency:    price.GetCurrency(),
 		IsPublished: product.GetStatus() == catalogv1.ProductStatus_PRODUCT_STATUS_PUBLISHED,
 	}, nil
+}
+
+func withPropagationMetadata(ctx context.Context) context.Context {
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if ok {
+		md = md.Copy()
+	}
+
+	md = observability.InjectGRPCMetadata(ctx, md)
+
+	return metadata.NewOutgoingContext(ctx, md)
 }

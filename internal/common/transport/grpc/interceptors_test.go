@@ -10,14 +10,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	grpcpkg "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -222,6 +226,51 @@ func TestUnaryTracing(t *testing.T) {
 			require.Contains(t, spanAttributes(span), attribute.String("rpc.method", "Login"))
 		})
 	}
+}
+
+func TestUnaryTracingExtractsRemoteParentContextFromMetadata(t *testing.T) {
+	setW3CPropagator(t)
+
+	spanRecorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tracerProvider.Tracer("test-grpc-tracer")
+
+	provider := NewInterceptorsProviderWithTracer("identity-svc", slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), tracer)
+	interceptor := provider.UnaryTracing()
+
+	parentSpanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
+		SpanID:     trace.SpanID{4, 4, 4, 4, 4, 4, 4, 4},
+		TraceFlags: trace.FlagsSampled,
+	})
+
+	md := observability.InjectGRPCMetadata(trace.ContextWithSpanContext(context.Background(), parentSpanContext), nil)
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+	info := &grpcpkg.UnaryServerInfo{FullMethod: "/identity.v1.AuthService/Login"}
+
+	_, err := interceptor(ctx, "request", info, func(ctx context.Context, _ interface{}) (interface{}, error) {
+		span := trace.SpanFromContext(ctx)
+		require.True(t, span.SpanContext().IsValid())
+		return "ok", nil
+	})
+	require.NoError(t, err)
+
+	spans := spanRecorder.Ended()
+	require.Len(t, spans, 1)
+
+	span := spans[0]
+	require.Equal(t, parentSpanContext.TraceID(), span.Parent().TraceID())
+	require.Equal(t, parentSpanContext.SpanID(), span.Parent().SpanID())
+}
+
+func setW3CPropagator(t *testing.T) {
+	t.Helper()
+
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previous)
+	})
 }
 
 func spanAttributes(span sdktrace.ReadOnlySpan) []attribute.KeyValue {

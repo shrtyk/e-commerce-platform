@@ -17,7 +17,12 @@ import (
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
 	commonv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1"
 	paymentv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1"
+	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/order-svc/internal/core/ports/outbound"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestCheckoutPaymentServiceInitiatePaymentStatusHandling(t *testing.T) {
@@ -408,6 +413,108 @@ func TestCheckoutSnapshotRepositoryGetCheckoutSnapshotForwardsAuthorizationMetad
 	require.Len(t, snapshot.Items, 1)
 }
 
+func TestCheckoutSnapshotRepositoryGetCheckoutSnapshotPropagatesTraceMetadata(t *testing.T) {
+	t.Parallel()
+	setW3CPropagator(t)
+
+	ctx := testContextWithTraceBaggage(t)
+	userID := uuid.New()
+
+	repo := NewCheckoutSnapshotRepository(
+		fakeCartClient{
+			getCheckoutSnapshotFunc: func(ctx context.Context, req *cartv1.GetCheckoutSnapshotRequest, _ ...grpc.CallOption) (*cartv1.GetCheckoutSnapshotResponse, error) {
+				require.Equal(t, userID.String(), req.GetUserId())
+
+				md, ok := metadata.FromOutgoingContext(ctx)
+				require.True(t, ok)
+				assertTraceMetadataPropagated(t, ctx, md)
+
+				return &cartv1.GetCheckoutSnapshotResponse{Snapshot: &cartv1.CheckoutSnapshot{
+					TotalAmount: &commonv1.Money{Amount: 500, Currency: "USD"},
+					Items: []*cartv1.CartItem{{
+						Sku:       "SKU-1",
+						Name:      "Product",
+						Quantity:  1,
+						UnitPrice: &commonv1.Money{Amount: 500, Currency: "USD"},
+						LineTotal: &commonv1.Money{Amount: 500, Currency: "USD"},
+					}},
+				}}, nil
+			},
+		},
+		fakeCatalogClient{
+			getProductBySKUFunc: func(ctx context.Context, _ *catalogv1.GetProductBySKURequest, _ ...grpc.CallOption) (*catalogv1.GetProductBySKUResponse, error) {
+				md, ok := metadata.FromOutgoingContext(ctx)
+				require.True(t, ok)
+				assertTraceMetadataPropagated(t, ctx, md)
+				return &catalogv1.GetProductBySKUResponse{Product: &catalogv1.Product{ProductId: uuid.NewString()}}, nil
+			},
+		},
+	)
+
+	_, err := repo.GetCheckoutSnapshot(WithShopperAuthorization(ctx, "Bearer shopper-token"), userID)
+	require.NoError(t, err)
+}
+
+func TestStockReservationServiceReserveStockPropagatesTraceMetadata(t *testing.T) {
+	t.Parallel()
+	setW3CPropagator(t)
+
+	ctx := testContextWithTraceBaggage(t)
+
+	svc := NewStockReservationService(fakeCatalogClient{
+		reserveStockFunc: func(ctx context.Context, _ *catalogv1.ReserveStockRequest, _ ...grpc.CallOption) (*catalogv1.ReserveStockResponse, error) {
+			md, ok := metadata.FromOutgoingContext(ctx)
+			require.True(t, ok)
+			assertTraceMetadataPropagated(t, ctx, md)
+			return &catalogv1.ReserveStockResponse{}, nil
+		},
+	})
+
+	err := svc.ReserveStock(ctx, outbound.ReserveStockInput{OrderID: uuid.New()})
+	require.NoError(t, err)
+}
+
+func TestStockReleaseServiceReleaseStockPropagatesTraceMetadata(t *testing.T) {
+	t.Parallel()
+	setW3CPropagator(t)
+
+	ctx := testContextWithTraceBaggage(t)
+
+	svc := NewStockReleaseService(fakeCatalogClient{
+		releaseStockFunc: func(ctx context.Context, _ *catalogv1.ReleaseStockRequest, _ ...grpc.CallOption) (*catalogv1.ReleaseStockResponse, error) {
+			md, ok := metadata.FromOutgoingContext(ctx)
+			require.True(t, ok)
+			assertTraceMetadataPropagated(t, ctx, md)
+			return &catalogv1.ReleaseStockResponse{}, nil
+		},
+	})
+
+	err := svc.ReleaseStock(ctx, outbound.ReleaseStockInput{OrderID: uuid.New()})
+	require.NoError(t, err)
+}
+
+func TestCheckoutPaymentServiceInitiatePaymentPropagatesTraceMetadata(t *testing.T) {
+	t.Parallel()
+	setW3CPropagator(t)
+
+	ctx := testContextWithTraceBaggage(t)
+
+	svc := NewCheckoutPaymentService(fakePaymentClient{
+		initiatePaymentFunc: func(ctx context.Context, _ *paymentv1.InitiatePaymentRequest, _ ...grpc.CallOption) (*paymentv1.InitiatePaymentResponse, error) {
+			md, ok := metadata.FromOutgoingContext(ctx)
+			require.True(t, ok)
+			assertTraceMetadataPropagated(t, ctx, md)
+			return &paymentv1.InitiatePaymentResponse{PaymentAttempt: &paymentv1.PaymentAttempt{
+				Status: paymentv1.PaymentStatus_PAYMENT_STATUS_SUCCEEDED,
+				Amount: &commonv1.Money{Amount: 100, Currency: "USD"},
+			}}, nil
+		},
+	})
+
+	err := svc.InitiatePayment(ctx, outbound.InitiatePaymentInput{OrderID: uuid.New()})
+	require.NoError(t, err)
+}
+
 func TestCheckoutSnapshotRepositoryGetCheckoutSnapshotDoesNotForwardBlankAuthorization(t *testing.T) {
 	t.Parallel()
 
@@ -460,6 +567,50 @@ func TestCheckoutSnapshotRepositoryGetCheckoutSnapshotDoesNotForwardBlankAuthori
 		ctx := WithShopperAuthorization(context.Background(), "   ")
 		_, err := repo.GetCheckoutSnapshot(ctx, userID)
 		require.NoError(t, err)
+	})
+}
+
+func testContextWithTraceBaggage(t *testing.T) context.Context {
+	t.Helper()
+
+	member, err := baggage.NewMember("tenant", "acme")
+	require.NoError(t, err)
+
+	bg, err := baggage.New(member)
+	require.NoError(t, err)
+
+	traceState, err := trace.TraceState{}.Insert("rojo", "00f067aa0ba902b7")
+	require.NoError(t, err)
+
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+		SpanID:     trace.SpanID{2, 2, 2, 2, 2, 2, 2, 2},
+		TraceFlags: trace.FlagsSampled,
+		TraceState: traceState,
+	})
+
+	ctx := trace.ContextWithSpanContext(context.Background(), spanContext)
+
+	return baggage.ContextWithBaggage(ctx, bg)
+}
+
+func assertTraceMetadataPropagated(t *testing.T, ctx context.Context, actual metadata.MD) {
+	t.Helper()
+
+	expected := observability.InjectGRPCMetadata(ctx, nil)
+	require.NotEmpty(t, actual.Get(observability.TraceParentKey))
+	require.Equal(t, expected.Get(observability.TraceParentKey), actual.Get(observability.TraceParentKey))
+	require.Equal(t, expected.Get(observability.TraceStateKey), actual.Get(observability.TraceStateKey))
+	require.Equal(t, expected.Get(observability.BaggageKey), actual.Get(observability.BaggageKey))
+}
+
+func setW3CPropagator(t *testing.T) {
+	t.Helper()
+
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previous)
 	})
 }
 

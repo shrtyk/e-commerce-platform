@@ -6,13 +6,19 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/core/ports/outbound"
 	catalogv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/catalog/v1"
 	commonv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1"
+	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 )
 
 func TestCatalogReaderGetProductBySKU(t *testing.T) {
@@ -115,6 +121,72 @@ func TestCatalogReaderGetProductBySKU(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCatalogReaderGetProductBySKUPropagatesTraceMetadata(t *testing.T) {
+	setW3CPropagator(t)
+
+	ctx := testContextWithTraceBaggage(t)
+
+	reader := NewCatalogReader(&stubCatalogClient{
+		getProductBySKUFn: func(ctx context.Context, req *catalogv1.GetProductBySKURequest, _ ...grpc.CallOption) (*catalogv1.GetProductBySKUResponse, error) {
+			require.Equal(t, "SKU-1", req.GetSku())
+
+			md, ok := metadata.FromOutgoingContext(ctx)
+			require.True(t, ok)
+
+			expected := observability.InjectGRPCMetadata(ctx, nil)
+			require.NotEmpty(t, md.Get(observability.TraceParentKey))
+			require.Equal(t, expected.Get(observability.TraceParentKey), md.Get(observability.TraceParentKey))
+			require.Equal(t, expected.Get(observability.TraceStateKey), md.Get(observability.TraceStateKey))
+			require.Equal(t, expected.Get(observability.BaggageKey), md.Get(observability.BaggageKey))
+
+			return &catalogv1.GetProductBySKUResponse{Product: &catalogv1.Product{
+				ProductId: "00000000-0000-0000-0000-000000000111",
+				Sku:       "SKU-1",
+				Name:      "Product 1",
+				Status:    catalogv1.ProductStatus_PRODUCT_STATUS_PUBLISHED,
+				Price:     &commonv1.Money{Amount: 1000, Currency: "USD"},
+			}}, nil
+		},
+	})
+
+	_, err := reader.GetProductBySKU(ctx, "SKU-1")
+	require.NoError(t, err)
+}
+
+func testContextWithTraceBaggage(t *testing.T) context.Context {
+	t.Helper()
+
+	member, err := baggage.NewMember("tenant", "acme")
+	require.NoError(t, err)
+
+	bg, err := baggage.New(member)
+	require.NoError(t, err)
+
+	traceState, err := trace.TraceState{}.Insert("rojo", "00f067aa0ba902b7")
+	require.NoError(t, err)
+
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
+		SpanID:     trace.SpanID{6, 6, 6, 6, 6, 6, 6, 6},
+		TraceFlags: trace.FlagsSampled,
+		TraceState: traceState,
+	})
+
+	ctx := trace.ContextWithSpanContext(context.Background(), spanContext)
+
+	return baggage.ContextWithBaggage(ctx, bg)
+}
+
+func setW3CPropagator(t *testing.T) {
+	t.Helper()
+
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previous)
+	})
 }
 
 type stubCatalogClient struct {

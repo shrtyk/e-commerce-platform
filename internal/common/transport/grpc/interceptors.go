@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
@@ -15,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 	grpcpkg "google.golang.org/grpc"
 	grpccodes "google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -44,6 +46,10 @@ func NewInterceptorsProviderWithTracer(serviceName string, logger *slog.Logger, 
 
 func (p *InterceptorsProvider) UnaryTracing() grpcpkg.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpcpkg.UnaryServerInfo, handler grpcpkg.UnaryHandler) (any, error) {
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			ctx = observability.ExtractGRPCMetadata(ctx, md)
+		}
+
 		ctx, span := p.tracer.Start(ctx, info.FullMethod, trace.WithSpanKind(trace.SpanKindServer))
 		defer span.End()
 

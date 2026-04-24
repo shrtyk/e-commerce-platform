@@ -12,9 +12,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -437,6 +440,49 @@ func TestTracing(t *testing.T) {
 			require.Contains(t, spanAttributes(span), attribute.Int("http.status_code", tt.statusCode))
 		})
 	}
+}
+
+func TestTracingExtractsRemoteParentContextFromHeaders(t *testing.T) {
+	setW3CPropagator(t)
+
+	spanRecorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tracerProvider.Tracer("test-http-tracer")
+
+	provider := NewMiddlewaresProviderWithTracer("test-service", slog.Default(), tracer)
+	handler := provider.Tracing(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	parentSpanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+		SpanID:     trace.SpanID{2, 2, 2, 2, 2, 2, 2, 2},
+		TraceFlags: trace.FlagsSampled,
+	})
+
+	requestHeaders := observability.InjectHTTPHeaders(trace.ContextWithSpanContext(context.Background(), parentSpanContext), nil)
+	req := httptest.NewRequest(http.MethodGet, "/trace", nil)
+	req.Header = requestHeaders
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	spans := spanRecorder.Ended()
+	require.Len(t, spans, 1)
+
+	span := spans[0]
+	require.Equal(t, parentSpanContext.TraceID(), span.Parent().TraceID())
+	require.Equal(t, parentSpanContext.SpanID(), span.Parent().SpanID())
+}
+
+func setW3CPropagator(t *testing.T) {
+	t.Helper()
+
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previous)
+	})
 }
 
 func spanAttributes(span sdktrace.ReadOnlySpan) []attribute.KeyValue {
