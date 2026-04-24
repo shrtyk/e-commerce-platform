@@ -1,0 +1,13 @@
+.git
+.idea
+.vscode
+tmp
+.tmp
+.local
+dist
+bin
+coverage
+**/node_modules
+**/.DS_Store
+**/*.log
+tests/e2e/.cache

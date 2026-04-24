@@ -1,6 +1,7 @@
 go 1.26.0
 
 use (
+	.
 	./internal/cart-svc
 	./internal/common
 	./internal/identity-svc
@@ -8,4 +9,5 @@ use (
 	./internal/order-svc
 	./internal/payment-svc
 	./internal/product-svc
+	./tests/e2e
 )
