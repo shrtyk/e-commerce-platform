@@ -38,6 +38,8 @@ func TestMustLoadAuthConfig(t *testing.T) {
 	require.Equal(t, 15*time.Minute, cfg.Auth.AccessTokenTTL)
 	require.Equal(t, "secret-key", cfg.Auth.AccessTokenKey)
 	require.Equal(t, "identity-svc", cfg.Auth.AccessTokenIssuer)
+	require.Equal(t, 8, cfg.Auth.PasswordMinLength)
+	require.Equal(t, 10, cfg.Auth.BcryptCost)
 	require.True(t, cfg.Bootstrap.Enabled)
 	require.Equal(t, "bootstrap-admin@example.com", cfg.Bootstrap.Email)
 	require.Equal(t, "bootstrap-secret", cfg.Bootstrap.Password)
@@ -64,4 +66,29 @@ func TestMustLoadPanicsWhenBootstrapEnabledWithoutPassword(t *testing.T) {
 	require.PanicsWithError(t, "config: bootstrap admin: BOOTSTRAP_ADMIN_PASSWORD is required when BOOTSTRAP_ADMIN_ENABLED=true", func() {
 		_ = config.MustLoad()
 	})
+}
+
+func TestMustLoadPanicsWhenPasswordPolicyInvalid(t *testing.T) {
+	tests := []struct {
+		name     string
+		envKey   string
+		envValue string
+		wantErr  string
+	}{
+		{name: "password min below one", envKey: "AUTH_PASSWORD_MIN_LENGTH", envValue: "0", wantErr: "field \"Auth.PasswordMinLength\" must be >= 1"},
+		{name: "password min above max", envKey: "AUTH_PASSWORD_MIN_LENGTH", envValue: "73", wantErr: "field \"Auth.PasswordMinLength\" must be <= 72"},
+		{name: "bcrypt cost below range", envKey: "AUTH_BCRYPT_COST", envValue: "3", wantErr: "field \"Auth.BcryptCost\" must be between 4 and 31"},
+		{name: "bcrypt cost above range", envKey: "AUTH_BCRYPT_COST", envValue: "32", wantErr: "field \"Auth.BcryptCost\" must be between 4 and 31"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setBaseRequiredEnv(t)
+			t.Setenv(tt.envKey, tt.envValue)
+
+			require.PanicsWithError(t, tt.wantErr, func() {
+				_ = config.MustLoad()
+			})
+		})
+	}
 }

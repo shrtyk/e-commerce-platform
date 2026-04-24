@@ -24,6 +24,10 @@ var (
 	ErrInvalidRefreshToken    = errors.New("identity invalid refresh token")
 )
 
+const (
+	maxPasswordLength = 72
+)
+
 var (
 	errNilUserID    = errors.New("user id is nil")
 	errNilSessionID = errors.New("session id is nil")
@@ -86,7 +90,7 @@ func (s *AuthService) registerUserWithRole(
 	role domain.UserRole,
 ) (RegisterUserResult, error) {
 	email := normalizeEmail(input.Email)
-	if email == "" || input.Password == "" {
+	if email == "" || !isPasswordLengthValid(input.Password, s.minPasswordLength()) {
 		return RegisterUserResult{}, ErrInvalidRegisterInput
 	}
 
@@ -139,7 +143,7 @@ func (s *AuthService) registerUserWithRole(
 
 func (s *AuthService) EnsureBootstrapAdmin(ctx context.Context, input BootstrapAdminInput) error {
 	email := normalizeEmail(input.Email)
-	if email == "" || input.Password == "" {
+	if email == "" || !isPasswordLengthValid(input.Password, s.minPasswordLength()) {
 		return fmt.Errorf("bootstrap admin: %w", ErrInvalidRegisterInput)
 	}
 
@@ -203,7 +207,7 @@ func (s *AuthService) LoginUser(
 	input LoginUserInput,
 ) (LoginUserResult, error) {
 	email := normalizeEmail(input.Email)
-	if email == "" || input.Password == "" {
+	if email == "" || !isPasswordLengthValid(input.Password, s.minPasswordLength()) {
 		return LoginUserResult{}, ErrInvalidCredentials
 	}
 
@@ -340,6 +344,12 @@ func normalizeDisplayName(displayName *string) string {
 	}
 
 	return strings.TrimSpace(*displayName)
+}
+
+func isPasswordLengthValid(password string, minPasswordLength int) bool {
+	passwordLength := len(password)
+
+	return passwordLength >= minPasswordLength && passwordLength <= maxPasswordLength
 }
 
 // createSession creates a session using the default (non-tx) repository.

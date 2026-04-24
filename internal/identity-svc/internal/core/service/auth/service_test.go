@@ -27,7 +27,7 @@ var testSessionTTL = 24 * time.Hour
 func TestRegisterUserCreatesUser(t *testing.T) {
 	accessToken := "access-token"
 	userUUID := uuid.New()
-	pwd := "pwd"
+	pwd := "password"
 	pwdHash := "hash"
 	normalizedEmail := registeredEmail
 	rawEmail := "  USER@Example.com  "
@@ -118,6 +118,69 @@ func TestRegisterUserRejectsDuplicateEmail(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmailAlreadyRegistered)
 	sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
 	issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRegisterUserPasswordLengthPolicy(t *testing.T) {
+	tests := []struct {
+		name               string
+		password           string
+		expectInvalidInput bool
+	}{
+		{
+			name:               "too short",
+			password:           strings.Repeat("a", 7),
+			expectInvalidInput: true,
+		},
+		{
+			name:               "below configured min",
+			password:           strings.Repeat("a", 11),
+			expectInvalidInput: true,
+		},
+		{
+			name:     "valid min",
+			password: strings.Repeat("a", 12),
+		},
+		{
+			name:     "valid max",
+			password: strings.Repeat("a", 72),
+		},
+		{
+			name:               "too long",
+			password:           strings.Repeat("a", 73),
+			expectInvalidInput: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := outboundmocks.NewMockUserRepository(t)
+			sessions := outboundmocks.NewMockSessionRepository(t)
+			hasher := outboundmocks.NewMockPasswordHasher(t)
+			issuer := outboundmocks.NewMockTokenIssuer(t)
+			txProvider := newStubProvider(repo, sessions)
+			auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL, PasswordPolicy{MinLength: 12})
+
+			if !tt.expectInvalidInput {
+				hasher.EXPECT().Hash(tt.password).Return("", errors.New("hash failed"))
+			}
+
+			_, err := auth.RegisterUser(context.Background(), RegisterUserInput{
+				Email:    registeredEmail,
+				Password: tt.password,
+			})
+
+			if tt.expectInvalidInput {
+				require.ErrorIs(t, err, ErrInvalidRegisterInput)
+				repo.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+				issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+				return
+			}
+
+			require.ErrorContains(t, err, "hash password")
+			repo.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+			issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+		})
+	}
 }
 
 func TestRegisterUserHashError(t *testing.T) {
@@ -295,7 +358,7 @@ func TestRegisterUserTxProviderError(t *testing.T) {
 func TestRegisterAdminCreatesAdmin(t *testing.T) {
 	accessToken := "access-token"
 	adminUUID := uuid.New()
-	pwd := "pwd"
+	pwd := "password"
 	pwdHash := "hash"
 	normalizedEmail := "admin@example.com"
 	repo := outboundmocks.NewMockUserRepository(t)
@@ -458,6 +521,68 @@ func TestEnsureBootstrapAdmin(t *testing.T) {
 	}
 }
 
+func TestEnsureBootstrapAdminPasswordLengthPolicy(t *testing.T) {
+	tests := []struct {
+		name             string
+		password         string
+		expectInvalid    bool
+		expectLookupCall bool
+	}{
+		{
+			name:          "too short",
+			password:      strings.Repeat("a", 7),
+			expectInvalid: true,
+		},
+		{
+			name:             "valid min",
+			password:         strings.Repeat("a", 8),
+			expectLookupCall: true,
+		},
+		{
+			name:             "valid max",
+			password:         strings.Repeat("a", 72),
+			expectLookupCall: true,
+		},
+		{
+			name:          "too long",
+			password:      strings.Repeat("a", 73),
+			expectInvalid: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := outboundmocks.NewMockUserRepository(t)
+			sessions := outboundmocks.NewMockSessionRepository(t)
+			hasher := outboundmocks.NewMockPasswordHasher(t)
+			issuer := outboundmocks.NewMockTokenIssuer(t)
+			txProvider := newStubProvider(repo, sessions)
+			auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+			if tt.expectLookupCall {
+				repo.EXPECT().
+					GetByEmail(testifymock.Anything, "admin@example.com").
+					Return(domain.User{ID: uuid.New(), Email: "admin@example.com", Role: domain.UserRoleAdmin, Status: domain.UserStatusActive}, nil)
+			}
+
+			err := auth.EnsureBootstrapAdmin(context.Background(), BootstrapAdminInput{
+				Email:    "admin@example.com",
+				Password: tt.password,
+			})
+
+			if tt.expectInvalid {
+				require.ErrorIs(t, err, ErrInvalidRegisterInput)
+				repo.AssertNotCalled(t, "GetByEmail", testifymock.Anything, testifymock.Anything)
+				hasher.AssertNotCalled(t, "Hash", testifymock.Anything)
+				return
+			}
+
+			require.NoError(t, err)
+			hasher.AssertNotCalled(t, "Hash", testifymock.Anything)
+		})
+	}
+}
+
 func TestLoginUserReturnsUser(t *testing.T) {
 	accessToken := "access-token"
 	userUUID := uuid.New()
@@ -562,6 +687,63 @@ func TestLoginUserRejectsInvalidCredentials(t *testing.T) {
 			})
 
 			require.ErrorIs(t, err, ErrInvalidCredentials)
+			sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+			issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+		})
+	}
+}
+
+func TestLoginUserPasswordLengthPolicy(t *testing.T) {
+	tests := []struct {
+		name             string
+		password         string
+		expectLookupCall bool
+	}{
+		{
+			name:     "too short",
+			password: strings.Repeat("a", 7),
+		},
+		{
+			name:             "valid min",
+			password:         strings.Repeat("a", 8),
+			expectLookupCall: true,
+		},
+		{
+			name:             "valid max",
+			password:         strings.Repeat("a", 72),
+			expectLookupCall: true,
+		},
+		{
+			name:     "too long",
+			password: strings.Repeat("a", 73),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := outboundmocks.NewMockUserRepository(t)
+			sessions := outboundmocks.NewMockSessionRepository(t)
+			hasher := outboundmocks.NewMockPasswordHasher(t)
+			issuer := outboundmocks.NewMockTokenIssuer(t)
+			txProvider := newStubProvider(repo, sessions)
+			auth := NewAuthService(repo, sessions, txProvider, hasher, issuer, testSessionTTL)
+
+			if tt.expectLookupCall {
+				repo.EXPECT().
+					GetByEmail(testifymock.Anything, registeredEmail).
+					Return(domain.User{}, outbound.ErrUserNotFound)
+			}
+
+			_, err := auth.LoginUser(context.Background(), LoginUserInput{
+				Email:    registeredEmail,
+				Password: tt.password,
+			})
+
+			require.ErrorIs(t, err, ErrInvalidCredentials)
+			if !tt.expectLookupCall {
+				repo.AssertNotCalled(t, "GetByEmail", testifymock.Anything, testifymock.Anything)
+			}
+			hasher.AssertNotCalled(t, "Verify", testifymock.Anything, testifymock.Anything)
 			sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
 			issuer.AssertNotCalled(t, "IssueToken", testifymock.Anything)
 		})

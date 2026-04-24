@@ -110,7 +110,7 @@ func postgresDockerfile() *testcontainers.FromDockerfile {
 
 	return &testcontainers.FromDockerfile{
 		Context:    repoRoot,
-		Dockerfile: "docker/identity/postgres/Dockerfile",
+		Dockerfile: "internal/identity-svc/build/postgres.Dockerfile",
 		Repo:       "identity-postgres-pgcron-test",
 		Tag:        "local",
 		KeepImage:  true,

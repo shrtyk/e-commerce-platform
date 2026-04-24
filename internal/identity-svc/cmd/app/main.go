@@ -64,9 +64,10 @@ func main() {
 		repos.NewUserRepository(db),
 		repos.NewSessionRepository(db),
 		txProvider,
-		bcrypt.NewHasher(0),
+		bcrypt.NewHasher(cfg.Auth.BcryptCost),
 		jwt.NewTokenIssuer(cfg.Auth.AccessTokenIssuer, cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenTTL),
 		cfg.Auth.SessionTTL,
+		auth.PasswordPolicy{MinLength: cfg.Auth.PasswordMinLength},
 	)
 	if cfg.Bootstrap.Enabled {
 		var displayName *string

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/ilyakaznacheev/cleanenv"
 	commoncfg "github.com/shrtyk/e-commerce-platform/internal/common/config"
 )
@@ -20,6 +22,8 @@ type Auth struct {
 	AccessTokenTTL    time.Duration `env:"ACCESS_TOKEN_TTL" env-default:"15m"`
 	AccessTokenKey    string        `env:"ACCESS_TOKEN_KEY" env-required:"true"`
 	AccessTokenIssuer string        `env:"ACCESS_TOKEN_ISSUER" env-default:"ecom-identity-svc"`
+	PasswordMinLength int           `env:"PASSWORD_MIN_LENGTH" env-default:"8"`
+	BcryptCost        int           `env:"BCRYPT_COST" env-default:"10"`
 }
 
 type Bootstrap struct {
@@ -40,6 +44,18 @@ func MustLoad() Config {
 
 	if err := validateBootstrap(cfg.Bootstrap); err != nil {
 		panic(fmt.Errorf("config: %w", err))
+	}
+
+	if cfg.Auth.PasswordMinLength < 1 {
+		panic(fmt.Errorf("field \"Auth.PasswordMinLength\" must be >= 1"))
+	}
+
+	if cfg.Auth.PasswordMinLength > 72 {
+		panic(fmt.Errorf("field \"Auth.PasswordMinLength\" must be <= 72"))
+	}
+
+	if cfg.Auth.BcryptCost < bcrypt.MinCost || cfg.Auth.BcryptCost > bcrypt.MaxCost {
+		panic(fmt.Errorf("field \"Auth.BcryptCost\" must be between %d and %d", bcrypt.MinCost, bcrypt.MaxCost))
 	}
 
 	return cfg

@@ -44,14 +44,14 @@ func TestRegisterUser(t *testing.T) {
 			name: "success",
 			request: &identityv1.RegisterUserRequest{
 				Email:       "user@example.com",
-				Password:    "secret",
+				Password:    "secret123",
 				DisplayName: "John Doe",
 			},
 			setup: func(deps *testDeps) {
 				userID := uuid.New()
 				sessionID := uuid.New()
 
-				deps.hasher.EXPECT().Hash("secret").Return("hashed", nil)
+				deps.hasher.EXPECT().Hash("secret123").Return("hashed", nil)
 				deps.users.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.User{
 					ID:          userID,
 					Email:       "user@example.com",
@@ -84,10 +84,10 @@ func TestRegisterUser(t *testing.T) {
 			name: "email already exists",
 			request: &identityv1.RegisterUserRequest{
 				Email:    "user@example.com",
-				Password: "secret",
+				Password: "secret123",
 			},
 			setup: func(deps *testDeps) {
-				deps.hasher.EXPECT().Hash("secret").Return("hashed", nil)
+				deps.hasher.EXPECT().Hash("secret123").Return("hashed", nil)
 				deps.users.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.User{}, outbound.ErrDuplicateEmail)
 			},
 			expectedCode: codes.AlreadyExists,
@@ -96,10 +96,10 @@ func TestRegisterUser(t *testing.T) {
 			name: "internal service error",
 			request: &identityv1.RegisterUserRequest{
 				Email:    "user@example.com",
-				Password: "secret",
+				Password: "secret123",
 			},
 			setup: func(deps *testDeps) {
-				deps.hasher.EXPECT().Hash("secret").Return("", errors.New("hash failed"))
+				deps.hasher.EXPECT().Hash("secret123").Return("", errors.New("hash failed"))
 			},
 			expectedCode: codes.Internal,
 		},
@@ -139,7 +139,7 @@ func TestLoginUser(t *testing.T) {
 			name: "success",
 			request: &identityv1.LoginUserRequest{
 				Email:    "user@example.com",
-				Password: "secret",
+				Password: "secret123",
 			},
 			setup: func(deps *testDeps) {
 				userID := uuid.New()
@@ -155,7 +155,7 @@ func TestLoginUser(t *testing.T) {
 				}
 
 				deps.users.EXPECT().GetByEmail(testifymock.Anything, "user@example.com").Return(storedUser, nil)
-				deps.hasher.EXPECT().Verify("secret", "stored-hash").Return(true, nil)
+				deps.hasher.EXPECT().Verify("secret123", "stored-hash").Return(true, nil)
 				deps.sessions.EXPECT().Create(testifymock.Anything, testifymock.Anything).Return(domain.Session{ID: sessionID, UserID: userID}, nil)
 				deps.tokens.EXPECT().IssueToken(storedUser).Return("access-token", nil)
 			},
@@ -179,7 +179,7 @@ func TestLoginUser(t *testing.T) {
 			name: "internal service error",
 			request: &identityv1.LoginUserRequest{
 				Email:    "user@example.com",
-				Password: "secret",
+				Password: "secret123",
 			},
 			setup: func(deps *testDeps) {
 				deps.users.EXPECT().GetByEmail(testifymock.Anything, "user@example.com").Return(domain.User{}, errors.New("db down"))
