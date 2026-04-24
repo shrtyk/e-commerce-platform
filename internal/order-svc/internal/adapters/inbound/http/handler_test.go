@@ -207,12 +207,16 @@ func TestOrderHandlerCreateOrder(t *testing.T) {
 			}
 
 			var payload struct {
-				Code          string `json:"code"`
-				CorrelationID string `json:"correlationId"`
+				Code          string  `json:"code"`
+				Message       string  `json:"message"`
+				CorrelationID *string `json:"correlationId"`
 			}
 			require.NoError(t, json.NewDecoder(rr.Body).Decode(&payload))
 			require.Equal(t, tt.responseCode, payload.Code)
-			require.Equal(t, "req-1", payload.CorrelationID)
+			require.NotEmpty(t, payload.Message)
+			if payload.CorrelationID != nil {
+				require.Equal(t, "req-1", *payload.CorrelationID)
+			}
 
 			if tt.setupMock == nil {
 				service.AssertNotCalled(t, "Checkout", testifymock.Anything, testifymock.Anything)
@@ -329,18 +333,120 @@ func TestOrderHandlerGetOrderById(t *testing.T) {
 			}
 
 			var payload struct {
-				Code          string `json:"code"`
-				CorrelationID string `json:"correlationId"`
+				Code          string  `json:"code"`
+				Message       string  `json:"message"`
+				CorrelationID *string `json:"correlationId"`
 			}
 			require.NoError(t, json.NewDecoder(rr.Body).Decode(&payload))
 			require.Equal(t, tt.responseCode, payload.Code)
-			require.Equal(t, "req-1", payload.CorrelationID)
+			require.NotEmpty(t, payload.Message)
+			if payload.CorrelationID != nil {
+				require.Equal(t, "req-1", *payload.CorrelationID)
+			}
 
 			if tt.setupMock == nil {
 				service.AssertNotCalled(t, "GetOrder", testifymock.Anything, testifymock.Anything)
 			}
 		})
 	}
+}
+
+func TestOrderPublicContractShape(t *testing.T) {
+	userID := uuid.New()
+	successOrder := outbound.Order{
+		OrderID:     uuid.New(),
+		UserID:      userID,
+		Status:      outbound.OrderStatusAwaitingPayment,
+		Currency:    "USD",
+		TotalAmount: 1200,
+		Items: []outbound.OrderItem{{
+			OrderItemID: uuid.New(),
+			ProductID:   uuid.New(),
+			SKU:         "SKU-1",
+			Name:        "Product",
+			Quantity:    2,
+			UnitPrice:   600,
+			LineTotal:   1200,
+			Currency:    "USD",
+		}},
+	}
+
+	t.Run("create order returns order dto shape", func(t *testing.T) {
+		service := newMockCheckoutService(t)
+		service.On("Checkout", testifymock.Anything, testifymock.MatchedBy(func(input checkout.CheckoutInput) bool {
+			return input.UserID == userID && input.IdempotencyKey == "idem-shape"
+		})).Return(successOrder, nil).Once()
+
+		handler := NewOrderHandler(nil, 0, service)
+		req := httptest.NewRequest(http.MethodPost, "/v1/orders", strings.NewReader(`{"paymentMethod":"card"}`)).WithContext(withClaimsAndRequestID(userID))
+		req.Header.Set("Idempotency-Key", "idem-shape")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer token")
+		rr := httptest.NewRecorder()
+
+		handler.CreateOrder(rr, req)
+
+		require.Equal(t, http.StatusAccepted, rr.Code)
+		body := rr.Body.Bytes()
+
+		var response dto.Order
+		require.NoError(t, json.Unmarshal(body, &response))
+		require.Equal(t, successOrder.OrderID.String(), response.OrderId)
+		require.Equal(t, successOrder.UserID.String(), response.UserId)
+		require.Equal(t, dto.AwaitingPayment, response.Status)
+		require.Equal(t, "USD", response.Currency)
+		require.Len(t, response.Items, 1)
+		require.Equal(t, successOrder.Items[0].ProductID.String(), response.Items[0].ProductId)
+
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal(body, &raw))
+		require.Contains(t, raw, "orderId")
+		require.Contains(t, raw, "userId")
+		require.Contains(t, raw, "status")
+		require.Contains(t, raw, "currency")
+		require.Contains(t, raw, "totalAmount")
+		require.Contains(t, raw, "items")
+
+		items, ok := raw["items"].([]any)
+		require.True(t, ok)
+		require.Len(t, items, 1)
+
+		item, ok := items[0].(map[string]any)
+		require.True(t, ok)
+		require.Contains(t, item, "sku")
+		require.Contains(t, item, "quantity")
+		require.Contains(t, item, "unitPrice")
+		require.Contains(t, item, "lineTotal")
+	})
+
+	t.Run("create order missing idempotency returns checkout error envelope shape", func(t *testing.T) {
+		service := newMockCheckoutService(t)
+		handler := NewOrderHandler(nil, 0, service)
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/orders", strings.NewReader(`{"paymentMethod":"card"}`)).WithContext(withClaimsAndRequestID(userID))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+
+		handler.CreateOrder(rr, req)
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+
+		var response dto.ErrorResponse
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &response))
+		require.Equal(t, string(checkout.CheckoutErrorCodeInvalidArgument), response.Code)
+		require.NotEmpty(t, response.Message)
+		if response.CorrelationId != nil {
+			require.Equal(t, "req-1", *response.CorrelationId)
+		}
+
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
+		require.Contains(t, raw, "code")
+		require.Contains(t, raw, "message")
+		if correlationID, ok := raw["correlationId"]; ok {
+			require.NotEmpty(t, correlationID)
+		}
+	})
 }
 
 func TestInt64ToAPIIntOverflowHandling(t *testing.T) {

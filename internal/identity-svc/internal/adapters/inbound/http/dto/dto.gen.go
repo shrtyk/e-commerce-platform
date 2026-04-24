@@ -16,42 +16,6 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
-// Defines values for CartStatus.
-const (
-	CartStatusActive     CartStatus = "active"
-	CartStatusCheckedOut CartStatus = "checked_out"
-	CartStatusExpired    CartStatus = "expired"
-)
-
-// Defines values for CheckoutErrorCode.
-const (
-	CARTEMPTY                                CheckoutErrorCode = "CART_EMPTY"
-	CARTNOTFOUND                             CheckoutErrorCode = "CART_NOT_FOUND"
-	CONFLICT                                 CheckoutErrorCode = "CONFLICT"
-	IDEMPOTENCYKEYREUSEDWITHDIFFERENTPAYLOAD CheckoutErrorCode = "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD"
-	INTERNAL                                 CheckoutErrorCode = "INTERNAL"
-	INVALIDARGUMENT                          CheckoutErrorCode = "INVALID_ARGUMENT"
-	PAYMENTDECLINED                          CheckoutErrorCode = "PAYMENT_DECLINED"
-	SKUNOTFOUND                              CheckoutErrorCode = "SKU_NOT_FOUND"
-	STOCKUNAVAILABLE                         CheckoutErrorCode = "STOCK_UNAVAILABLE"
-)
-
-// Defines values for OrderStatus.
-const (
-	AwaitingPayment OrderStatus = "awaiting_payment"
-	AwaitingStock   OrderStatus = "awaiting_stock"
-	Cancelled       OrderStatus = "cancelled"
-	Confirmed       OrderStatus = "confirmed"
-	Pending         OrderStatus = "pending"
-)
-
-// Defines values for ProductStatus.
-const (
-	Archived  ProductStatus = "archived"
-	Draft     ProductStatus = "draft"
-	Published ProductStatus = "published"
-)
-
 // Defines values for UserProfileRole.
 const (
 	Admin UserProfileRole = "admin"
@@ -60,61 +24,14 @@ const (
 
 // Defines values for UserProfileStatus.
 const (
-	UserProfileStatusActive   UserProfileStatus = "active"
-	UserProfileStatusDisabled UserProfileStatus = "disabled"
+	Active   UserProfileStatus = "active"
+	Disabled UserProfileStatus = "disabled"
 )
-
-// AddCartItemRequest defines model for AddCartItemRequest.
-type AddCartItemRequest struct {
-	Quantity int    `json:"quantity" validate:"required,min=1"`
-	Sku      string `json:"sku" validate:"required"`
-}
 
 // AuthTokensResponse defines model for AuthTokensResponse.
 type AuthTokensResponse struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken"`
-}
-
-// Cart defines model for Cart.
-type Cart struct {
-	CartId      string     `json:"cartId"`
-	Currency    string     `json:"currency"`
-	Items       []CartItem `json:"items"`
-	Status      CartStatus `json:"status"`
-	TotalAmount int        `json:"totalAmount"`
-	UserId      string     `json:"userId"`
-}
-
-// CartStatus defines model for Cart.Status.
-type CartStatus string
-
-// CartItem defines model for CartItem.
-type CartItem struct {
-	Currency  *string `json:"currency,omitempty"`
-	LineTotal int     `json:"lineTotal"`
-	Name      *string `json:"name,omitempty"`
-	Quantity  int     `json:"quantity"`
-	Sku       string  `json:"sku"`
-	UnitPrice int     `json:"unitPrice"`
-}
-
-// CheckoutErrorCode Canonical checkout error code set mapped from ecommerce.order.v1.CheckoutErrorCode.
-type CheckoutErrorCode string
-
-// CheckoutErrorResponse defines model for CheckoutErrorResponse.
-type CheckoutErrorResponse struct {
-	// Code Canonical checkout error code set mapped from ecommerce.order.v1.CheckoutErrorCode.
-	Code          CheckoutErrorCode `json:"code"`
-	CorrelationId *string           `json:"correlationId,omitempty"`
-	Message       string            `json:"message"`
-}
-
-// CreateOrderRequest defines model for CreateOrderRequest.
-type CreateOrderRequest struct {
-	// PaymentMethod Placeholder for initial payment method selection model.
-	// Contract mapping: forwarded as-is to internal payment proto field `ecommerce.payment.v1.InitiatePaymentRequest.provider_name`.
-	PaymentMethod *string `json:"paymentMethod,omitempty" validate:"omitempty,min=1,max=50"`
 }
 
 // ErrorResponse defines model for ErrorResponse.
@@ -130,50 +47,6 @@ type LoginRequest struct {
 	Password string              `json:"password" validate:"required,min=1,max=72"`
 }
 
-// Order defines model for Order.
-type Order struct {
-	Currency    string      `json:"currency"`
-	Items       []OrderItem `json:"items"`
-	OrderId     string      `json:"orderId"`
-	Status      OrderStatus `json:"status"`
-	TotalAmount int         `json:"totalAmount"`
-	UserId      string      `json:"userId"`
-}
-
-// OrderStatus defines model for Order.Status.
-type OrderStatus string
-
-// OrderItem defines model for OrderItem.
-type OrderItem struct {
-	Currency  *string `json:"currency,omitempty"`
-	LineTotal int     `json:"lineTotal"`
-	Name      *string `json:"name,omitempty"`
-	ProductId *string `json:"productId,omitempty"`
-	Quantity  int     `json:"quantity"`
-	Sku       string  `json:"sku"`
-	UnitPrice int     `json:"unitPrice"`
-}
-
-// Product defines model for Product.
-type Product struct {
-	CategoryId  *string       `json:"categoryId,omitempty"`
-	Currency    string        `json:"currency"`
-	Description *string       `json:"description,omitempty"`
-	Name        string        `json:"name"`
-	Price       int           `json:"price"`
-	ProductId   string        `json:"productId"`
-	Sku         string        `json:"sku"`
-	Status      ProductStatus `json:"status"`
-}
-
-// ProductStatus defines model for Product.Status.
-type ProductStatus string
-
-// ProductListResponse defines model for ProductListResponse.
-type ProductListResponse struct {
-	Items []Product `json:"items"`
-}
-
 // RefreshTokenRequest defines model for RefreshTokenRequest.
 type RefreshTokenRequest struct {
 	RefreshToken string `json:"refreshToken" validate:"required"`
@@ -184,11 +57,6 @@ type RegisterRequest struct {
 	DisplayName *string             `json:"displayName,omitempty" validate:"omitempty,min=1,max=100"`
 	Email       openapi_types.Email `json:"email" validate:"required,email,max=254"`
 	Password    string              `json:"password" validate:"required,min=8,max=72"`
-}
-
-// UpdateCartItemRequest defines model for UpdateCartItemRequest.
-type UpdateCartItemRequest struct {
-	Quantity int `json:"quantity" validate:"required,min=1"`
 }
 
 // UpdateProfileRequest defines model for UpdateProfileRequest.
@@ -211,44 +79,14 @@ type UserProfileRole string
 // UserProfileStatus defines model for UserProfile.Status.
 type UserProfileStatus string
 
-// CorrelationId defines model for CorrelationId.
-type CorrelationId = string
-
-// IdempotencyKey defines model for IdempotencyKey.
-type IdempotencyKey = string
-
-// OrderId defines model for OrderId.
-type OrderId = string
-
-// ProductId defines model for ProductId.
-type ProductId = string
-
-// Sku defines model for Sku.
-type Sku = string
-
 // BadRequest defines model for BadRequest.
 type BadRequest = ErrorResponse
-
-// CheckoutBadRequest defines model for CheckoutBadRequest.
-type CheckoutBadRequest = CheckoutErrorResponse
-
-// CheckoutConflict defines model for CheckoutConflict.
-type CheckoutConflict = CheckoutErrorResponse
-
-// CheckoutInternalServerError defines model for CheckoutInternalServerError.
-type CheckoutInternalServerError = CheckoutErrorResponse
-
-// CheckoutNotFound defines model for CheckoutNotFound.
-type CheckoutNotFound = CheckoutErrorResponse
 
 // Conflict defines model for Conflict.
 type Conflict = ErrorResponse
 
 // Forbidden defines model for Forbidden.
 type Forbidden = ErrorResponse
-
-// NotFound defines model for NotFound.
-type NotFound = ErrorResponse
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = ErrorResponse
@@ -265,6 +103,9 @@ type RegisterUserJSONRequestBody = RegisterRequest
 // RegisterAdminJSONRequestBody defines body for RegisterAdmin for application/json ContentType.
 type RegisterAdminJSONRequestBody = RegisterRequest
 
+// UpdateMyProfileJSONRequestBody defines body for UpdateMyProfile for application/json ContentType.
+type UpdateMyProfileJSONRequestBody = UpdateProfileRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Authenticate user
@@ -279,6 +120,12 @@ type ServerInterface interface {
 	// Register a new admin user
 	// (POST /v1/auth/register-admin)
 	RegisterAdmin(w http.ResponseWriter, r *http.Request)
+	// Get current user profile
+	// (GET /v1/profile/me)
+	GetMyProfile(w http.ResponseWriter, r *http.Request)
+	// Update current user profile
+	// (PATCH /v1/profile/me)
+	UpdateMyProfile(w http.ResponseWriter, r *http.Request)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -306,6 +153,18 @@ func (_ Unimplemented) RegisterUser(w http.ResponseWriter, r *http.Request) {
 // Register a new admin user
 // (POST /v1/auth/register-admin)
 func (_ Unimplemented) RegisterAdmin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get current user profile
+// (GET /v1/profile/me)
+func (_ Unimplemented) GetMyProfile(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update current user profile
+// (PATCH /v1/profile/me)
+func (_ Unimplemented) UpdateMyProfile(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -371,6 +230,46 @@ func (siw *ServerInterfaceWrapper) RegisterAdmin(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RegisterAdmin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMyProfile operation middleware
+func (siw *ServerInterfaceWrapper) GetMyProfile(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMyProfile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateMyProfile operation middleware
+func (siw *ServerInterfaceWrapper) UpdateMyProfile(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateMyProfile(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -504,6 +403,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/v1/auth/register-admin", wrapper.RegisterAdmin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/v1/profile/me", wrapper.GetMyProfile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/v1/profile/me", wrapper.UpdateMyProfile)
 	})
 
 	return r
