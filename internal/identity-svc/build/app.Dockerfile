@@ -23,11 +23,18 @@ RUN GOWORK=/src/go.work CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARC
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S app \
+    && adduser -S -G app -h /app app
 
 WORKDIR /app
 
 COPY --from=builder /out/service /app/service
+
+RUN chown app:app /app/service \
+    && chmod 500 /app/service
+
+USER app
 
 EXPOSE 18081 19091
 
