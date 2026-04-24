@@ -18,6 +18,7 @@ func NewRouter(
 	logger *slog.Logger,
 	serviceName string,
 	catalogService catalogService,
+	handlerConfig CatalogHandlerConfig,
 	tracer trace.Tracer,
 	tokenVerifier ...httpcommon.TokenVerifier,
 ) http.Handler {
@@ -36,7 +37,7 @@ func NewRouter(
 		provider.Recovery,
 	)
 
-	handler := NewCatalogHandler(catalogService)
+	handler := NewCatalogHandler(catalogService, handlerConfig)
 	r.Get("/healthz", handler.Healthz)
 	dto.HandlerWithOptions(&publicHandler{
 		handler:     handler,

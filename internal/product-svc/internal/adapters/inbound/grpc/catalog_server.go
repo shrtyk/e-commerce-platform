@@ -26,16 +26,20 @@ type catalogService interface {
 type CatalogServer struct {
 	catalogv1.UnimplementedCatalogServiceServer
 
-	service catalogService
-	logger  *slog.Logger
+	service         catalogService
+	logger          *slog.Logger
+	defaultPageSize int32
 }
 
-func NewCatalogServer(service catalogService, logger *slog.Logger) *CatalogServer {
+func NewCatalogServer(service catalogService, logger *slog.Logger, defaultPageSize int32) *CatalogServer {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if defaultPageSize <= 0 {
+		defaultPageSize = defaultListPageSize
+	}
 
-	return &CatalogServer{service: service, logger: logger}
+	return &CatalogServer{service: service, logger: logger, defaultPageSize: defaultPageSize}
 }
 
 func (s *CatalogServer) GetProduct(ctx context.Context, req *catalogv1.GetProductRequest) (*catalogv1.GetProductResponse, error) {
@@ -67,7 +71,7 @@ func (s *CatalogServer) GetProductBySKU(ctx context.Context, req *catalogv1.GetP
 }
 
 func (s *CatalogServer) ListPublishedProducts(ctx context.Context, req *catalogv1.ListPublishedProductsRequest) (*catalogv1.ListPublishedProductsResponse, error) {
-	params, err := toListParams(req)
+	params, err := toListParams(req, s.defaultPageSize)
 	if err != nil {
 		return nil, err
 	}

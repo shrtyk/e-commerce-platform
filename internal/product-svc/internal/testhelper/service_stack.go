@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	serviceName = "product-svc-test"
-	TestAuthKey = "product-svc-test-access-key"
+	serviceName    = "product-svc-test"
+	TestAuthKey    = "product-svc-test-access-key"
 	TestAuthIssuer = "ecom-identity-svc"
 )
 
@@ -44,7 +44,7 @@ func NewTestStack(t *testing.T, db *sql.DB) *TestStack {
 	outboxRepository := adapteroutbox.NewRepository(db)
 	eventPublisher := adapterevents.MustCreateOutboxEventPublisher(outboxRepository)
 
-		txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) catalog.CatalogRepos {
+	txProvider := sqltx.NewProvider(db, func(tx *sql.Tx) catalog.CatalogRepos {
 		return catalog.CatalogRepos{
 			Products:  repos.NewProductRepositoryFromTx(tx),
 			Stocks:    repos.NewStockRepositoryFromTx(tx),
@@ -55,8 +55,15 @@ func NewTestStack(t *testing.T, db *sql.DB) *TestStack {
 	catalogService := catalog.NewCatalogService(productRepository, stockRepository, eventPublisher, txProvider, serviceName)
 	tracer := noop.NewTracerProvider().Tracer(serviceName)
 	tokenVerifier := commonjwt.NewTokenVerifier(TestAuthKey, TestAuthIssuer)
-	httpHandler := adapterhttp.NewRouter(logger, serviceName, catalogService, tracer, tokenVerifier)
-	grpcServer := adaptergrpc.NewServer(logger, serviceName, catalogService, tracer)
+	httpHandler := adapterhttp.NewRouter(
+		logger,
+		serviceName,
+		catalogService,
+		adapterhttp.CatalogHandlerConfig{},
+		tracer,
+		tokenVerifier,
+	)
+	grpcServer := adaptergrpc.NewServer(logger, serviceName, catalogService, 0, tracer)
 
 	grpcConn, stopGRPC := commonintegration.StartBufconnGRPCServer(t, "product-test", grpcServer)
 	t.Cleanup(stopGRPC)

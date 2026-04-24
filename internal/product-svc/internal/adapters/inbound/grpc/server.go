@@ -14,6 +14,7 @@ func NewServer(
 	logger *slog.Logger,
 	serviceName string,
 	catalogService catalogService,
+	defaultPageSize int32,
 	tracer trace.Tracer,
 ) *grpcpkg.Server {
 	interceptorsProvider := grpccommon.NewInterceptorsProviderWithTracer(serviceName, logger, tracer)
@@ -26,7 +27,7 @@ func NewServer(
 		),
 	)
 
-	catalogv1.RegisterCatalogServiceServer(server, NewCatalogServer(catalogService, logger))
+	catalogv1.RegisterCatalogServiceServer(server, NewCatalogServer(catalogService, logger, defaultPageSize))
 
 	return server
 }

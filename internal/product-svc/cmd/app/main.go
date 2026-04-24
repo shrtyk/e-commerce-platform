@@ -101,8 +101,18 @@ func main() {
 
 	catalogService := catalog.NewCatalogService(productsRepo, stocksRepo, outboxEventPublisher, txProvider, cfg.Service.Name)
 	tokenVerifier := commonjwt.NewTokenVerifier(cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenIssuer)
-	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, catalogService, tracer, tokenVerifier)
-	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, catalogService, tracer)
+	handler := adapterhttp.NewRouter(
+		logger,
+		cfg.Service.Name,
+		catalogService,
+		adapterhttp.CatalogHandlerConfig{
+			PublishedListLimit:   cfg.Policy.ListPageSize,
+			PatchMaxBodySizeByte: cfg.Policy.PatchMaxBodyBytes,
+		},
+		tracer,
+		tokenVerifier,
+	)
+	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, catalogService, cfg.Policy.ListPageSize, tracer)
 
 	app := productapp.NewApplication(
 		&cfg,

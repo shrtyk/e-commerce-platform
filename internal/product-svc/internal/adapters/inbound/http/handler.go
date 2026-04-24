@@ -19,8 +19,15 @@ import (
 	"github.com/shrtyk/e-commerce-platform/internal/product-svc/internal/core/service/catalog"
 )
 
-const defaultPublishedListLimit int32 = 100
-const maxPatchRequestBodyBytes int64 = 1 << 20
+const (
+	defaultPublishedListLimit int32 = 100
+	defaultPatchMaxBodyBytes  int64 = 1 << 20
+)
+
+type CatalogHandlerConfig struct {
+	PublishedListLimit   int32
+	PatchMaxBodySizeByte int64
+}
 
 type catalogService interface {
 	CreateProduct(ctx context.Context, input catalog.CreateProductInput) (catalog.CreateProductResult, error)
@@ -33,10 +40,25 @@ type CatalogHandler struct {
 	dto.Unimplemented
 
 	catalogService catalogService
+	config         CatalogHandlerConfig
 }
 
-func NewCatalogHandler(catalogService catalogService) *CatalogHandler {
-	return &CatalogHandler{catalogService: catalogService}
+func NewCatalogHandler(catalogService catalogService, configs ...CatalogHandlerConfig) *CatalogHandler {
+	cfg := CatalogHandlerConfig{
+		PublishedListLimit:   defaultPublishedListLimit,
+		PatchMaxBodySizeByte: defaultPatchMaxBodyBytes,
+	}
+
+	if len(configs) > 0 {
+		if configs[0].PublishedListLimit > 0 {
+			cfg.PublishedListLimit = configs[0].PublishedListLimit
+		}
+		if configs[0].PatchMaxBodySizeByte > 0 {
+			cfg.PatchMaxBodySizeByte = configs[0].PatchMaxBodySizeByte
+		}
+	}
+
+	return &CatalogHandler{catalogService: catalogService, config: cfg}
 }
 
 func (h *CatalogHandler) Healthz(w http.ResponseWriter, _ *http.Request) {
@@ -66,7 +88,7 @@ func (h *CatalogHandler) GetProductById(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *CatalogHandler) ListPublishedProducts(w http.ResponseWriter, r *http.Request) {
-	products, err := h.catalogService.ListProducts(r.Context(), outbound.ProductListParams{Limit: defaultPublishedListLimit})
+	products, err := h.catalogService.ListProducts(r.Context(), outbound.ProductListParams{Limit: h.config.PublishedListLimit})
 	if err != nil {
 		h.writeError(w, r, mapServiceError(err))
 		return
@@ -117,13 +139,13 @@ func (h *CatalogHandler) UpdateProductById(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxPatchRequestBodyBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, h.config.PatchMaxBodySizeByte+1))
 	if err != nil {
 		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
 		return
 	}
 
-	if int64(len(body)) > maxPatchRequestBodyBytes {
+	if int64(len(body)) > h.config.PatchMaxBodySizeByte {
 		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
 		return
 	}

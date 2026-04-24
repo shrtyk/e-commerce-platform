@@ -52,8 +52,12 @@ func toReserveQuantity(quantity int64) (int32, error) {
 	return int32(quantity), nil
 }
 
-func toListParams(req *catalogv1.ListPublishedProductsRequest) (outbound.ProductListParams, error) {
-	params := outbound.ProductListParams{Limit: defaultListPageSize}
+func toListParams(req *catalogv1.ListPublishedProductsRequest, defaultLimit int32) (outbound.ProductListParams, error) {
+	if defaultLimit <= 0 {
+		defaultLimit = defaultListPageSize
+	}
+
+	params := outbound.ProductListParams{Limit: defaultLimit}
 	if req == nil || req.GetPage() == nil {
 		return params, nil
 	}

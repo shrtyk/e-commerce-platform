@@ -12,8 +12,9 @@ import (
 
 type Config struct {
 	commoncfg.Config
-	Relay Relay `env-prefix:"OUTBOX_RELAY_"`
-	Auth  Auth  `env-prefix:"AUTH_"`
+	Relay  Relay  `env-prefix:"OUTBOX_RELAY_"`
+	Auth   Auth   `env-prefix:"AUTH_"`
+	Policy Policy `env-prefix:"POLICY_"`
 }
 
 type Auth struct {
@@ -28,6 +29,11 @@ type Relay struct {
 	RetryMaxBackoff  time.Duration `env:"RETRY_MAX_BACKOFF" env-default:"30s"`
 	WorkerID         string        `env:"WORKER_ID" env-default:"product-svc-relay-1"`
 	StaleLockTTL     time.Duration `env:"STALE_LOCK_TTL" env-default:"30s"`
+}
+
+type Policy struct {
+	ListPageSize      int32 `env:"LIST_PAGE_SIZE" env-default:"100"`
+	PatchMaxBodyBytes int64 `env:"PATCH_MAX_BODY_BYTES" env-default:"1048576"`
 }
 
 func MustLoad() Config {
@@ -65,6 +71,14 @@ func MustLoad() Config {
 
 	if cfg.Relay.StaleLockTTL <= 0 {
 		panic(fmt.Errorf("field \"Relay.StaleLockTTL\" must be positive"))
+	}
+
+	if cfg.Policy.ListPageSize < 1 {
+		panic(fmt.Errorf("field \"Policy.ListPageSize\" must be positive"))
+	}
+
+	if cfg.Policy.PatchMaxBodyBytes < 1 {
+		panic(fmt.Errorf("field \"Policy.PatchMaxBodyBytes\" must be positive"))
 	}
 
 	return cfg

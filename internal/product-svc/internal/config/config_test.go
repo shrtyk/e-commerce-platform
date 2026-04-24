@@ -37,6 +37,8 @@ func TestMustLoad(t *testing.T) {
 		require.Equal(t, 30*time.Second, cfg.Relay.StaleLockTTL)
 		require.Equal(t, "product-svc-test-key", cfg.Auth.AccessTokenKey)
 		require.Equal(t, "ecom-identity-svc", cfg.Auth.AccessTokenIssuer)
+		require.Equal(t, int32(100), cfg.Policy.ListPageSize)
+		require.Equal(t, int64(1<<20), cfg.Policy.PatchMaxBodyBytes)
 	})
 
 	t.Run("panics when required field is missing", func(t *testing.T) {
@@ -78,6 +80,8 @@ func TestMustLoad(t *testing.T) {
 			{name: "relay base above max", key: "OUTBOX_RELAY_RETRY_BASE_BACKOFF", value: "31s", extra: []string{"OUTBOX_RELAY_RETRY_MAX_BACKOFF=30s"}, wantInErr: "less than or equal"},
 			{name: "relay worker id empty", key: "OUTBOX_RELAY_WORKER_ID", value: "   ", wantInErr: "Relay.WorkerID"},
 			{name: "relay stale lock ttl zero", key: "OUTBOX_RELAY_STALE_LOCK_TTL", value: "0s", wantInErr: "Relay.StaleLockTTL"},
+			{name: "policy list page size zero", key: "POLICY_LIST_PAGE_SIZE", value: "0", wantInErr: "Policy.ListPageSize"},
+			{name: "policy patch max body bytes zero", key: "POLICY_PATCH_MAX_BODY_BYTES", value: "0", wantInErr: "Policy.PatchMaxBodyBytes"},
 		}
 
 		for _, tt := range tests {
@@ -119,18 +123,18 @@ func runHelperProcess(t *testing.T, missingKey string) (string, error) {
 	args := []string{"-test.run", "TestConfigMustLoadHelperProcess"}
 	cmd := exec.Command(os.Args[0], args...)
 
-		env := []string{
-			helperProcessEnv + "=1",
-			"SERVICE_NAME=product-svc",
+	env := []string{
+		helperProcessEnv + "=1",
+		"SERVICE_NAME=product-svc",
 		"POSTGRES_HOST=postgres",
 		"POSTGRES_DB=product",
 		"POSTGRES_USER=product",
 		"POSTGRES_PASSWORD=secret",
 		"KAFKA_BROKERS=kafka:9092",
-			"SCHEMA_REGISTRY_URL=http://schema-registry:8081",
-			"OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317",
-			"AUTH_ACCESS_TOKEN_KEY=product-svc-test-key",
-		}
+		"SCHEMA_REGISTRY_URL=http://schema-registry:8081",
+		"OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317",
+		"AUTH_ACCESS_TOKEN_KEY=product-svc-test-key",
+	}
 
 	filtered := make([]string, 0, len(env))
 	for _, item := range env {

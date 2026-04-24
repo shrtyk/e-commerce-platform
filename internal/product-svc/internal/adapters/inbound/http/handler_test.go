@@ -87,7 +87,7 @@ func TestGetProductByID(t *testing.T) {
 			svc := &stubCatalogService{}
 			tt.setup(svc)
 
-			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "product-svc-test", svc, noop.NewTracerProvider().Tracer("product-svc-test"))
+			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "product-svc-test", svc, CatalogHandlerConfig{}, noop.NewTracerProvider().Tracer("product-svc-test"))
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 			res := httptest.NewRecorder()
 
@@ -142,7 +142,7 @@ func TestListPublishedProducts(t *testing.T) {
 			svc := &stubCatalogService{}
 			tt.setup(svc)
 
-			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "product-svc-test", svc, noop.NewTracerProvider().Tracer("product-svc-test"))
+			h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "product-svc-test", svc, CatalogHandlerConfig{}, noop.NewTracerProvider().Tracer("product-svc-test"))
 			req := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
 			res := httptest.NewRecorder()
 
@@ -155,11 +155,31 @@ func TestListPublishedProducts(t *testing.T) {
 	}
 }
 
+func TestListPublishedProductsUsesConfiguredDefaultLimit(t *testing.T) {
+	svc := &stubCatalogService{}
+	h := NewRouter(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"product-svc-test",
+		svc,
+		CatalogHandlerConfig{PublishedListLimit: 77},
+		noop.NewTracerProvider().Tracer("product-svc-test"),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
+	res := httptest.NewRecorder()
+
+	h.ServeHTTP(res, req)
+
+	require.Equal(t, http.StatusOK, res.Code)
+	require.Equal(t, int32(77), svc.lastListParams.Limit)
+}
+
 func TestHealthz(t *testing.T) {
 	h := NewRouter(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"product-svc-test",
 		&stubCatalogService{},
+		CatalogHandlerConfig{},
 		noop.NewTracerProvider().Tracer("product-svc-test"),
 	)
 
@@ -173,7 +193,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestHandleOpenAPIError(t *testing.T) {
-	handler := NewCatalogHandler(&stubCatalogService{})
+	handler := NewCatalogHandler(&stubCatalogService{}, CatalogHandlerConfig{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
 	res := httptest.NewRecorder()
 
@@ -208,7 +228,7 @@ func TestCatalogPublicRoutesAccessibleWithoutAuth(t *testing.T) {
 		}},
 	}
 
-	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "product-svc-test", svc, noop.NewTracerProvider().Tracer("product-svc-test"))
+	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "product-svc-test", svc, CatalogHandlerConfig{}, noop.NewTracerProvider().Tracer("product-svc-test"))
 
 	listReq := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
 	listRes := httptest.NewRecorder()
@@ -251,6 +271,7 @@ func TestCatalogWriteRoutesRequireAuth(t *testing.T) {
 				slog.New(slog.NewTextHandler(io.Discard, nil)),
 				"product-svc-test",
 				&stubCatalogService{},
+				CatalogHandlerConfig{},
 				noop.NewTracerProvider().Tracer("product-svc-test"),
 				tt.tokenVerifier,
 			)
@@ -337,6 +358,7 @@ func TestCatalogWriteRoutesAsAdmin(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"product-svc-test",
 		svc,
+		CatalogHandlerConfig{},
 		noop.NewTracerProvider().Tracer("product-svc-test"),
 		&stubTokenVerifier{claims: transport.Claims{UserID: uuid.New(), Role: "admin", Status: "active"}},
 	)
@@ -488,11 +510,12 @@ func TestCatalogWriteRoutesAsAdmin(t *testing.T) {
 			slog.New(slog.NewTextHandler(io.Discard, nil)),
 			"product-svc-test",
 			isolatedSvc,
+			CatalogHandlerConfig{},
 			noop.NewTracerProvider().Tracer("product-svc-test"),
 			&stubTokenVerifier{claims: transport.Claims{UserID: uuid.New(), Role: "admin", Status: "active"}},
 		)
 
-		largeName := strings.Repeat("x", int(maxPatchRequestBodyBytes)+1)
+		largeName := strings.Repeat("x", int(defaultPatchMaxBodyBytes)+1)
 		req := httptest.NewRequest(http.MethodPatch, "/v1/products/"+productID.String(), strings.NewReader(`{"name":"`+largeName+`"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer admin-token")
@@ -506,6 +529,28 @@ func TestCatalogWriteRoutesAsAdmin(t *testing.T) {
 		require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
 		require.Equal(t, "invalid_request", response.Code)
 		require.Equal(t, "invalid request body", response.Message)
+		require.Equal(t, uuid.Nil, isolatedSvc.lastUpdateInput.ID)
+	})
+
+	t.Run("update product rejects oversized request body with configured limit", func(t *testing.T) {
+		isolatedSvc := &stubCatalogService{}
+		isolatedRouter := NewRouter(
+			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			"product-svc-test",
+			isolatedSvc,
+			CatalogHandlerConfig{PatchMaxBodySizeByte: 10},
+			noop.NewTracerProvider().Tracer("product-svc-test"),
+			&stubTokenVerifier{claims: transport.Claims{UserID: uuid.New(), Role: "admin", Status: "active"}},
+		)
+
+		req := httptest.NewRequest(http.MethodPatch, "/v1/products/"+productID.String(), strings.NewReader(`{"name":"12345678901"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer admin-token")
+		res := httptest.NewRecorder()
+
+		isolatedRouter.ServeHTTP(res, req)
+
+		require.Equal(t, http.StatusBadRequest, res.Code)
 		require.Equal(t, uuid.Nil, isolatedSvc.lastUpdateInput.ID)
 	})
 

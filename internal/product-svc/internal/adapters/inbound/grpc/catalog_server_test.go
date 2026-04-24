@@ -64,7 +64,7 @@ func TestGetProduct(t *testing.T) {
 				tt.setup(svc)
 			}
 
-			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 			response, err := server.GetProduct(context.Background(), tt.request)
 			require.Equal(t, tt.expectedCode, status.Code(err))
 
@@ -153,7 +153,7 @@ func TestListPublishedProducts(t *testing.T) {
 				tt.setup(svc)
 			}
 
-			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 			response, err := server.ListPublishedProducts(context.Background(), tt.request)
 			require.Equal(t, tt.expectedCode, status.Code(err))
 
@@ -168,6 +168,16 @@ func TestListPublishedProducts(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListPublishedProductsUsesConfiguredDefaultPageSize(t *testing.T) {
+	svc := &stubCatalogService{}
+	server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), 55)
+
+	response, err := server.ListPublishedProducts(context.Background(), &catalogv1.ListPublishedProductsRequest{})
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.Equal(t, int32(55), svc.lastListParams.Limit)
 }
 
 func TestReserveStock(t *testing.T) {
@@ -248,7 +258,7 @@ func TestReserveStock(t *testing.T) {
 				tt.setup(svc)
 			}
 
-			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 			response, err := server.ReserveStock(context.Background(), tt.request)
 			require.Equal(t, tt.expectedCode, status.Code(err))
 
@@ -299,7 +309,7 @@ func TestReleaseStock(t *testing.T) {
 				tt.setup(svc)
 			}
 
-			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 			response, err := server.ReleaseStock(context.Background(), tt.request)
 			require.Equal(t, tt.expectedCode, status.Code(err))
 
@@ -408,7 +418,7 @@ func TestGetProductBySKU(t *testing.T) {
 				tt.setup(svc)
 			}
 
-			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			server := NewCatalogServer(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 			response, err := server.GetProductBySKU(context.Background(), tt.request)
 			require.Equal(t, tt.expectedCode, status.Code(err))
 
