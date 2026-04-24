@@ -29,6 +29,10 @@ func (h *IdentityHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+func (h *IdentityHandler) HandleOpenAPIError(w http.ResponseWriter, r *http.Request, _ error) {
+	h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request parameters"))
+}
+
 func (h *IdentityHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	var request dto.RegisterRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {

@@ -371,6 +371,76 @@ func TestHandlerRoutes(t *testing.T) {
 	require.Equal(t, "ok", res.Body.String())
 }
 
+func TestHandleOpenAPIErrorReturnsSafeJSON(t *testing.T) {
+	h := NewIdentityHandler(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/register", nil)
+	res := httptest.NewRecorder()
+
+	h.HandleOpenAPIError(res, req, assertAnError{})
+
+	require.Equal(t, http.StatusBadRequest, res.Code)
+
+	var response dto.ErrorResponse
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
+	require.Equal(t, "invalid_request", response.Code)
+	require.Equal(t, "invalid request parameters", response.Message)
+}
+
+func TestOpenAPIValidationErrorThroughRouterReturnsSafeJSONEnvelope(t *testing.T) {
+	fixture := newAuthFixture(t)
+
+	originalRegisterOpenAPIRoutes := registerOpenAPIRoutes
+	t.Cleanup(func() {
+		registerOpenAPIRoutes = originalRegisterOpenAPIRoutes
+	})
+
+	seamCalled := false
+	registerOpenAPIRoutes = func(_ dto.ServerInterface, options dto.ChiServerOptions) http.Handler {
+		seamCalled = true
+		require.NotNil(t, options.ErrorHandlerFunc)
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(`{"email":`))
+		req.Header.Set("Content-Type", "application/json")
+		res := httptest.NewRecorder()
+
+		options.ErrorHandlerFunc(res, req, assertAnError{})
+
+		require.Equal(t, http.StatusBadRequest, res.Code)
+
+		var response dto.ErrorResponse
+		require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
+		require.Equal(t, "invalid_request", response.Code)
+		require.Equal(t, "invalid request parameters", response.Message)
+		require.NotContains(t, res.Body.String(), "must not leak")
+
+		return options.BaseRouter
+	}
+
+	_ = NewRouter(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"test-service",
+		fixture.service,
+		nil,
+		noop.NewTracerProvider().Tracer("test-service"),
+	)
+
+	require.True(t, seamCalled)
+	fixture.users.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	fixture.users.AssertNotCalled(t, "GetByEmail", testifymock.Anything, testifymock.Anything)
+	fixture.users.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	fixture.sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	fixture.sessions.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	fixture.sessions.AssertNotCalled(t, "Revoke", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	fixture.hasher.AssertNotCalled(t, "Hash", testifymock.Anything)
+	fixture.hasher.AssertNotCalled(t, "Verify", testifymock.Anything, testifymock.Anything)
+	fixture.tokens.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+type assertAnError struct{}
+
+func (assertAnError) Error() string { return "must not leak" }
+
 type authFixture struct {
 	users    *outboundmocks.MockUserRepository
 	sessions *outboundmocks.MockSessionRepository

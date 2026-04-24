@@ -16,6 +16,8 @@ import (
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/service/auth"
 )
 
+var registerOpenAPIRoutes = dto.HandlerWithOptions
+
 func NewRouter(
 	logger *slog.Logger,
 	serviceName string,
@@ -35,10 +37,13 @@ func NewRouter(
 
 	handler := NewIdentityHandler(authService)
 	r.Get("/healthz", handler.Healthz)
-	dto.HandlerFromMux(&publicHandler{
+	registerOpenAPIRoutes(&publicHandler{
 		handler:     handler,
 		adminAuthMw: adminAuthMiddlewareJSON(tokenVerifier),
-	}, r)
+	}, dto.ChiServerOptions{
+		BaseRouter:       r,
+		ErrorHandlerFunc: handler.HandleOpenAPIError,
+	})
 
 	profileRouter := r.With(provider.Auth())
 	profileRouter.Get("/v1/profile/me", handler.GetMyProfile)
