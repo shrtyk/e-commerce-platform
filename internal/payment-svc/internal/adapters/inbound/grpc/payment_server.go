@@ -10,6 +10,8 @@ import (
 
 	commonv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1"
 	paymentv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1"
+	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/core/service/payment"
 	grpccodes "google.golang.org/grpc/codes"
@@ -17,6 +19,8 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+const paymentServiceName = "payment-svc"
 
 type paymentService interface {
 	InitiatePayment(ctx context.Context, input payment.InitiatePaymentInput) (payment.InitiatePaymentResult, error)
@@ -52,7 +56,14 @@ func (s *PaymentServer) InitiatePayment(
 
 	result, err := s.service.InitiatePayment(ctx, input)
 	if err != nil {
-		return nil, s.mapServiceError(err)
+		return nil, s.mapServiceError(
+			ctx,
+			"InitiatePayment",
+			paymentv1.PaymentService_InitiatePayment_FullMethodName,
+			err,
+			"order_id",
+			input.OrderID.String(),
+		)
 	}
 
 	return &paymentv1.InitiatePaymentResponse{PaymentAttempt: toProtoPaymentAttempt(result.PaymentAttempt)}, nil
@@ -150,14 +161,27 @@ func toProtoPaymentStatus(status domain.PaymentStatus) paymentv1.PaymentStatus {
 	}
 }
 
-func (s *PaymentServer) mapServiceError(err error) error {
+func (s *PaymentServer) mapServiceError(ctx context.Context, method, path string, err error, businessFields ...any) error {
 	switch {
 	case errors.Is(err, payment.ErrInvalidPaymentInput):
 		return status.Error(grpccodes.InvalidArgument, "invalid payment input")
 	case errors.Is(err, payment.ErrPaymentAttemptDuplicate):
 		return status.Error(grpccodes.AlreadyExists, "payment attempt already exists")
 	default:
-		s.logger.Error("grpc internal error", "error", err.Error())
+		logFields := []any{
+			slog.String(logging.FieldService, paymentServiceName),
+			slog.String(logging.FieldRequestID, transport.RequestIDFromContext(ctx)),
+			slog.String(logging.FieldTraceID, logging.TraceIDFromContext(ctx)),
+			slog.String(logging.FieldMethod, method),
+			slog.String(logging.FieldPath, path),
+			slog.Int(logging.FieldStatus, int(grpccodes.Internal)),
+			slog.String(logging.FieldGRPCStatus, grpccodes.Internal.String()),
+			slog.String("error", err.Error()),
+		}
+
+		logFields = append(logFields, businessFields...)
+
+		s.logger.Error("grpc internal error", logFields...)
 		return status.Error(grpccodes.Internal, "internal error")
 	}
 }

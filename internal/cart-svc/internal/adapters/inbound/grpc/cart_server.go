@@ -9,12 +9,15 @@ import (
 
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/core/service/cart"
+	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 
 	cartv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/cart/v1"
 	grpccodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+const cartServiceName = "cart-svc"
 
 type cartService interface {
 	GetActiveCart(ctx context.Context, userID uuid.UUID) (domain.Cart, error)
@@ -51,7 +54,14 @@ func (s *CartServer) GetActiveCart(ctx context.Context, req *cartv1.GetActiveCar
 
 	result, err := s.cartService.GetActiveCart(ctx, requestedUserID)
 	if err != nil {
-		return nil, s.mapServiceError(err)
+		return nil, s.mapServiceError(
+			ctx,
+			"GetActiveCart",
+			cartv1.CartService_GetActiveCart_FullMethodName,
+			err,
+			"user_id",
+			requestedUserID.String(),
+		)
 	}
 
 	return toGetActiveCartResponse(result), nil
@@ -69,7 +79,16 @@ func (s *CartServer) AddCartItem(ctx context.Context, req *cartv1.AddCartItemReq
 
 	result, err := s.cartService.AddCartItem(ctx, toAddCartItemInput(requestedUserID, req))
 	if err != nil {
-		return nil, s.mapServiceError(err)
+		return nil, s.mapServiceError(
+			ctx,
+			"AddCartItem",
+			cartv1.CartService_AddCartItem_FullMethodName,
+			err,
+			"user_id",
+			requestedUserID.String(),
+			"sku",
+			req.GetSku(),
+		)
 	}
 
 	return toAddCartItemResponse(result), nil
@@ -87,7 +106,16 @@ func (s *CartServer) UpdateCartItem(ctx context.Context, req *cartv1.UpdateCartI
 
 	result, err := s.cartService.UpdateCartItem(ctx, toUpdateCartItemInput(requestedUserID, req))
 	if err != nil {
-		return nil, s.mapServiceError(err)
+		return nil, s.mapServiceError(
+			ctx,
+			"UpdateCartItem",
+			cartv1.CartService_UpdateCartItem_FullMethodName,
+			err,
+			"user_id",
+			requestedUserID.String(),
+			"sku",
+			req.GetSku(),
+		)
 	}
 
 	return toUpdateCartItemResponse(result), nil
@@ -105,7 +133,16 @@ func (s *CartServer) RemoveCartItem(ctx context.Context, req *cartv1.RemoveCartI
 
 	result, err := s.cartService.RemoveCartItem(ctx, toRemoveCartItemInput(requestedUserID, req))
 	if err != nil {
-		return nil, s.mapServiceError(err)
+		return nil, s.mapServiceError(
+			ctx,
+			"RemoveCartItem",
+			cartv1.CartService_RemoveCartItem_FullMethodName,
+			err,
+			"user_id",
+			requestedUserID.String(),
+			"sku",
+			req.GetSku(),
+		)
 	}
 
 	return toRemoveCartItemResponse(result), nil
@@ -123,7 +160,14 @@ func (s *CartServer) GetCheckoutSnapshot(ctx context.Context, req *cartv1.GetChe
 
 	result, err := s.cartService.GetCheckoutSnapshot(ctx, requestedUserID)
 	if err != nil {
-		return nil, s.mapServiceError(err)
+		return nil, s.mapServiceError(
+			ctx,
+			"GetCheckoutSnapshot",
+			cartv1.CartService_GetCheckoutSnapshot_FullMethodName,
+			err,
+			"user_id",
+			requestedUserID.String(),
+		)
 	}
 
 	return toGetCheckoutSnapshotResponse(result), nil
@@ -147,7 +191,7 @@ func (s *CartServer) validateRequestedUserID(ctx context.Context, rawUserID stri
 	return requestedUserID, nil
 }
 
-func (s *CartServer) mapServiceError(err error) error {
+func (s *CartServer) mapServiceError(ctx context.Context, method, path string, err error, businessFields ...any) error {
 	switch {
 	case errors.Is(err, cart.ErrInvalidUserID),
 		errors.Is(err, cart.ErrInvalidSKU),
@@ -164,7 +208,20 @@ func (s *CartServer) mapServiceError(err error) error {
 	case errors.Is(err, cart.ErrCartCurrencyMismatch):
 		return status.Error(grpccodes.FailedPrecondition, "cart currency mismatch")
 	default:
-		s.logger.Error("grpc internal error", "error", err.Error())
+		logFields := []any{
+			slog.String(logging.FieldService, cartServiceName),
+			slog.String(logging.FieldRequestID, transport.RequestIDFromContext(ctx)),
+			slog.String(logging.FieldTraceID, logging.TraceIDFromContext(ctx)),
+			slog.String(logging.FieldMethod, method),
+			slog.String(logging.FieldPath, path),
+			slog.Int(logging.FieldStatus, int(grpccodes.Internal)),
+			slog.String(logging.FieldGRPCStatus, grpccodes.Internal.String()),
+			slog.String("error", err.Error()),
+		}
+
+		logFields = append(logFields, businessFields...)
+
+		s.logger.Error("grpc internal error", logFields...)
 		return status.Error(grpccodes.Internal, "internal error")
 	}
 }
