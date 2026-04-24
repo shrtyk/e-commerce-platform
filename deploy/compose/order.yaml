@@ -54,9 +54,10 @@ services:
         condition: service_healthy
       payment-svc:
         condition: service_healthy
+    # Replace example env file with real local env file for real usage.
+    env_file:
+      - ../../internal/order-svc/.env.example
     environment:
-      SERVICE_NAME: ${ORDER_SERVICE_NAME:-order}
-      SERVICE_ENV: ${ORDER_SERVICE_ENV:-local}
       SERVICE_HTTP_ADDR: ${ORDER_SERVICE_HTTP_ADDR:-:18084}
       SERVICE_GRPC_ADDR: ${ORDER_SERVICE_GRPC_ADDR:-:19094}
       POSTGRES_HOST: order-postgres
@@ -64,7 +65,6 @@ services:
       POSTGRES_DB: ${ORDER_POSTGRES_DB:-order}
       POSTGRES_USER: ${ORDER_POSTGRES_USER:-order}
       POSTGRES_PASSWORD: ${ORDER_POSTGRES_PASSWORD:-order}
-      POSTGRES_SSLMODE: disable
       KAFKA_BROKERS: kafka:9092
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
       CART_GRPC_ADDR: cart-svc:19093
@@ -74,9 +74,6 @@ services:
       AUTH_ACCESS_TOKEN_ISSUER: ${AUTH_ACCESS_TOKEN_ISSUER:-ecom-identity-svc}
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
-      OUTBOX_RELAY_WORKER_ID: ${ORDER_OUTBOX_RELAY_WORKER_ID:-order-svc-relay-1}
-      OUTBOX_RELAY_STALE_LOCK_TTL: ${ORDER_OUTBOX_RELAY_STALE_LOCK_TTL:-30s}
-      LOG_LEVEL: ${ORDER_LOG_LEVEL:-debug}
     ports:
       - "18084:18084"
       - "19094:19094"

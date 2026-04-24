@@ -63,9 +63,10 @@ services:
         condition: service_healthy
       schema-registry:
         condition: service_healthy
+    # Replace example env file with real local env file for real usage.
+    env_file:
+      - ../../internal/cart-svc/.env.example
     environment:
-      SERVICE_NAME: ${CART_SERVICE_NAME:-cart}
-      SERVICE_ENV: ${CART_SERVICE_ENV:-local}
       SERVICE_HTTP_ADDR: ${CART_SERVICE_HTTP_ADDR:-:18083}
       SERVICE_GRPC_ADDR: ${CART_SERVICE_GRPC_ADDR:-:19093}
       POSTGRES_HOST: cart-postgres
@@ -73,7 +74,6 @@ services:
       POSTGRES_DB: ${CART_POSTGRES_DB:-cart}
       POSTGRES_USER: ${CART_POSTGRES_USER:-cart}
       POSTGRES_PASSWORD: ${CART_POSTGRES_PASSWORD:-cart}
-      POSTGRES_SSLMODE: disable
       REDIS_ADDR: cart-redis:6379
       KAFKA_BROKERS: kafka:9092
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
@@ -82,7 +82,6 @@ services:
       AUTH_ACCESS_TOKEN_ISSUER: ${AUTH_ACCESS_TOKEN_ISSUER:-ecom-identity-svc}
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
-      LOG_LEVEL: ${CART_LOG_LEVEL:-debug}
     ports:
       - "18083:18083"
       - "19093:19093"

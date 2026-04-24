@@ -46,9 +46,10 @@ services:
         condition: service_healthy
       schema-registry:
         condition: service_healthy
+    # Replace example env file with real local env file for real usage.
+    env_file:
+      - ../../internal/product-svc/.env.example
     environment:
-      SERVICE_NAME: ${CATALOG_SERVICE_NAME:-product-svc}
-      SERVICE_ENV: ${CATALOG_SERVICE_ENV:-local}
       SERVICE_HTTP_ADDR: ${CATALOG_SERVICE_HTTP_ADDR:-:18082}
       SERVICE_GRPC_ADDR: ${CATALOG_SERVICE_GRPC_ADDR:-:19092}
       POSTGRES_HOST: catalog-postgres
@@ -56,20 +57,12 @@ services:
       POSTGRES_DB: ${CATALOG_POSTGRES_DB:-catalog}
       POSTGRES_USER: ${CATALOG_POSTGRES_USER:-catalog}
       POSTGRES_PASSWORD: ${CATALOG_POSTGRES_PASSWORD:-catalog}
-      POSTGRES_SSLMODE: disable
       KAFKA_BROKERS: kafka:9092
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
       AUTH_ACCESS_TOKEN_KEY: ${AUTH_ACCESS_TOKEN_KEY:-local-dev-access-token-key}
       AUTH_ACCESS_TOKEN_ISSUER: ${AUTH_ACCESS_TOKEN_ISSUER:-ecom-identity-svc}
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
-      LOG_LEVEL: ${CATALOG_LOG_LEVEL:-debug}
-      OUTBOX_RELAY_BATCH_SIZE: ${CATALOG_OUTBOX_RELAY_BATCH_SIZE:-100}
-      OUTBOX_RELAY_INTERVAL: ${CATALOG_OUTBOX_RELAY_INTERVAL:-500ms}
-      OUTBOX_RELAY_RETRY_BASE_BACKOFF: ${CATALOG_OUTBOX_RELAY_RETRY_BASE_BACKOFF:-1s}
-      OUTBOX_RELAY_RETRY_MAX_BACKOFF: ${CATALOG_OUTBOX_RELAY_RETRY_MAX_BACKOFF:-30s}
-      OUTBOX_RELAY_WORKER_ID: ${CATALOG_OUTBOX_RELAY_WORKER_ID:-product-svc-relay-1}
-      OUTBOX_RELAY_STALE_LOCK_TTL: ${CATALOG_OUTBOX_RELAY_STALE_LOCK_TTL:-30s}
     ports:
       - "18082:18082"
       - "19092:19092"

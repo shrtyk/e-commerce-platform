@@ -48,9 +48,10 @@ services:
         condition: service_completed_successfully
       schema-registry:
         condition: service_healthy
+    # Replace example env file with real local env file for real usage.
+    env_file:
+      - ../../internal/payment-svc/.env.example
     environment:
-      SERVICE_NAME: ${PAYMENT_SERVICE_NAME:-payment-svc}
-      SERVICE_ENV: ${PAYMENT_SERVICE_ENV:-local}
       SERVICE_HTTP_ADDR: ${PAYMENT_SERVICE_HTTP_ADDR:-:18085}
       SERVICE_GRPC_ADDR: ${PAYMENT_SERVICE_GRPC_ADDR:-:19095}
       POSTGRES_HOST: payment-postgres
@@ -58,19 +59,10 @@ services:
       POSTGRES_DB: ${PAYMENT_POSTGRES_DB:-payment}
       POSTGRES_USER: ${PAYMENT_POSTGRES_USER:-payment}
       POSTGRES_PASSWORD: ${PAYMENT_POSTGRES_PASSWORD:-payment}
-      POSTGRES_SSLMODE: disable
       KAFKA_BROKERS: kafka:9092
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
-      LOG_LEVEL: ${PAYMENT_LOG_LEVEL:-debug}
-      OUTBOX_RELAY_ENABLED: ${PAYMENT_OUTBOX_RELAY_ENABLED:-true}
-      OUTBOX_RELAY_BATCH_SIZE: ${PAYMENT_OUTBOX_RELAY_BATCH_SIZE:-100}
-      OUTBOX_RELAY_INTERVAL: ${PAYMENT_OUTBOX_RELAY_INTERVAL:-500ms}
-      OUTBOX_RELAY_RETRY_BASE_BACKOFF: ${PAYMENT_OUTBOX_RELAY_RETRY_BASE_BACKOFF:-1s}
-      OUTBOX_RELAY_RETRY_MAX_BACKOFF: ${PAYMENT_OUTBOX_RELAY_RETRY_MAX_BACKOFF:-30s}
-      OUTBOX_RELAY_WORKER_ID: ${PAYMENT_OUTBOX_RELAY_WORKER_ID:-payment-svc-relay-1}
-      OUTBOX_RELAY_STALE_LOCK_TTL: ${PAYMENT_OUTBOX_RELAY_STALE_LOCK_TTL:-30s}
     ports:
       - "18085:18085"
       - "19095:19095"
