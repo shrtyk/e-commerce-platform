@@ -1,0 +1,92 @@
+services:
+  order-postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${ORDER_POSTGRES_DB:-order}
+      POSTGRES_USER: ${ORDER_POSTGRES_USER:-order}
+      POSTGRES_PASSWORD: ${ORDER_POSTGRES_PASSWORD:-order}
+    ports:
+      - "${ORDER_POSTGRES_PORT:-5436}:5432"
+    volumes:
+      - order-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  order-migrate:
+    build:
+      context: ../../
+      dockerfile: internal/order-svc/build/migrate.Dockerfile
+    depends_on:
+      order-postgres:
+        condition: service_healthy
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://${ORDER_POSTGRES_USER:-order}:${ORDER_POSTGRES_PASSWORD:-order}@order-postgres:5432/${ORDER_POSTGRES_DB:-order}?sslmode=disable
+      GOOSE_MIGRATION_DIR: /app/migrations
+    entrypoint: ["sh", "-c"]
+    command:
+      ["goose -dir \"$${GOOSE_MIGRATION_DIR}\" up"]
+    restart: "no"
+
+  order-svc:
+    build:
+      context: ../../
+      dockerfile: internal/order-svc/build/app.Dockerfile
+    depends_on:
+      order-postgres:
+        condition: service_healthy
+      order-migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_healthy
+      cart-svc:
+        condition: service_healthy
+      product-svc:
+        condition: service_healthy
+      payment-svc:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: ${ORDER_SERVICE_NAME:-order}
+      SERVICE_ENV: ${ORDER_SERVICE_ENV:-local}
+      SERVICE_HTTP_ADDR: ${ORDER_SERVICE_HTTP_ADDR:-:18084}
+      SERVICE_GRPC_ADDR: ${ORDER_SERVICE_GRPC_ADDR:-:19094}
+      POSTGRES_HOST: order-postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${ORDER_POSTGRES_DB:-order}
+      POSTGRES_USER: ${ORDER_POSTGRES_USER:-order}
+      POSTGRES_PASSWORD: ${ORDER_POSTGRES_PASSWORD:-order}
+      POSTGRES_SSLMODE: disable
+      KAFKA_BROKERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CART_GRPC_ADDR: cart-svc:19093
+      CATALOG_GRPC_ADDR: product-svc:19092
+      PAYMENT_GRPC_ADDR: payment-svc:19095
+      AUTH_ACCESS_TOKEN_KEY: ${AUTH_ACCESS_TOKEN_KEY:-local-dev-access-token-key}
+      AUTH_ACCESS_TOKEN_ISSUER: ${AUTH_ACCESS_TOKEN_ISSUER:-ecom-identity-svc}
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OUTBOX_RELAY_WORKER_ID: ${ORDER_OUTBOX_RELAY_WORKER_ID:-order-svc-relay-1}
+      OUTBOX_RELAY_STALE_LOCK_TTL: ${ORDER_OUTBOX_RELAY_STALE_LOCK_TTL:-30s}
+      LOG_LEVEL: ${ORDER_LOG_LEVEL:-debug}
+    ports:
+      - "18084:18084"
+      - "19094:19094"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:18084/readyz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  order-postgres-data:

@@ -1,0 +1,85 @@
+services:
+  catalog-postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${CATALOG_POSTGRES_DB:-catalog}
+      POSTGRES_USER: ${CATALOG_POSTGRES_USER:-catalog}
+      POSTGRES_PASSWORD: ${CATALOG_POSTGRES_PASSWORD:-catalog}
+    ports:
+      - "${CATALOG_POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - catalog-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  product-migrate:
+    build:
+      context: ../../
+      dockerfile: internal/product-svc/build/migrate.Dockerfile
+    depends_on:
+      catalog-postgres:
+        condition: service_healthy
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://${CATALOG_POSTGRES_USER:-catalog}:${CATALOG_POSTGRES_PASSWORD:-catalog}@catalog-postgres:5432/${CATALOG_POSTGRES_DB:-catalog}?sslmode=disable
+      GOOSE_MIGRATION_DIR: /app/migrations
+    entrypoint: ["sh", "-c"]
+    command:
+      ["goose -dir \"$${GOOSE_MIGRATION_DIR}\" up"]
+    restart: "no"
+
+  product-svc:
+    build:
+      context: ../../
+      dockerfile: internal/product-svc/build/app.Dockerfile
+    depends_on:
+      catalog-postgres:
+        condition: service_healthy
+      product-migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: ${CATALOG_SERVICE_NAME:-product-svc}
+      SERVICE_ENV: ${CATALOG_SERVICE_ENV:-local}
+      SERVICE_HTTP_ADDR: ${CATALOG_SERVICE_HTTP_ADDR:-:18082}
+      SERVICE_GRPC_ADDR: ${CATALOG_SERVICE_GRPC_ADDR:-:19092}
+      POSTGRES_HOST: catalog-postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${CATALOG_POSTGRES_DB:-catalog}
+      POSTGRES_USER: ${CATALOG_POSTGRES_USER:-catalog}
+      POSTGRES_PASSWORD: ${CATALOG_POSTGRES_PASSWORD:-catalog}
+      POSTGRES_SSLMODE: disable
+      KAFKA_BROKERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      AUTH_ACCESS_TOKEN_KEY: ${AUTH_ACCESS_TOKEN_KEY:-local-dev-access-token-key}
+      AUTH_ACCESS_TOKEN_ISSUER: ${AUTH_ACCESS_TOKEN_ISSUER:-ecom-identity-svc}
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      LOG_LEVEL: ${CATALOG_LOG_LEVEL:-debug}
+      OUTBOX_RELAY_BATCH_SIZE: ${CATALOG_OUTBOX_RELAY_BATCH_SIZE:-100}
+      OUTBOX_RELAY_INTERVAL: ${CATALOG_OUTBOX_RELAY_INTERVAL:-500ms}
+      OUTBOX_RELAY_RETRY_BASE_BACKOFF: ${CATALOG_OUTBOX_RELAY_RETRY_BASE_BACKOFF:-1s}
+      OUTBOX_RELAY_RETRY_MAX_BACKOFF: ${CATALOG_OUTBOX_RELAY_RETRY_MAX_BACKOFF:-30s}
+      OUTBOX_RELAY_WORKER_ID: ${CATALOG_OUTBOX_RELAY_WORKER_ID:-product-svc-relay-1}
+      OUTBOX_RELAY_STALE_LOCK_TTL: ${CATALOG_OUTBOX_RELAY_STALE_LOCK_TTL:-30s}
+    ports:
+      - "18082:18082"
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:18082/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  catalog-postgres-data:

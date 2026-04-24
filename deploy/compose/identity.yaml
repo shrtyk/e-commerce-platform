@@ -1,0 +1,95 @@
+services:
+  identity-postgres:
+    build:
+      context: ../../
+      dockerfile: internal/identity-svc/build/postgres.Dockerfile
+    environment:
+      POSTGRES_DB: ${IDENTITY_POSTGRES_DB:-identity}
+      POSTGRES_USER: ${IDENTITY_POSTGRES_USER:-identity}
+      POSTGRES_PASSWORD: ${IDENTITY_POSTGRES_PASSWORD:-identity}
+    command:
+      [
+        "postgres",
+        "-c",
+        "shared_preload_libraries=pg_cron",
+        "-c",
+        "cron.database_name=${IDENTITY_POSTGRES_DB:-identity}",
+      ]
+    ports:
+      - "${IDENTITY_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - identity-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  identity-migrate:
+    build:
+      context: ../../
+      dockerfile: internal/identity-svc/build/migrate.Dockerfile
+    depends_on:
+      identity-postgres:
+        condition: service_healthy
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://${IDENTITY_POSTGRES_USER:-identity}:${IDENTITY_POSTGRES_PASSWORD:-identity}@identity-postgres:5432/${IDENTITY_POSTGRES_DB:-identity}?sslmode=disable
+      GOOSE_MIGRATION_DIR: /app/migrations
+    entrypoint: ["sh", "-c"]
+    command:
+      ["goose -dir \"$${GOOSE_MIGRATION_DIR}\" up"]
+    restart: "no"
+
+  identity-svc:
+    build:
+      context: ../../
+      dockerfile: internal/identity-svc/build/app.Dockerfile
+    depends_on:
+      identity-postgres:
+        condition: service_healthy
+      identity-migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: ${IDENTITY_SERVICE_NAME:-identity-svc}
+      SERVICE_ENV: ${IDENTITY_SERVICE_ENV:-local}
+      SERVICE_HTTP_ADDR: ${IDENTITY_SERVICE_HTTP_ADDR:-:18081}
+      SERVICE_GRPC_ADDR: ${IDENTITY_SERVICE_GRPC_ADDR:-:19091}
+      POSTGRES_HOST: identity-postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${IDENTITY_POSTGRES_DB:-identity}
+      POSTGRES_USER: ${IDENTITY_POSTGRES_USER:-identity}
+      POSTGRES_PASSWORD: ${IDENTITY_POSTGRES_PASSWORD:-identity}
+      POSTGRES_SSLMODE: disable
+      POSTGRES_MAX_OPEN_CONNS: ${IDENTITY_POSTGRES_MAX_OPEN_CONNS:-25}
+      POSTGRES_MAX_IDLE_CONNS: ${IDENTITY_POSTGRES_MAX_IDLE_CONNS:-10}
+      POSTGRES_CONN_MAX_LIFETIME: ${IDENTITY_POSTGRES_CONN_MAX_LIFETIME:-5m}
+      POSTGRES_CONN_MAX_IDLETIME: ${IDENTITY_POSTGRES_CONN_MAX_IDLETIME:-1m}
+      AUTH_SESSION_TTL: ${IDENTITY_AUTH_SESSION_TTL:-168h}
+      AUTH_ACCESS_TOKEN_TTL: ${IDENTITY_AUTH_ACCESS_TOKEN_TTL:-15m}
+      AUTH_ACCESS_TOKEN_KEY: ${AUTH_ACCESS_TOKEN_KEY:-local-dev-access-token-key}
+      AUTH_ACCESS_TOKEN_ISSUER: ${AUTH_ACCESS_TOKEN_ISSUER:-ecom-identity-svc}
+      KAFKA_BROKERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      LOG_LEVEL: ${IDENTITY_LOG_LEVEL:-debug}
+    ports:
+      - "18081:18081"
+      - "19091:19091"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:18081/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  identity-postgres-data:

@@ -1,0 +1,87 @@
+services:
+  notification-postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${NOTIFICATION_POSTGRES_DB:-notification}
+      POSTGRES_USER: ${NOTIFICATION_POSTGRES_USER:-notification}
+      POSTGRES_PASSWORD: ${NOTIFICATION_POSTGRES_PASSWORD:-notification}
+    ports:
+      - "${NOTIFICATION_POSTGRES_PORT:-5438}:5432"
+    volumes:
+      - notification-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  notification-migrate:
+    build:
+      context: ../../
+      dockerfile: internal/notification-svc/build/migrate.Dockerfile
+    depends_on:
+      notification-postgres:
+        condition: service_healthy
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://${NOTIFICATION_POSTGRES_USER:-notification}:${NOTIFICATION_POSTGRES_PASSWORD:-notification}@notification-postgres:5432/${NOTIFICATION_POSTGRES_DB:-notification}?sslmode=disable
+      GOOSE_MIGRATION_DIR: /app/migrations
+    entrypoint: ["sh", "-c"]
+    command:
+      ["goose -dir \"$${GOOSE_MIGRATION_DIR}\" up"]
+    restart: "no"
+
+  notification-svc:
+    build:
+      context: ../../
+      dockerfile: internal/notification-svc/build/app.Dockerfile
+    depends_on:
+      notification-postgres:
+        condition: service_healthy
+      notification-migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: ${NOTIFICATION_SERVICE_NAME:-notification}
+      SERVICE_ENV: ${NOTIFICATION_SERVICE_ENV:-local}
+      SERVICE_HTTP_ADDR: ${NOTIFICATION_SERVICE_HTTP_ADDR:-:18086}
+      SERVICE_GRPC_ADDR: ${NOTIFICATION_SERVICE_GRPC_ADDR:-:19096}
+      POSTGRES_HOST: notification-postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${NOTIFICATION_POSTGRES_DB:-notification}
+      POSTGRES_USER: ${NOTIFICATION_POSTGRES_USER:-notification}
+      POSTGRES_PASSWORD: ${NOTIFICATION_POSTGRES_PASSWORD:-notification}
+      POSTGRES_SSLMODE: disable
+      KAFKA_BROKERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      ORDER_EVENTS_ENABLED: ${NOTIFICATION_ORDER_EVENTS_ENABLED:-true}
+      ORDER_EVENTS_TOPIC: ${NOTIFICATION_ORDER_EVENTS_TOPIC:-order.events}
+      ORDER_EVENTS_GROUP_ID: ${NOTIFICATION_ORDER_EVENTS_GROUP_ID:-notification-svc-order-events-v1}
+      ORDER_EVENTS_POLL_INTERVAL: ${NOTIFICATION_ORDER_EVENTS_POLL_INTERVAL:-500ms}
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      LOG_LEVEL: ${NOTIFICATION_LOG_LEVEL:-debug}
+      OUTBOX_RELAY_BATCH_SIZE: ${NOTIFICATION_OUTBOX_RELAY_BATCH_SIZE:-100}
+      OUTBOX_RELAY_INTERVAL: ${NOTIFICATION_OUTBOX_RELAY_INTERVAL:-500ms}
+      OUTBOX_RELAY_RETRY_BASE_BACKOFF: ${NOTIFICATION_OUTBOX_RELAY_RETRY_BASE_BACKOFF:-1s}
+      OUTBOX_RELAY_RETRY_MAX_BACKOFF: ${NOTIFICATION_OUTBOX_RELAY_RETRY_MAX_BACKOFF:-30s}
+      OUTBOX_RELAY_WORKER_ID: ${NOTIFICATION_OUTBOX_RELAY_WORKER_ID:-notification-svc-relay-1}
+      OUTBOX_RELAY_STALE_LOCK_TTL: ${NOTIFICATION_OUTBOX_RELAY_STALE_LOCK_TTL:-30s}
+    ports:
+      - "18086:18086"
+      - "19096:19096"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:18086/readyz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  notification-postgres-data:
