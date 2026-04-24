@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
@@ -24,7 +26,7 @@ type Cache struct {
 
 type Auth struct {
 	AccessTokenKey    string `env:"ACCESS_TOKEN_KEY" env-required:"true"`
-	AccessTokenIssuer string `env:"ACCESS_TOKEN_ISSUER" env-default:"ecom-identity-svc"`
+	AccessTokenIssuer string `env:"ACCESS_TOKEN_ISSUER" env-required:"true"`
 }
 
 func MustLoad() Config {
@@ -35,6 +37,22 @@ func MustLoad() Config {
 	}
 
 	cfg.Redis.Enabled = cfg.Redis.Addr != ""
+
+	if strings.TrimSpace(cfg.Auth.AccessTokenKey) == "" {
+		panic(fmt.Errorf("field \"Auth.AccessTokenKey\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(cfg.Auth.AccessTokenIssuer) == "" {
+		panic(fmt.Errorf("field \"Auth.AccessTokenIssuer\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(cfg.Catalog.GRPCAddr) == "" {
+		panic(fmt.Errorf("field \"Catalog.GRPCAddr\" must be non-empty"))
+	}
+
+	if cfg.Cache.ActiveCartTTL <= 0 {
+		panic(fmt.Errorf("field \"Cache.ActiveCartTTL\" must be positive"))
+	}
 
 	return cfg
 }

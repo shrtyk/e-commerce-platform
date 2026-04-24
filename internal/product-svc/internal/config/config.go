@@ -19,7 +19,7 @@ type Config struct {
 
 type Auth struct {
 	AccessTokenKey    string `env:"ACCESS_TOKEN_KEY" env-required:"true"`
-	AccessTokenIssuer string `env:"ACCESS_TOKEN_ISSUER" env-default:"ecom-identity-svc"`
+	AccessTokenIssuer string `env:"ACCESS_TOKEN_ISSUER" env-required:"true"`
 }
 
 type Relay struct {
@@ -71,6 +71,14 @@ func MustLoad() Config {
 
 	if cfg.Relay.StaleLockTTL <= 0 {
 		panic(fmt.Errorf("field \"Relay.StaleLockTTL\" must be positive"))
+	}
+
+	if strings.TrimSpace(cfg.Auth.AccessTokenKey) == "" {
+		panic(fmt.Errorf("field \"Auth.AccessTokenKey\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(cfg.Auth.AccessTokenIssuer) == "" {
+		panic(fmt.Errorf("field \"Auth.AccessTokenIssuer\" must be non-empty"))
 	}
 
 	if cfg.Policy.ListPageSize < 1 {

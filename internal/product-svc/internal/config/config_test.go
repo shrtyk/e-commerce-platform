@@ -52,7 +52,6 @@ func TestMustLoad(t *testing.T) {
 			{name: "missing postgres db", key: "POSTGRES_DB", wantInErr: "field \"Database\" is required"},
 			{name: "missing postgres user", key: "POSTGRES_USER", wantInErr: "field \"User\" is required"},
 			{name: "missing postgres password", key: "POSTGRES_PASSWORD", wantInErr: "field \"Password\" is required"},
-			{name: "missing auth access token key", key: "AUTH_ACCESS_TOKEN_KEY", wantInErr: "field \"AccessTokenKey\" is required"},
 		}
 
 		for _, tt := range tests {
@@ -93,6 +92,88 @@ func TestMustLoad(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("panics when auth key invalid", func(t *testing.T) {
+		tests := []struct {
+			name            string
+			prepareEnv      func(t *testing.T)
+			expectedMessage string
+		}{
+			{
+				name: "missing",
+				prepareEnv: func(t *testing.T) {
+					t.Helper()
+					require.NoError(t, os.Unsetenv("AUTH_ACCESS_TOKEN_KEY"))
+				},
+				expectedMessage: "field \"AccessTokenKey\" is required but the value is not provided",
+			},
+			{
+				name: "whitespace only",
+				prepareEnv: func(t *testing.T) {
+					t.Helper()
+					t.Setenv("AUTH_ACCESS_TOKEN_KEY", "   ")
+				},
+				expectedMessage: "field \"Auth.AccessTokenKey\" must be non-empty",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				setRequiredEnv(t)
+				tt.prepareEnv(t)
+
+				if tt.name == "missing" {
+					requireMustLoadPanicContains(t, tt.expectedMessage)
+					return
+				}
+
+				require.PanicsWithError(t, tt.expectedMessage, func() {
+					_ = config.MustLoad()
+				})
+			})
+		}
+	})
+
+	t.Run("panics when auth issuer invalid", func(t *testing.T) {
+		tests := []struct {
+			name            string
+			prepareEnv      func(t *testing.T)
+			expectedMessage string
+		}{
+			{
+				name: "missing",
+				prepareEnv: func(t *testing.T) {
+					t.Helper()
+					require.NoError(t, os.Unsetenv("AUTH_ACCESS_TOKEN_ISSUER"))
+				},
+				expectedMessage: "field \"AccessTokenIssuer\" is required but the value is not provided",
+			},
+			{
+				name: "whitespace only",
+				prepareEnv: func(t *testing.T) {
+					t.Helper()
+					t.Setenv("AUTH_ACCESS_TOKEN_ISSUER", "   ")
+				},
+				expectedMessage: "field \"Auth.AccessTokenIssuer\" must be non-empty",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				setRequiredEnv(t)
+				tt.prepareEnv(t)
+
+				if tt.name == "missing" {
+					requireMustLoadPanicContains(t, tt.expectedMessage)
+					return
+				}
+
+				require.PanicsWithError(t, tt.expectedMessage, func() {
+					_ = config.MustLoad()
+				})
+			})
+		}
+	})
 }
 
 func setRequiredEnv(t *testing.T) {
@@ -107,6 +188,27 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317")
 	t.Setenv("AUTH_ACCESS_TOKEN_KEY", "product-svc-test-key")
+	t.Setenv("AUTH_ACCESS_TOKEN_ISSUER", "ecom-identity-svc")
+}
+
+func requireMustLoadPanicContains(t *testing.T, expectedMessage string) {
+	t.Helper()
+
+	defer func() {
+		recovered := recover()
+		require.NotNil(t, recovered)
+
+		if recoveredError, ok := recovered.(error); ok {
+			require.Contains(t, recoveredError.Error(), expectedMessage)
+			return
+		}
+
+		recoveredString, ok := recovered.(string)
+		require.True(t, ok, "panic value should be error or string")
+		require.Contains(t, recoveredString, expectedMessage)
+	}()
+
+	_ = config.MustLoad()
 }
 
 func TestConfigMustLoadHelperProcess(t *testing.T) {
@@ -123,18 +225,19 @@ func runHelperProcess(t *testing.T, missingKey string) (string, error) {
 	args := []string{"-test.run", "TestConfigMustLoadHelperProcess"}
 	cmd := exec.Command(os.Args[0], args...)
 
-	env := []string{
-		helperProcessEnv + "=1",
-		"SERVICE_NAME=product-svc",
-		"POSTGRES_HOST=postgres",
-		"POSTGRES_DB=product",
+		env := []string{
+			helperProcessEnv + "=1",
+			"SERVICE_NAME=product-svc",
+			"POSTGRES_HOST=postgres",
+			"POSTGRES_DB=product",
 		"POSTGRES_USER=product",
 		"POSTGRES_PASSWORD=secret",
-		"KAFKA_BROKERS=kafka:9092",
-		"SCHEMA_REGISTRY_URL=http://schema-registry:8081",
-		"OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317",
-		"AUTH_ACCESS_TOKEN_KEY=product-svc-test-key",
-	}
+			"KAFKA_BROKERS=kafka:9092",
+			"SCHEMA_REGISTRY_URL=http://schema-registry:8081",
+			"OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317",
+			"AUTH_ACCESS_TOKEN_KEY=product-svc-test-key",
+			"AUTH_ACCESS_TOKEN_ISSUER=ecom-identity-svc",
+		}
 
 	filtered := make([]string, 0, len(env))
 	for _, item := range env {
@@ -169,6 +272,7 @@ func runHelperProcessWithOverride(t *testing.T, key, value string, extra ...stri
 		"SCHEMA_REGISTRY_URL=http://schema-registry:8081",
 		"OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317",
 		"AUTH_ACCESS_TOKEN_KEY=product-svc-test-key",
+		"AUTH_ACCESS_TOKEN_ISSUER=ecom-identity-svc",
 	}
 
 	if key != "" {

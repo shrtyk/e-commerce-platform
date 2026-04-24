@@ -60,21 +60,148 @@ func TestMustLoadActiveCartTTLFromEnv(t *testing.T) {
 	require.Equal(t, 45*time.Second, cfg.Cache.ActiveCartTTL)
 }
 
-func TestMustLoadAuthIssuerDefault(t *testing.T) {
-	setRequiredEnv(t)
-	require.NoError(t, os.Unsetenv("AUTH_ACCESS_TOKEN_ISSUER"))
+func TestMustLoadPanicsWhenAuthKeyInvalid(t *testing.T) {
+	testCases := []struct {
+		name            string
+		prepareEnv      func(t *testing.T)
+		expectedMessage string
+	}{
+		{
+			name: "missing",
+			prepareEnv: func(t *testing.T) {
+				t.Helper()
+				require.NoError(t, os.Unsetenv("AUTH_ACCESS_TOKEN_KEY"))
+			},
+			expectedMessage: "field \"AccessTokenKey\" is required but the value is not provided",
+		},
+		{
+			name: "whitespace only",
+			prepareEnv: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("AUTH_ACCESS_TOKEN_KEY", "   ")
+			},
+			expectedMessage: "field \"Auth.AccessTokenKey\" must be non-empty",
+		},
+	}
 
-	cfg := config.MustLoad()
-	require.Equal(t, "ecom-identity-svc", cfg.Auth.AccessTokenIssuer)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			tc.prepareEnv(t)
+
+			if tc.name == "missing" {
+				requireMustLoadPanicContains(t, tc.expectedMessage)
+				return
+			}
+
+			require.PanicsWithError(t, tc.expectedMessage, func() {
+				_ = config.MustLoad()
+			})
+		})
+	}
 }
 
-func TestMustLoadPanicsWhenAuthKeyMissing(t *testing.T) {
-	setRequiredEnv(t)
-	require.NoError(t, os.Unsetenv("AUTH_ACCESS_TOKEN_KEY"))
+func TestMustLoadPanicsWhenAuthIssuerInvalid(t *testing.T) {
+	testCases := []struct {
+		name            string
+		prepareEnv      func(t *testing.T)
+		expectedMessage string
+	}{
+		{
+			name: "missing",
+			prepareEnv: func(t *testing.T) {
+				t.Helper()
+				require.NoError(t, os.Unsetenv("AUTH_ACCESS_TOKEN_ISSUER"))
+			},
+			expectedMessage: "field \"AccessTokenIssuer\" is required but the value is not provided",
+		},
+		{
+			name: "whitespace only",
+			prepareEnv: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("AUTH_ACCESS_TOKEN_ISSUER", "   ")
+			},
+			expectedMessage: "field \"Auth.AccessTokenIssuer\" must be non-empty",
+		},
+	}
 
-	require.Panics(t, func() {
-		_ = config.MustLoad()
-	})
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			tc.prepareEnv(t)
+
+			if tc.name == "missing" {
+				requireMustLoadPanicContains(t, tc.expectedMessage)
+				return
+			}
+
+			require.PanicsWithError(t, tc.expectedMessage, func() {
+				_ = config.MustLoad()
+			})
+		})
+	}
+}
+
+func TestMustLoadPanicsWhenCatalogGRPCAddrInvalid(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value string
+	}{
+		{name: "empty", value: ""},
+		{name: "whitespace only", value: "   "},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("CATALOG_GRPC_ADDR", tc.value)
+
+			require.PanicsWithError(t, "field \"Catalog.GRPCAddr\" must be non-empty", func() {
+				_ = config.MustLoad()
+			})
+		})
+	}
+}
+
+func TestMustLoadPanicsWhenActiveCartTTLNonPositive(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value string
+	}{
+		{name: "zero", value: "0s"},
+		{name: "negative", value: "-1s"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("CART_CACHE_ACTIVE_CART_TTL", tc.value)
+
+			require.PanicsWithError(t, "field \"Cache.ActiveCartTTL\" must be positive", func() {
+				_ = config.MustLoad()
+			})
+		})
+	}
+}
+
+func requireMustLoadPanicContains(t *testing.T, expectedMessage string) {
+	t.Helper()
+
+	defer func() {
+		recovered := recover()
+		require.NotNil(t, recovered)
+
+		if recoveredError, ok := recovered.(error); ok {
+			require.Contains(t, recoveredError.Error(), expectedMessage)
+			return
+		}
+
+		recoveredString, ok := recovered.(string)
+		require.True(t, ok, "panic value should be error or string")
+		require.Contains(t, recoveredString, expectedMessage)
+	}()
+
+	_ = config.MustLoad()
 }
 
 func setRequiredEnv(t *testing.T) {
@@ -89,4 +216,5 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317")
 	t.Setenv("AUTH_ACCESS_TOKEN_KEY", "test-secret")
+	t.Setenv("AUTH_ACCESS_TOKEN_ISSUER", "ecom-identity-svc")
 }
