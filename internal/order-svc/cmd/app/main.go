@@ -173,19 +173,9 @@ func main() {
 		adaptercheckoutgrpc.NewStockReleaseService(catalogClient),
 		adaptercheckoutgrpc.NewCheckoutPaymentService(paymentv1.NewPaymentServiceClient(paymentConn)),
 		checkout.NewCheckoutIdempotencyGuard(orderRepository),
-	).WithEventing(outboxEventPublisher, txProvider, cfg.Service.Name)
+	).WithEventing(outboxEventPublisher, txProvider, cfg.Service.Name, cfg.Events.Topic)
 
-	authAccessTokenKey := strings.TrimSpace(os.Getenv("AUTH_ACCESS_TOKEN_KEY"))
-	if authAccessTokenKey == "" {
-		panic("AUTH_ACCESS_TOKEN_KEY is required")
-	}
-
-	authAccessTokenIssuer := strings.TrimSpace(os.Getenv("AUTH_ACCESS_TOKEN_ISSUER"))
-	if authAccessTokenIssuer == "" {
-		panic("AUTH_ACCESS_TOKEN_ISSUER is required")
-	}
-
-	tokenVerifier := commonjwt.NewTokenVerifier(authAccessTokenKey, authAccessTokenIssuer)
+	tokenVerifier := commonjwt.NewTokenVerifier(cfg.Auth.AccessTokenKey, cfg.Auth.AccessTokenIssuer)
 
 	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, db, checkoutService, tokenVerifier, tracer)
 	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, checkoutService, tokenVerifier, tracer)
@@ -238,9 +228,9 @@ func main() {
 			kafkaPublisher,
 			consumerIdempotencyRepository,
 			adapterinboundkafka.PaymentEventsWorkerConfig{
-				PollInterval:     cfg.PaymentEvents.PollInterval,
+				PollInterval:      cfg.PaymentEvents.PollInterval,
 				ConsumerGroupName: cfg.PaymentEvents.GroupID,
-				MaxRetryAttempts: cfg.PaymentEvents.MaxRetryAttempts,
+				MaxRetryAttempts:  cfg.PaymentEvents.MaxRetryAttempts,
 			},
 		)
 		if err != nil {

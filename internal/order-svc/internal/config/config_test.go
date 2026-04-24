@@ -29,11 +29,14 @@ func TestMustLoad(t *testing.T) {
 	require.Equal(t, 30*time.Second, cfg.Relay.RetryMaxBackoff)
 	require.Equal(t, "order-svc-relay-1", cfg.Relay.WorkerID)
 	require.Equal(t, 30*time.Second, cfg.Relay.StaleLockTTL)
+	require.Equal(t, "order.events", cfg.Events.Topic)
 	require.True(t, cfg.PaymentEvents.Enabled)
 	require.Equal(t, "payment.events", cfg.PaymentEvents.Topic)
 	require.Equal(t, "order-svc-payment-events-v1", cfg.PaymentEvents.GroupID)
 	require.Equal(t, 500*time.Millisecond, cfg.PaymentEvents.PollInterval)
 	require.Equal(t, 3, cfg.PaymentEvents.MaxRetryAttempts)
+	require.Equal(t, "order-access-token-key", cfg.Auth.AccessTokenKey)
+	require.Equal(t, "ecom-identity-svc", cfg.Auth.AccessTokenIssuer)
 }
 
 func TestMustLoadDefaults(t *testing.T) {
@@ -55,7 +58,7 @@ func TestMustLoadPanicsWhenRelayInvalid(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("OUTBOX_RELAY_BATCH_SIZE", "0")
 
-	require.Panics(t, func() {
+	require.PanicsWithError(t, "field \"Relay.BatchSize\" must be positive", func() {
 		_ = config.MustLoad()
 	})
 }
@@ -64,7 +67,7 @@ func TestMustLoadPanicsWhenWorkerIDWhitespaceOnly(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("OUTBOX_RELAY_WORKER_ID", "   ")
 
-	require.Panics(t, func() {
+	require.PanicsWithError(t, "field \"Relay.WorkerID\" must be non-empty", func() {
 		_ = config.MustLoad()
 	})
 }
@@ -78,6 +81,74 @@ func TestMustLoadPanicsWhenRequiredEnvMissing(t *testing.T) {
 	})
 }
 
+func TestMustLoadPanicsWhenAuthKeyInvalid(t *testing.T) {
+	testCases := []struct {
+		name            string
+		prepareEnv      func(t *testing.T)
+		expectedMessage string
+	}{
+		{
+			name: "missing",
+			prepareEnv: func(t *testing.T) {
+				t.Helper()
+				require.NoError(t, os.Unsetenv("AUTH_ACCESS_TOKEN_KEY"))
+			},
+			expectedMessage: "field \"AccessTokenKey\" is required but the value is not provided",
+		},
+		{
+			name: "whitespace only",
+			prepareEnv: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("AUTH_ACCESS_TOKEN_KEY", "   ")
+			},
+			expectedMessage: "field \"Auth.AccessTokenKey\" must be non-empty",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			tc.prepareEnv(t)
+
+			requireMustLoadPanicContains(t, tc.expectedMessage)
+		})
+	}
+}
+
+func TestMustLoadPanicsWhenAuthIssuerInvalid(t *testing.T) {
+	testCases := []struct {
+		name            string
+		prepareEnv      func(t *testing.T)
+		expectedMessage string
+	}{
+		{
+			name: "missing",
+			prepareEnv: func(t *testing.T) {
+				t.Helper()
+				require.NoError(t, os.Unsetenv("AUTH_ACCESS_TOKEN_ISSUER"))
+			},
+			expectedMessage: "field \"AccessTokenIssuer\" is required but the value is not provided",
+		},
+		{
+			name: "whitespace only",
+			prepareEnv: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("AUTH_ACCESS_TOKEN_ISSUER", "   ")
+			},
+			expectedMessage: "field \"Auth.AccessTokenIssuer\" must be non-empty",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			tc.prepareEnv(t)
+
+			requireMustLoadPanicContains(t, tc.expectedMessage)
+		})
+	}
+}
+
 func TestMustLoadPanicsWhenPaymentEventsTopicEmpty(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("PAYMENT_EVENTS_TOPIC", "  ")
@@ -85,6 +156,35 @@ func TestMustLoadPanicsWhenPaymentEventsTopicEmpty(t *testing.T) {
 	require.Panics(t, func() {
 		_ = config.MustLoad()
 	})
+}
+
+func TestMustLoadPanicsWhenEventsTopicEmpty(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("EVENTS_TOPIC", "  ")
+
+	require.Panics(t, func() {
+		_ = config.MustLoad()
+	})
+}
+
+func requireMustLoadPanicContains(t *testing.T, expectedMessage string) {
+	t.Helper()
+
+	defer func() {
+		recovered := recover()
+		require.NotNil(t, recovered)
+
+		if recoveredError, ok := recovered.(error); ok {
+			require.Contains(t, recoveredError.Error(), expectedMessage)
+			return
+		}
+
+		recoveredString, ok := recovered.(string)
+		require.True(t, ok, "panic value should be error or string")
+		require.Contains(t, recoveredString, expectedMessage)
+	}()
+
+	_ = config.MustLoad()
 }
 
 func setRequiredEnv(t *testing.T) {
@@ -98,4 +198,6 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("KAFKA_BROKERS", "kafka:9092")
 	t.Setenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317")
+	t.Setenv("AUTH_ACCESS_TOKEN_KEY", "order-access-token-key")
+	t.Setenv("AUTH_ACCESS_TOKEN_ISSUER", "ecom-identity-svc")
 }

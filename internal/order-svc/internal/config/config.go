@@ -13,7 +13,18 @@ import (
 type Config struct {
 	commoncfg.Config
 	Relay         Relay         `env-prefix:"OUTBOX_RELAY_"`
+	Events        Events        `env-prefix:"EVENTS_"`
 	PaymentEvents PaymentEvents `env-prefix:"PAYMENT_EVENTS_"`
+	Auth          Auth          `env-prefix:"AUTH_"`
+}
+
+type Events struct {
+	Topic string `env:"TOPIC" env-default:"order.events"`
+}
+
+type Auth struct {
+	AccessTokenKey    string `env:"ACCESS_TOKEN_KEY" env-required:"true"`
+	AccessTokenIssuer string `env:"ACCESS_TOKEN_ISSUER" env-required:"true"`
 }
 
 type Relay struct {
@@ -74,6 +85,10 @@ func MustLoad() Config {
 		panic(fmt.Errorf("field \"PaymentEvents.Topic\" must be non-empty"))
 	}
 
+	if strings.TrimSpace(cfg.Events.Topic) == "" {
+		panic(fmt.Errorf("field \"Events.Topic\" must be non-empty"))
+	}
+
 	if strings.TrimSpace(cfg.PaymentEvents.GroupID) == "" {
 		panic(fmt.Errorf("field \"PaymentEvents.GroupID\" must be non-empty"))
 	}
@@ -84,6 +99,14 @@ func MustLoad() Config {
 
 	if cfg.PaymentEvents.MaxRetryAttempts < 1 {
 		panic(fmt.Errorf("field \"PaymentEvents.MaxRetryAttempts\" must be >= 1"))
+	}
+
+	if strings.TrimSpace(cfg.Auth.AccessTokenKey) == "" {
+		panic(fmt.Errorf("field \"Auth.AccessTokenKey\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(cfg.Auth.AccessTokenIssuer) == "" {
+		panic(fmt.Errorf("field \"Auth.AccessTokenIssuer\" must be non-empty"))
 	}
 
 	return cfg

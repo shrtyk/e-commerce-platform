@@ -17,7 +17,6 @@ import (
 const maxIdempotencyKeyLength = 255
 
 const (
-	orderEventsTopic           = "order.events"
 	orderCreatedEventName      = "order.created"
 	orderConfirmedEventName    = "order.confirmed"
 	orderCancelledEventName    = "order.cancelled"
@@ -47,7 +46,10 @@ type Service struct {
 	publisher        outbound.EventPublisher
 	txProvider       tx.Provider[TransactionRepos]
 	producer         string
+	eventsTopic      string
 }
+
+const defaultOrderEventsTopic = "order.events"
 
 type CheckoutInput struct {
 	UserID         uuid.UUID
@@ -104,6 +106,7 @@ func NewService(
 		payment:          paymentService,
 		idempotencyGuard: guard,
 		producer:         "order-svc",
+		eventsTopic:      defaultOrderEventsTopic,
 	}
 }
 
@@ -111,6 +114,7 @@ func (s *Service) WithEventing(
 	publisher outbound.EventPublisher,
 	txProvider tx.Provider[TransactionRepos],
 	producer string,
+	topics ...string,
 ) *Service {
 	if s == nil {
 		return nil
@@ -126,6 +130,12 @@ func (s *Service) WithEventing(
 
 	if trimmedProducer := strings.TrimSpace(producer); trimmedProducer != "" {
 		s.producer = trimmedProducer
+	}
+
+	if len(topics) > 0 {
+		if trimmedTopic := strings.TrimSpace(topics[0]); trimmedTopic != "" {
+			s.eventsTopic = trimmedTopic
+		}
 	}
 
 	return s
@@ -754,7 +764,7 @@ func (s *Service) newOrderCreatedEvent(
 		SchemaVersion: orderEventSchemaVersion,
 		AggregateType: orderAggregateType,
 		AggregateID:   order.OrderID.String(),
-		Topic:         orderEventsTopic,
+		Topic:         s.eventsTopic,
 		Key:           order.OrderID.String(),
 		Payload: domain.OrderCreatedPayload{
 			OrderID:     order.OrderID.String(),
@@ -804,7 +814,7 @@ func (s *Service) newOrderCancelledEvent(
 		SchemaVersion: orderEventSchemaVersion,
 		AggregateType: orderAggregateType,
 		AggregateID:   order.OrderID.String(),
-		Topic:         orderEventsTopic,
+		Topic:         s.eventsTopic,
 		Key:           order.OrderID.String(),
 		Payload: domain.OrderCancelledPayload{
 			OrderID:             order.OrderID.String(),
@@ -848,7 +858,7 @@ func (s *Service) newOrderConfirmedEvent(
 		SchemaVersion: orderEventSchemaVersion,
 		AggregateType: orderAggregateType,
 		AggregateID:   order.OrderID.String(),
-		Topic:         orderEventsTopic,
+		Topic:         s.eventsTopic,
 		Key:           order.OrderID.String(),
 		Payload: domain.OrderConfirmedPayload{
 			OrderID:     order.OrderID.String(),
