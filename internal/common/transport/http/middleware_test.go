@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
@@ -18,6 +19,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -475,6 +478,203 @@ func TestTracingExtractsRemoteParentContextFromHeaders(t *testing.T) {
 	require.Equal(t, parentSpanContext.SpanID(), span.Parent().SpanID())
 }
 
+func TestRequestLoggerEmitsNormalizedMetrics(t *testing.T) {
+	tests := []struct {
+		name           string
+		path           string
+		statusCode     int
+		expectedOperation string
+		expectedStatus string
+		expectedOutcome string
+	}{
+		{
+			name:            "success response",
+			path:            "/v1/orders/123/items",
+			statusCode:      http.StatusCreated,
+			expectedOperation: "/v1/orders/{id}/items",
+			expectedStatus:  "2xx",
+			expectedOutcome: "success",
+		},
+		{
+			name:            "error response",
+			path:            "/v1/orders/550e8400-e29b-41d4-a716-446655440000/items",
+			statusCode:      http.StatusInternalServerError,
+			expectedOperation: "/v1/orders/{id}/items",
+			expectedStatus:  "5xx",
+			expectedOutcome: "error",
+		},
+		{
+			name:            "client error response",
+			path:            "/v1/orders/abc123def456/items",
+			statusCode:      http.StatusBadRequest,
+			expectedOperation: "/v1/orders/{id}/items",
+			expectedStatus:  "4xx",
+			expectedOutcome: "error",
+		},
+		{
+			name:              "preserves route names",
+			path:              "/products/search",
+			statusCode:        http.StatusOK,
+			expectedOperation: "/products/search",
+			expectedStatus:    "2xx",
+			expectedOutcome:   "success",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := sdkmetric.NewManualReader()
+			meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+
+			previous := otel.GetMeterProvider()
+			otel.SetMeterProvider(meterProvider)
+			t.Cleanup(func() {
+				require.NoError(t, meterProvider.Shutdown(context.Background()))
+				otel.SetMeterProvider(previous)
+			})
+
+			provider := NewMiddlewaresProvider("test-service", slog.Default(), noop.NewTracerProvider().Tracer("test"))
+			handler := provider.RequestLogger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			var rm metricdata.ResourceMetrics
+			require.NoError(t, reader.Collect(context.Background(), &rm))
+
+			requestTotal := findMetric(t, rm, observability.MetricNameRequestTotal)
+			requestTotalData, ok := requestTotal.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			require.Len(t, requestTotalData.DataPoints, 1)
+			require.Equal(t, int64(1), requestTotalData.DataPoints[0].Value)
+			assertAttributes(t, requestTotalData.DataPoints[0].Attributes, map[string]string{
+				observability.MetricAttrTransport: "http",
+				observability.MetricAttrOperation: tt.expectedOperation,
+				observability.MetricAttrStatus:    tt.expectedStatus,
+				observability.MetricAttrOutcome:   tt.expectedOutcome,
+			})
+
+			requestDuration := findMetric(t, rm, observability.MetricNameRequestDurationSeconds)
+			requestDurationData, ok := requestDuration.Data.(metricdata.Histogram[float64])
+			require.True(t, ok)
+			require.Len(t, requestDurationData.DataPoints, 1)
+			require.Equal(t, uint64(1), requestDurationData.DataPoints[0].Count)
+			assertAttributes(t, requestDurationData.DataPoints[0].Attributes, map[string]string{
+				observability.MetricAttrTransport: "http",
+				observability.MetricAttrOperation: tt.expectedOperation,
+				observability.MetricAttrStatus:    tt.expectedStatus,
+				observability.MetricAttrOutcome:   tt.expectedOutcome,
+			})
+		})
+	}
+}
+
+func TestRequestLoggerEmitsTransportFailureStatuses(t *testing.T) {
+	tests := []struct {
+		name           string
+		buildRequest   func() *http.Request
+		expectedStatus string
+	}{
+		{
+			name: "cancelled context",
+			buildRequest: func() *http.Request {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				return httptest.NewRequest(http.MethodGet, "/products/search", nil).WithContext(ctx)
+			},
+			expectedStatus: "cancelled",
+		},
+		{
+			name: "deadline exceeded context",
+			buildRequest: func() *http.Request {
+				ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+				t.Cleanup(cancel)
+
+				return httptest.NewRequest(http.MethodGet, "/products/search", nil).WithContext(ctx)
+			},
+			expectedStatus: "timeout",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := sdkmetric.NewManualReader()
+			meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+
+			previous := otel.GetMeterProvider()
+			otel.SetMeterProvider(meterProvider)
+			t.Cleanup(func() {
+				require.NoError(t, meterProvider.Shutdown(context.Background()))
+				otel.SetMeterProvider(previous)
+			})
+
+			provider := NewMiddlewaresProvider("test-service", slog.Default(), noop.NewTracerProvider().Tracer("test"))
+			handler := provider.RequestLogger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, tt.buildRequest())
+
+			var rm metricdata.ResourceMetrics
+			require.NoError(t, reader.Collect(context.Background(), &rm))
+
+			requestTotal := findMetric(t, rm, observability.MetricNameRequestTotal)
+			requestTotalData, ok := requestTotal.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			require.Len(t, requestTotalData.DataPoints, 1)
+			assertAttributes(t, requestTotalData.DataPoints[0].Attributes, map[string]string{
+				observability.MetricAttrTransport: "http",
+				observability.MetricAttrOperation: "/products/search",
+				observability.MetricAttrStatus:    tt.expectedStatus,
+				observability.MetricAttrOutcome:   "error",
+			})
+		})
+	}
+}
+
+func TestRequestLoggerEmitsMetricsOnPanic(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(meterProvider)
+	t.Cleanup(func() {
+		require.NoError(t, meterProvider.Shutdown(context.Background()))
+		otel.SetMeterProvider(previous)
+	})
+
+	provider := NewMiddlewaresProvider("test-service", slog.Default(), noop.NewTracerProvider().Tracer("test"))
+	handler := provider.Recovery(provider.RequestLogger(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/orders/123/items", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &rm))
+
+	requestTotal := findMetric(t, rm, observability.MetricNameRequestTotal)
+	requestTotalData, ok := requestTotal.Data.(metricdata.Sum[int64])
+	require.True(t, ok)
+	require.Len(t, requestTotalData.DataPoints, 1)
+	require.Equal(t, int64(1), requestTotalData.DataPoints[0].Value)
+	assertAttributes(t, requestTotalData.DataPoints[0].Attributes, map[string]string{
+		observability.MetricAttrTransport: "http",
+		observability.MetricAttrOperation: "/v1/orders/{id}/items",
+		observability.MetricAttrStatus:    "network_error",
+		observability.MetricAttrOutcome:   "error",
+	})
+}
+
 func setW3CPropagator(t *testing.T) {
 	t.Helper()
 
@@ -487,4 +687,31 @@ func setW3CPropagator(t *testing.T) {
 
 func spanAttributes(span sdktrace.ReadOnlySpan) []attribute.KeyValue {
 	return span.Attributes()
+}
+
+func findMetric(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Metrics {
+	t.Helper()
+
+	for _, scope := range rm.ScopeMetrics {
+		for _, metricValue := range scope.Metrics {
+			if metricValue.Name == name {
+				return metricValue
+			}
+		}
+	}
+
+	t.Fatalf("metric %q not found", name)
+	return metricdata.Metrics{}
+}
+
+func assertAttributes(t *testing.T, attrs attribute.Set, expected map[string]string) {
+	t.Helper()
+
+	require.Equal(t, len(expected), attrs.Len())
+
+	for key, expectedValue := range expected {
+		value, ok := attrs.Value(attribute.Key(key))
+		require.True(t, ok, "missing attribute %q", key)
+		require.Equal(t, expectedValue, value.AsString())
+	}
 }
