@@ -1,0 +1,19 @@
+FROM golang:1.26.0-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /src
+
+RUN apk add --no-cache git ca-certificates
+
+RUN GOWORK=off CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go install github.com/pressly/goose/v3/cmd/goose@v3.27.0
+
+FROM alpine:3.22
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+
+COPY --from=builder /go/bin/goose /usr/local/bin/goose
+COPY internal/order-svc/internal/adapters/outbound/postgres/migrations /app/migrations
