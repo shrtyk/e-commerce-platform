@@ -16,6 +16,8 @@ processors:
 exporters:
   debug:
     verbosity: detailed
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
   prometheus:
     endpoint: 0.0.0.0:8889
   otlp/tempo:
@@ -29,7 +31,7 @@ service:
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [debug, otlphttp/loki]
     metrics:
       receivers: [otlp]
       processors: [batch]
