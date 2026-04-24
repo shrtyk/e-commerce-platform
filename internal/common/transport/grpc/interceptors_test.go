@@ -78,6 +78,20 @@ func TestUnaryLogging(t *testing.T) {
 				require.GreaterOrEqual(t, duration, float64(0))
 			},
 		},
+		{
+			name:         "logs trace id from span context",
+			requestID:    "req-trace",
+			setRequestID: true,
+			handler: func(ctx context.Context, req interface{}) (interface{}, error) {
+				return "ok", nil
+			},
+			wantStatus: codes.OK,
+			checkDuration: func(t *testing.T, entry map[string]interface{}) {
+				duration, ok := entry["duration_ms"].(float64)
+				require.True(t, ok)
+				require.GreaterOrEqual(t, duration, float64(0))
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -90,6 +104,14 @@ func TestUnaryLogging(t *testing.T) {
 			ctx := context.Background()
 			if tt.setRequestID {
 				ctx = transport.WithRequestID(ctx, tt.requestID)
+			}
+			if tt.name == "logs trace id from span context" {
+				sc := trace.NewSpanContext(trace.SpanContextConfig{
+					TraceID:    trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+					SpanID:     trace.SpanID{2, 2, 2, 2, 2, 2, 2, 2},
+					TraceFlags: trace.FlagsSampled,
+				})
+				ctx = trace.ContextWithSpanContext(ctx, sc)
 			}
 			info := &grpcpkg.UnaryServerInfo{FullMethod: "/identity.v1.AuthService/Login"}
 
@@ -108,12 +130,16 @@ func TestUnaryLogging(t *testing.T) {
 
 			require.Equal(t, "request", entry["msg"])
 			require.Equal(t, "identity-svc", entry["service"])
-			_, methodExists := entry["method"]
-			require.False(t, methodExists)
+			require.Equal(t, "Login", entry["method"])
 			require.Equal(t, "/identity.v1.AuthService/Login", entry["path"])
 			require.Equal(t, float64(tt.wantStatus), entry["status"])
 			require.Equal(t, tt.wantStatus.String(), entry["grpc_status"])
 			require.Equal(t, tt.requestID, entry["request_id"])
+			if tt.name == "logs trace id from span context" {
+				require.Equal(t, "01010101010101010101010101010101", entry["trace_id"])
+			} else {
+				require.Equal(t, "", entry["trace_id"])
+			}
 			tt.checkDuration(t, entry)
 		})
 	}
@@ -158,7 +184,9 @@ func TestUnaryRecoveryLogsStackTrace(t *testing.T) {
 
 	require.Equal(t, "panic recovered", entry["msg"])
 	require.Equal(t, "panic value", entry["panic"])
+	require.Equal(t, "identity-svc", entry["service"])
 	require.Equal(t, "req-stack", entry["request_id"])
+	require.Equal(t, "", entry["trace_id"])
 
 	stack, ok := entry["stack"].(string)
 	require.True(t, ok)

@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 )
@@ -88,15 +89,17 @@ func (p *MiddlewaresProvider) RequestLogger(next http.Handler) http.Handler {
 			if requestID == "" {
 				requestID = transport.RequestIDFromContext(r.Context())
 			}
+			traceID := logging.TraceIDFromContext(r.Context())
 
-			p.logger.Info("request",
-				slog.String("service", p.serviceName),
-				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
-				slog.Int("status", statusCode),
-				slog.Int64("duration_ms", duration.Milliseconds()),
-				slog.String("request_id", requestID),
-			)
+			p.logger.Info("request", logging.RequestFields(
+				p.serviceName,
+				requestID,
+				traceID,
+				r.Method,
+				r.URL.Path,
+				statusCode,
+				duration.Milliseconds(),
+			)...)
 
 			p.requestMetrics.Record(r.Context(), duration, observability.RequestMetricAttrs{
 				Transport: "http",
@@ -175,11 +178,14 @@ func (p *MiddlewaresProvider) Recovery(next http.Handler) http.Handler {
 				if requestID == "" {
 					requestID = transport.RequestIDFromContext(r.Context())
 				}
-				p.logger.Error("panic recovered",
-					slog.Any("panic", rec),
-					slog.String("request_id", requestID),
-					slog.String("stack", string(debug.Stack())),
-				)
+				traceID := logging.TraceIDFromContext(r.Context())
+				p.logger.Error("panic recovered", logging.PanicFields(
+					p.serviceName,
+					requestID,
+					traceID,
+					rec,
+					string(debug.Stack()),
+				)...)
 				w.WriteHeader(http.StatusInternalServerError)
 				fmt.Fprintf(w, "internal server error")
 			}

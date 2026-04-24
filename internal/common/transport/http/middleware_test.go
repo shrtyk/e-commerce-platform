@@ -108,6 +108,7 @@ func TestRequestLogger(t *testing.T) {
 				require.Equal(t, "/users", entry["path"])
 				require.Equal(t, float64(201), entry["status"])
 				require.NotNil(t, entry["duration_ms"])
+				require.Equal(t, "", entry["trace_id"])
 			},
 		},
 		{
@@ -119,6 +120,16 @@ func TestRequestLogger(t *testing.T) {
 				requestID, ok := entry["request_id"].(string)
 				require.True(t, ok)
 				require.NotEmpty(t, requestID)
+				require.Equal(t, "", entry["trace_id"])
+			},
+		},
+		{
+			name: "includes trace id from span context",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}),
+			check: func(t *testing.T, entry map[string]interface{}) {
+				require.Equal(t, "01010101010101010101010101010101", entry["trace_id"])
 			},
 		},
 	}
@@ -144,6 +155,14 @@ func TestRequestLogger(t *testing.T) {
 				path = "/users"
 			}
 			req := httptest.NewRequest(method, path, nil)
+			if tt.name == "includes trace id from span context" {
+				sc := trace.NewSpanContext(trace.SpanContextConfig{
+					TraceID:    trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+					SpanID:     trace.SpanID{2, 2, 2, 2, 2, 2, 2, 2},
+					TraceFlags: trace.FlagsSampled,
+				})
+				req = req.WithContext(trace.ContextWithSpanContext(req.Context(), sc))
+			}
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 
@@ -179,6 +198,8 @@ func TestRecovery(t *testing.T) {
 			check: func(t *testing.T, rec *httptest.ResponseRecorder, entry map[string]interface{}) {
 				require.Equal(t, "panic recovered", entry["msg"])
 				require.Equal(t, "test panic", entry["panic"])
+				require.Equal(t, "test-service", entry["service"])
+				require.Equal(t, "", entry["trace_id"])
 				stack, ok := entry["stack"].(string)
 				require.True(t, ok)
 				require.NotEmpty(t, stack)
@@ -194,6 +215,7 @@ func TestRecovery(t *testing.T) {
 				logRequestID, ok := entry["request_id"].(string)
 				require.True(t, ok)
 				require.Equal(t, requestID, logRequestID)
+				require.Equal(t, "", entry["trace_id"])
 				require.Equal(t, http.StatusInternalServerError, rec.Code)
 			},
 		},

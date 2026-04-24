@@ -2,11 +2,13 @@ package logging
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestNewWithWriterSelectsHandler(t *testing.T) {
@@ -256,6 +258,40 @@ func TestLogLevelFromCfg(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := LogLevelFromCfg(tt.in)
 			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestTraceIDFromContext(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{
+			name: "nil context",
+			ctx:  nil,
+			want: EmptyTraceID,
+		},
+		{
+			name: "missing span context",
+			ctx:  context.Background(),
+			want: EmptyTraceID,
+		},
+		{
+			name: "valid span context",
+			ctx: trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+				TraceID:    trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+				SpanID:     trace.SpanID{2, 2, 2, 2, 2, 2, 2, 2},
+				TraceFlags: trace.FlagsSampled,
+			})),
+			want: "01010101010101010101010101010101",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, TraceIDFromContext(tt.ctx))
 		})
 	}
 }

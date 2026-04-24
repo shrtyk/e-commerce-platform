@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shrtyk/e-commerce-platform/internal/common/logging"
 	"github.com/shrtyk/e-commerce-platform/internal/common/observability"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"go.opentelemetry.io/otel"
@@ -100,15 +101,22 @@ func (p *InterceptorsProvider) UnaryLogging() grpcpkg.UnaryServerInterceptor {
 
 			duration := time.Since(start)
 			requestID := transport.RequestIDFromContext(ctx)
+			traceID := logging.TraceIDFromContext(ctx)
+			_, methodName := parseRPCMethod(info.FullMethod)
 
-			p.logger.Info("request",
-				slog.String("service", p.serviceName),
-				slog.String("path", info.FullMethod),
-				slog.Int("status", int(statusCode)),
-				slog.String("grpc_status", statusCode.String()),
-				slog.Int64("duration_ms", duration.Milliseconds()),
-				slog.String("request_id", requestID),
+			requestFields := logging.RequestFields(
+				p.serviceName,
+				requestID,
+				traceID,
+				methodName,
+				info.FullMethod,
+				int(statusCode),
+				duration.Milliseconds(),
 			)
+
+			p.logger.Info("request", append(requestFields,
+				slog.String(logging.FieldGRPCStatus, statusCode.String()),
+			)...)
 
 			p.requestMetrics.Record(ctx, duration, observability.RequestMetricAttrs{
 				Transport: "grpc",
@@ -231,11 +239,14 @@ func (p *InterceptorsProvider) UnaryRecovery() grpcpkg.UnaryServerInterceptor {
 		defer func() {
 			if rec := recover(); rec != nil {
 				requestID := transport.RequestIDFromContext(ctx)
-				p.logger.Error("panic recovered",
-					slog.Any("panic", rec),
-					slog.String("request_id", requestID),
-					slog.String("stack", string(debug.Stack())),
-				)
+				traceID := logging.TraceIDFromContext(ctx)
+				p.logger.Error("panic recovered", logging.PanicFields(
+					p.serviceName,
+					requestID,
+					traceID,
+					rec,
+					string(debug.Stack()),
+				)...)
 				err = status.Error(grpccodes.Internal, "internal server error")
 				resp = nil
 			}
