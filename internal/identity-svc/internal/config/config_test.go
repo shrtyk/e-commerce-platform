@@ -92,3 +92,57 @@ func TestMustLoadPanicsWhenPasswordPolicyInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestMustLoadPanicsWhenAuthTokenEnvMissing(t *testing.T) {
+	tests := []struct {
+		name   string
+		envKey string
+	}{
+		{name: "access token key missing", envKey: "AUTH_ACCESS_TOKEN_KEY"},
+		{name: "access token issuer missing", envKey: "AUTH_ACCESS_TOKEN_ISSUER"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setBaseRequiredEnv(t)
+			t.Setenv(tt.envKey, "")
+
+			require.Panics(t, func() {
+				_ = config.MustLoad()
+			})
+		})
+	}
+}
+
+func TestMustLoadPanicsWhenAuthTokenEnvWhitespace(t *testing.T) {
+	tests := []struct {
+		name     string
+		envKey   string
+		wantErr  string
+		envValue string
+	}{
+		{
+			name:     "access token key whitespace",
+			envKey:   "AUTH_ACCESS_TOKEN_KEY",
+			envValue: "   ",
+			wantErr:  "field \"Auth.AccessTokenKey\" must be non-empty",
+		},
+		{
+			name:     "access token issuer whitespace",
+			envKey:   "AUTH_ACCESS_TOKEN_ISSUER",
+			envValue: "   ",
+			wantErr:  "field \"Auth.AccessTokenIssuer\" must be non-empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setBaseRequiredEnv(t)
+			t.Setenv(tt.envKey, tt.envValue)
+
+			require.PanicsWithError(t, tt.wantErr, func() {
+				_ = config.MustLoad()
+			})
+		})
+	}
+}

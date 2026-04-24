@@ -2,6 +2,8 @@ package jwt
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	jwtv5 "github.com/golang-jwt/jwt/v5"
@@ -23,6 +25,14 @@ type accessTokenClaims struct {
 }
 
 func NewTokenIssuer(issuer, key string, ttl time.Duration) *TokenIssuer {
+	if strings.TrimSpace(issuer) == "" {
+		panic(fmt.Errorf("field \"TokenIssuer.Issuer\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(key) == "" {
+		panic(fmt.Errorf("field \"TokenIssuer.Key\" must be non-empty"))
+	}
+
 	return &TokenIssuer{
 		issuer: issuer,
 		key:    []byte(key),

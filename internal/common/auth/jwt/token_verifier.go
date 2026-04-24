@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"fmt"
+	"strings"
 
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -21,6 +22,14 @@ type tokenVerifierClaims struct {
 }
 
 func NewTokenVerifier(key, issuer string) *TokenVerifier {
+	if strings.TrimSpace(key) == "" {
+		panic(fmt.Errorf("field \"TokenVerifier.Key\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(issuer) == "" {
+		panic(fmt.Errorf("field \"TokenVerifier.Issuer\" must be non-empty"))
+	}
+
 	return &TokenVerifier{key: []byte(key), issuer: issuer}
 }
 

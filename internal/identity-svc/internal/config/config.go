@@ -21,7 +21,7 @@ type Auth struct {
 	SessionTTL        time.Duration `env:"SESSION_TTL" env-default:"168h"`
 	AccessTokenTTL    time.Duration `env:"ACCESS_TOKEN_TTL" env-default:"15m"`
 	AccessTokenKey    string        `env:"ACCESS_TOKEN_KEY" env-required:"true"`
-	AccessTokenIssuer string        `env:"ACCESS_TOKEN_ISSUER" env-default:"ecom-identity-svc"`
+	AccessTokenIssuer string        `env:"ACCESS_TOKEN_ISSUER" env-required:"true"`
 	PasswordMinLength int           `env:"PASSWORD_MIN_LENGTH" env-default:"8"`
 	BcryptCost        int           `env:"BCRYPT_COST" env-default:"10"`
 }
@@ -56,6 +56,14 @@ func MustLoad() Config {
 
 	if cfg.Auth.BcryptCost < bcrypt.MinCost || cfg.Auth.BcryptCost > bcrypt.MaxCost {
 		panic(fmt.Errorf("field \"Auth.BcryptCost\" must be between %d and %d", bcrypt.MinCost, bcrypt.MaxCost))
+	}
+
+	if strings.TrimSpace(cfg.Auth.AccessTokenKey) == "" {
+		panic(fmt.Errorf("field \"Auth.AccessTokenKey\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(cfg.Auth.AccessTokenIssuer) == "" {
+		panic(fmt.Errorf("field \"Auth.AccessTokenIssuer\" must be non-empty"))
 	}
 
 	return cfg

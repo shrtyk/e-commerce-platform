@@ -47,3 +47,25 @@ func TestTokenIssuerIssueTokenRejectsNilUserID(t *testing.T) {
 	require.ErrorContains(t, err, "user id is nil")
 	require.Empty(t, tokenString)
 }
+
+func TestNewTokenIssuerPanicsWhenSecretOrIssuerInvalid(t *testing.T) {
+	tests := []struct {
+		name    string
+		issuer  string
+		key     string
+		wantErr string
+	}{
+		{name: "empty issuer", issuer: "", key: "secret-key", wantErr: "field \"TokenIssuer.Issuer\" must be non-empty"},
+		{name: "whitespace issuer", issuer: "   ", key: "secret-key", wantErr: "field \"TokenIssuer.Issuer\" must be non-empty"},
+		{name: "empty key", issuer: "identity-svc", key: "", wantErr: "field \"TokenIssuer.Key\" must be non-empty"},
+		{name: "whitespace key", issuer: "identity-svc", key: "   ", wantErr: "field \"TokenIssuer.Key\" must be non-empty"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.PanicsWithError(t, tt.wantErr, func() {
+				_ = NewTokenIssuer(tt.issuer, tt.key, 15*time.Minute)
+			})
+		})
+	}
+}
