@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,10 +17,12 @@ import (
 	"github.com/google/uuid"
 	testifymock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	identityv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/identity/v1"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/shrtyk/e-commerce-platform/internal/common/tx"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/identity-svc/internal/core/ports/outbound"
@@ -517,17 +520,61 @@ func requireCode(t *testing.T, err error, code codes.Code) {
 
 func TestGetProfileInternalErrorLogsOriginalError(t *testing.T) {
 	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+
+	server, deps := newTestIdentityServerWithLogger(t, logger)
+	userID := uuid.New()
+	requestID := "req-identity-1"
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
+		SpanID:     trace.SpanID{4, 4, 4, 4, 4, 4, 4, 4},
+		TraceFlags: trace.FlagsSampled,
+	})
+
+	deps.users.EXPECT().GetByID(testifymock.Anything, userID).Return(domain.User{}, errors.New("db down"))
+
+	ctx := transport.WithRequestID(context.Background(), requestID)
+	ctx = trace.ContextWithSpanContext(ctx, spanContext)
+
+	response, err := server.GetProfile(ctx, &identityv1.GetProfileRequest{UserId: userID.String()})
+	require.Nil(t, response)
+	requireCode(t, err, codes.Internal)
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &entry))
+
+	require.Equal(t, "grpc internal error", entry["msg"])
+	require.Equal(t, "identity-svc", entry["service"])
+	require.Equal(t, requestID, entry["request_id"])
+	require.Equal(t, spanContext.TraceID().String(), entry["trace_id"])
+	require.Equal(t, "GetProfile", entry["method"])
+	require.Equal(t, identityv1.IdentityService_GetProfile_FullMethodName, entry["path"])
+	require.Equal(t, float64(codes.Internal), entry["status"])
+	require.Equal(t, codes.Internal.String(), entry["grpc_status"])
+	require.Equal(t, "get user by id: db down", entry["error"])
+	require.Equal(t, userID.String(), entry["user_id"])
+}
+
+func TestGetProfileInternalErrorLogsFallbackMetadata(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 
 	server, deps := newTestIdentityServerWithLogger(t, logger)
 	userID := uuid.New()
 	deps.users.EXPECT().GetByID(testifymock.Anything, userID).Return(domain.User{}, errors.New("db down"))
 
-	response, err := server.GetProfile(context.Background(), &identityv1.GetProfileRequest{UserId: userID.String()})
-	require.Nil(t, response)
-	requireCode(t, err, codes.Internal)
-	require.Contains(t, logs.String(), "grpc internal error")
-	require.Contains(t, logs.String(), "get user by id: db down")
+	require.NotPanics(t, func() {
+		response, err := server.GetProfile(context.Background(), &identityv1.GetProfileRequest{UserId: userID.String()})
+		require.Nil(t, response)
+		requireCode(t, err, codes.Internal)
+	})
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &entry))
+
+	require.Equal(t, "", entry["request_id"])
+	require.Equal(t, "", entry["trace_id"])
+	require.Equal(t, codes.Internal.String(), entry["grpc_status"])
 }
 
 type testDeps struct {

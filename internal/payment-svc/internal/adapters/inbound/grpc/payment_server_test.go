@@ -1,7 +1,9 @@
 package grpc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -10,9 +12,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
 	commonv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/common/v1"
 	paymentv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/payment/v1"
+	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
 	"github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/core/domain"
 	"github.com/shrtyk/e-commerce-platform/internal/payment-svc/internal/core/service/payment"
 	grpccodes "google.golang.org/grpc/codes"
@@ -113,6 +117,91 @@ func TestPaymentServerInitiatePayment(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, grpccodes.AlreadyExists, status.Code(err))
 	})
+}
+
+func TestPaymentServerInitiatePaymentInternalErrorLogsEnrichedFields(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+
+	requestID := "req-payment-1"
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
+		SpanID:     trace.SpanID{6, 6, 6, 6, 6, 6, 6, 6},
+		TraceFlags: trace.FlagsSampled,
+	})
+
+	ctx := transport.WithRequestID(context.Background(), requestID)
+	ctx = trace.ContextWithSpanContext(ctx, spanContext)
+
+	orderID := uuid.New()
+	server := NewPaymentServer(stubPaymentService{
+		initiatePaymentFunc: func(context.Context, payment.InitiatePaymentInput) (payment.InitiatePaymentResult, error) {
+			return payment.InitiatePaymentResult{}, errors.New("provider timeout")
+		},
+	}, logger)
+
+	resp, err := server.InitiatePayment(ctx, &paymentv1.InitiatePaymentRequest{
+		OrderId: orderID.String(),
+		Amount: &commonv1.Money{
+			Amount:   1000,
+			Currency: "USD",
+		},
+		ProviderName:   "stub",
+		IdempotencyKey: "idem-1",
+	})
+
+	require.Nil(t, resp)
+	require.Error(t, err)
+	require.Equal(t, grpccodes.Internal, status.Code(err))
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &entry))
+
+	require.Equal(t, "grpc internal error", entry["msg"])
+	require.Equal(t, "payment-svc", entry["service"])
+	require.Equal(t, requestID, entry["request_id"])
+	require.Equal(t, spanContext.TraceID().String(), entry["trace_id"])
+	require.Equal(t, "InitiatePayment", entry["method"])
+	require.Equal(t, paymentv1.PaymentService_InitiatePayment_FullMethodName, entry["path"])
+	require.Equal(t, float64(grpccodes.Internal), entry["status"])
+	require.Equal(t, grpccodes.Internal.String(), entry["grpc_status"])
+	require.Equal(t, "provider timeout", entry["error"])
+	require.Equal(t, orderID.String(), entry["order_id"])
+}
+
+func TestPaymentServerInitiatePaymentInternalErrorLogsFallbackMetadata(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+
+	orderID := uuid.New()
+	server := NewPaymentServer(stubPaymentService{
+		initiatePaymentFunc: func(context.Context, payment.InitiatePaymentInput) (payment.InitiatePaymentResult, error) {
+			return payment.InitiatePaymentResult{}, errors.New("provider timeout")
+		},
+	}, logger)
+
+	require.NotPanics(t, func() {
+		resp, err := server.InitiatePayment(context.Background(), &paymentv1.InitiatePaymentRequest{
+			OrderId: orderID.String(),
+			Amount: &commonv1.Money{
+				Amount:   1000,
+				Currency: "USD",
+			},
+			ProviderName:   "stub",
+			IdempotencyKey: "idem-1",
+		})
+
+		require.Nil(t, resp)
+		require.Error(t, err)
+		require.Equal(t, grpccodes.Internal, status.Code(err))
+	})
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &entry))
+
+	require.Equal(t, "", entry["request_id"])
+	require.Equal(t, "", entry["trace_id"])
+	require.Equal(t, grpccodes.Internal.String(), entry["grpc_status"])
 }
 
 type stubPaymentService struct {

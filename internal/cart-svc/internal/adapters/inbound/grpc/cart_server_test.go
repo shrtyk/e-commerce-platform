@@ -1,7 +1,9 @@
 package grpc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -333,6 +336,75 @@ func TestGetCheckoutSnapshot(t *testing.T) {
 			require.Equal(t, int64(2000), response.GetSnapshot().GetItems()[0].GetLineTotal().GetAmount())
 		})
 	}
+}
+
+func TestCartServerRemoveCartItemInternalErrorLogsEnrichedFields(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+
+	userID := uuid.New()
+	requestID := "req-cart-1"
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+		SpanID:     trace.SpanID{2, 2, 2, 2, 2, 2, 2, 2},
+		TraceFlags: trace.FlagsSampled,
+	})
+
+	ctx := withClaims(userID)
+	ctx = transport.WithRequestID(ctx, requestID)
+	ctx = trace.ContextWithSpanContext(ctx, spanContext)
+
+	server := NewCartServer(&fakeCartService{
+		removeCartItemFn: func(context.Context, cart.RemoveCartItemInput) (domain.Cart, error) {
+			return domain.Cart{}, errors.New("storage down")
+		},
+	}, logger)
+
+	response, err := server.RemoveCartItem(ctx, &cartv1.RemoveCartItemRequest{UserId: userID.String(), Sku: "SKU-1"})
+	require.Nil(t, response)
+	requireCode(t, err, codes.Internal)
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &entry))
+
+	require.Equal(t, "grpc internal error", entry["msg"])
+	require.Equal(t, "cart-svc", entry["service"])
+	require.Equal(t, requestID, entry["request_id"])
+	require.Equal(t, spanContext.TraceID().String(), entry["trace_id"])
+	require.Equal(t, "RemoveCartItem", entry["method"])
+	require.Equal(t, cartv1.CartService_RemoveCartItem_FullMethodName, entry["path"])
+	require.Equal(t, float64(codes.Internal), entry["status"])
+	require.Equal(t, codes.Internal.String(), entry["grpc_status"])
+	require.Equal(t, "storage down", entry["error"])
+	require.Equal(t, userID.String(), entry["user_id"])
+	require.Equal(t, "SKU-1", entry["sku"])
+}
+
+func TestCartServerRemoveCartItemInternalErrorLogsFallbackMetadata(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+
+	userID := uuid.New()
+	ctx := transport.WithClaims(context.Background(), transport.Claims{UserID: userID, Role: "user", Status: "active"})
+
+	server := NewCartServer(&fakeCartService{
+		removeCartItemFn: func(context.Context, cart.RemoveCartItemInput) (domain.Cart, error) {
+			return domain.Cart{}, errors.New("storage down")
+		},
+	}, logger)
+
+	require.NotPanics(t, func() {
+		response, err := server.RemoveCartItem(ctx, &cartv1.RemoveCartItemRequest{UserId: userID.String(), Sku: "SKU-1"})
+		require.Nil(t, response)
+		requireCode(t, err, codes.Internal)
+	})
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &entry))
+
+	require.Equal(t, "", entry["request_id"])
+	require.Equal(t, "", entry["trace_id"])
+	require.Equal(t, codes.Internal.String(), entry["grpc_status"])
 }
 
 type fakeCartService struct {
