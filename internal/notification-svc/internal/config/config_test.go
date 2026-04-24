@@ -149,6 +149,36 @@ func TestMustLoad(t *testing.T) {
 		})
 	})
 
+	t.Run("panics on blank policy default channel", func(t *testing.T) {
+		setRequiredEnv(t)
+		t.Setenv("ORDER_EVENTS_ENABLED", "true")
+		t.Setenv("POLICY_DEFAULT_CHANNEL", "   ")
+
+		require.PanicsWithError(t, "field \"Policy.DefaultChannel\" must be non-empty", func() {
+			_ = config.MustLoad()
+		})
+	})
+
+	t.Run("panics on blank policy confirmed template", func(t *testing.T) {
+		setRequiredEnv(t)
+		t.Setenv("ORDER_EVENTS_ENABLED", "true")
+		t.Setenv("POLICY_ORDER_CONFIRMED_TEMPLATE", "")
+
+		require.PanicsWithError(t, "field \"Policy.OrderConfirmedTemplate\" must be non-empty", func() {
+			_ = config.MustLoad()
+		})
+	})
+
+	t.Run("panics on blank policy cancelled template", func(t *testing.T) {
+		setRequiredEnv(t)
+		t.Setenv("ORDER_EVENTS_ENABLED", "true")
+		t.Setenv("POLICY_ORDER_CANCELLED_TEMPLATE", "\t")
+
+		require.PanicsWithError(t, "field \"Policy.OrderCancelledTemplate\" must be non-empty", func() {
+			_ = config.MustLoad()
+		})
+	})
+
 	t.Run("does not validate order events fields when disabled", func(t *testing.T) {
 		setRequiredEnv(t)
 		t.Setenv("ORDER_EVENTS_ENABLED", "false")

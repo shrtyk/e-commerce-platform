@@ -13,6 +13,7 @@ import (
 type Config struct {
 	commoncfg.Config
 	OrderEvents OrderEvents `env-prefix:"ORDER_EVENTS_"`
+	Policy      Policy      `env-prefix:"POLICY_"`
 	Relay       Relay       `env-prefix:"OUTBOX_RELAY_"`
 }
 
@@ -22,6 +23,12 @@ type OrderEvents struct {
 	GroupID          string        `env:"GROUP_ID" env-default:"notification-svc-order-events-v1"`
 	PollInterval     time.Duration `env:"POLL_INTERVAL" env-default:"500ms"`
 	MaxRetryAttempts int           `env:"MAX_RETRY_ATTEMPTS" env-default:"3"`
+}
+
+type Policy struct {
+	DefaultChannel         string `env:"DEFAULT_CHANNEL" env-default:"in_app"`
+	OrderConfirmedTemplate string `env:"ORDER_CONFIRMED_TEMPLATE" env-default:"order %s confirmed"`
+	OrderCancelledTemplate string `env:"ORDER_CANCELLED_TEMPLATE" env-default:"order %s cancelled: %s"`
 }
 
 type Relay struct {
@@ -61,6 +68,18 @@ func MustLoad() Config {
 
 	if cfg.OrderEvents.MaxRetryAttempts < 1 {
 		panic(fmt.Errorf("field \"OrderEvents.MaxRetryAttempts\" must be >= 1"))
+	}
+
+	if strings.TrimSpace(cfg.Policy.DefaultChannel) == "" {
+		panic(fmt.Errorf("field \"Policy.DefaultChannel\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(cfg.Policy.OrderConfirmedTemplate) == "" {
+		panic(fmt.Errorf("field \"Policy.OrderConfirmedTemplate\" must be non-empty"))
+	}
+
+	if strings.TrimSpace(cfg.Policy.OrderCancelledTemplate) == "" {
+		panic(fmt.Errorf("field \"Policy.OrderCancelledTemplate\" must be non-empty"))
 	}
 
 	validateRelay(cfg.Relay)

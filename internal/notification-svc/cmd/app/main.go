@@ -190,6 +190,9 @@ func main() {
 				PollInterval:      cfg.OrderEvents.PollInterval,
 				ConsumerGroupName: cfg.OrderEvents.GroupID,
 				MaxRetryAttempts:  cfg.OrderEvents.MaxRetryAttempts,
+				DefaultChannel:    cfg.Policy.DefaultChannel,
+				ConfirmedTemplate: cfg.Policy.OrderConfirmedTemplate,
+				CancelledTemplate: cfg.Policy.OrderCancelledTemplate,
 			},
 		)
 		if err != nil {

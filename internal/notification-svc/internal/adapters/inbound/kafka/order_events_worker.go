@@ -14,11 +14,8 @@ import (
 )
 
 const (
-	defaultChannel        = "in_app"
 	confirmedTemplateKey  = "order-confirmed"
 	cancelledTemplateKey  = "order-cancelled"
-	confirmedBodyTemplate = "order %s confirmed"
-	cancelledBodyTemplate = "order %s cancelled: %s"
 
 	errorCodeHandleOrderEvent = "NOTIFICATION_HANDLE_ORDER_EVENT_FAILED"
 	errorCodeInvalidPayload   = "NOTIFICATION_INVALID_EVENT_PAYLOAD"
@@ -41,6 +38,9 @@ type OrderEventsWorkerConfig struct {
 	PollInterval      time.Duration
 	ConsumerGroupName string
 	MaxRetryAttempts  int
+	DefaultChannel    string
+	ConfirmedTemplate string
+	CancelledTemplate string
 }
 
 func (c OrderEventsWorkerConfig) Validate() error {
@@ -54,6 +54,18 @@ func (c OrderEventsWorkerConfig) Validate() error {
 
 	if c.MaxRetryAttempts < 1 {
 		return fmt.Errorf("max retry attempts must be >= 1")
+	}
+
+	if strings.TrimSpace(c.DefaultChannel) == "" {
+		return fmt.Errorf("default channel must be non-empty")
+	}
+
+	if strings.TrimSpace(c.ConfirmedTemplate) == "" {
+		return fmt.Errorf("confirmed template must be non-empty")
+	}
+
+	if strings.TrimSpace(c.CancelledTemplate) == "" {
+		return fmt.Errorf("cancelled template must be non-empty")
 	}
 
 	return nil
@@ -228,7 +240,7 @@ func (w *OrderEventsWorker) handleOrderConfirmed(ctx context.Context, consumed c
 		sourceEvent:   "order.confirmed",
 		recipient:     userID,
 		templateKey:   confirmedTemplateKey,
-		body:          fmt.Sprintf(confirmedBodyTemplate, orderID.String()),
+		body:          fmt.Sprintf(w.config.ConfirmedTemplate, orderID.String()),
 	})
 }
 
@@ -262,7 +274,7 @@ func (w *OrderEventsWorker) handleOrderCancelled(ctx context.Context, consumed c
 		sourceEvent:   "order.cancelled",
 		recipient:     userID,
 		templateKey:   cancelledTemplateKey,
-		body:          fmt.Sprintf(cancelledBodyTemplate, orderID.String(), reason),
+		body:          fmt.Sprintf(w.config.CancelledTemplate, orderID.String(), reason),
 	})
 }
 
@@ -284,7 +296,7 @@ func (w *OrderEventsWorker) handleOrderEvent(ctx context.Context, input handleOr
 		SourceEventID:     input.sourceEventID,
 		CorrelationID:     input.correlationID,
 		SourceEventName:   input.sourceEvent,
-		Channel:           defaultChannel,
+		Channel:           w.config.DefaultChannel,
 		Recipient:         input.recipient,
 		TemplateKey:       input.templateKey,
 		Body:              input.body,

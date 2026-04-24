@@ -66,7 +66,10 @@ func TestOrderEventsWorkerTickHandlesOrderConfirmed(t *testing.T) {
 	t.Parallel()
 
 	eventID := uuid.New()
+	orderID := uuid.New()
 	now := time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC)
+	configuredChannel := "email"
+	confirmedTemplate := "custom confirm for %s"
 
 	calledRequest := false
 	commitCalls := 0
@@ -75,7 +78,7 @@ func TestOrderEventsWorkerTickHandlesOrderConfirmed(t *testing.T) {
 		testLogger(),
 		orderEventsConsumerStub{pollFunc: func(context.Context) ([]commonkafka.ConsumedMessage, error) {
 			return []commonkafka.ConsumedMessage{{
-				Message: newOrderConfirmedEvent(eventID.String(), uuid.NewString(), "user-1"),
+				Message: newOrderConfirmedEvent(eventID.String(), orderID.String(), "user-1"),
 			}}, nil
 		}, commitFunc: func(context.Context) error {
 			commitCalls++
@@ -88,16 +91,23 @@ func TestOrderEventsWorkerTickHandlesOrderConfirmed(t *testing.T) {
 				require.Equal(t, eventID.String(), input.CorrelationID)
 				require.Equal(t, "notification-svc-order-events-v1", input.ConsumerGroupName)
 				require.Equal(t, "order.confirmed", input.SourceEventName)
-				require.Equal(t, "in_app", input.Channel)
+				require.Equal(t, configuredChannel, input.Channel)
 				require.Equal(t, "user-1", input.Recipient)
 				require.Equal(t, "order-confirmed", input.TemplateKey)
-				require.Contains(t, input.Body, "confirmed")
+				require.Equal(t, "custom confirm for "+orderID.String(), input.Body)
 				require.Equal(t, now, input.AttemptedAt)
 				return nil
 			},
 		},
 		orderEventsPublisherStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		OrderEventsWorkerConfig{
+			PollInterval:      time.Millisecond,
+			ConsumerGroupName: "notification-svc-order-events-v1",
+			MaxRetryAttempts:  3,
+			DefaultChannel:    configuredChannel,
+			ConfirmedTemplate: confirmedTemplate,
+			CancelledTemplate: "unused %s %s",
+		},
 	)
 	require.NoError(t, err)
 	worker.now = func() time.Time { return now }
@@ -105,6 +115,27 @@ func TestOrderEventsWorkerTickHandlesOrderConfirmed(t *testing.T) {
 	require.NoError(t, worker.Tick(context.Background()))
 	require.True(t, calledRequest)
 	require.Equal(t, 1, commitCalls)
+}
+
+func TestNewOrderEventsWorkerRejectsBlankPolicyConfig(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewOrderEventsWorker(
+		testLogger(),
+		orderEventsConsumerStub{},
+		notificationServiceStub{},
+		orderEventsPublisherStub{},
+		OrderEventsWorkerConfig{
+			PollInterval:      time.Millisecond,
+			ConsumerGroupName: "notification-svc-order-events-v1",
+			MaxRetryAttempts:  3,
+			DefaultChannel:    " ",
+			ConfirmedTemplate: "",
+			CancelledTemplate: "\t",
+		},
+	)
+	require.ErrorContains(t, err, "validate order events worker config")
+	require.ErrorContains(t, err, "default channel must be non-empty")
 }
 
 func TestOrderEventsWorkerTickUsesMetadataCorrelationIDWhenPresent(t *testing.T) {
@@ -129,7 +160,7 @@ func TestOrderEventsWorkerTickUsesMetadataCorrelationIDWhenPresent(t *testing.T)
 			},
 		},
 		orderEventsPublisherStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -160,7 +191,7 @@ func TestOrderEventsWorkerTickUsesEnvelopeCorrelationIDWhenMetadataBlank(t *test
 			},
 		},
 		orderEventsPublisherStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -195,7 +226,7 @@ func TestOrderEventsWorkerTickHandlesOrderCancelled(t *testing.T) {
 			},
 		},
 		orderEventsPublisherStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -229,7 +260,7 @@ func TestOrderEventsWorkerTickIdempotentReplaySkipsProcessedRequest(t *testing.T
 			},
 		},
 		orderEventsPublisherStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -264,7 +295,7 @@ func TestOrderEventsWorkerTickContinuesAfterMalformedPayload(t *testing.T) {
 			},
 		},
 		orderEventsPublisherStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -302,7 +333,7 @@ func TestOrderEventsWorkerTickRepublishesRetryAndCommitsOnServiceError(t *testin
 			published = append(published, envelope)
 			return nil
 		}},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -333,7 +364,7 @@ func TestOrderEventsWorkerTickPollErrorIsRecoverable(t *testing.T) {
 		}},
 		notificationServiceStub{},
 		orderEventsPublisherStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -356,7 +387,7 @@ func TestOrderEventsWorkerTickCommitErrorReturnsError(t *testing.T) {
 		}},
 		notificationServiceStub{},
 		orderEventsPublisherStub{},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -385,7 +416,7 @@ func TestOrderEventsWorkerTickRoutesNonRetriableToDLQAndCommits(t *testing.T) {
 			published = append(published, envelope)
 			return nil
 		}},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -430,7 +461,7 @@ func TestOrderEventsWorkerTickServiceNonRetriableErrorRoutesDLQ(t *testing.T) {
 			published = append(published, envelope)
 			return nil
 		}},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -486,7 +517,7 @@ func TestOrderEventsWorkerTickRetriableAtMaxRoutesDLQAndCommits(t *testing.T) {
 			published = append(published, envelope)
 			return nil
 		}},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -533,7 +564,7 @@ func TestOrderEventsWorkerTickUnsupportedMessageRoutesDLQ(t *testing.T) {
 			published = append(published, envelope)
 			return nil
 		}},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -577,7 +608,7 @@ func TestOrderEventsWorkerTickRepublishFailureSkipsCommit(t *testing.T) {
 		orderEventsPublisherStub{publishFunc: func(context.Context, commonkafka.EventEnvelope) error {
 			return errors.New("publish boom")
 		}},
-		OrderEventsWorkerConfig{PollInterval: time.Millisecond, ConsumerGroupName: "notification-svc-order-events-v1", MaxRetryAttempts: 3},
+		validOrderEventsWorkerConfig(),
 	)
 	require.NoError(t, err)
 
@@ -589,6 +620,17 @@ func TestOrderEventsWorkerTickRepublishFailureSkipsCommit(t *testing.T) {
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func validOrderEventsWorkerConfig() OrderEventsWorkerConfig {
+	return OrderEventsWorkerConfig{
+		PollInterval:      time.Millisecond,
+		ConsumerGroupName: "notification-svc-order-events-v1",
+		MaxRetryAttempts:  3,
+		DefaultChannel:    "in_app",
+		ConfirmedTemplate: "order %s confirmed",
+		CancelledTemplate: "order %s cancelled: %s",
+	}
 }
 
 func newOrderConfirmedEvent(eventID string, orderID string, userID string) *orderv1.OrderConfirmed {

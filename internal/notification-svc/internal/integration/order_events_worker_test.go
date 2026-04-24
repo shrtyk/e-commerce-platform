@@ -384,6 +384,9 @@ func newCleanIntegrationStack(t *testing.T) *integrationStack {
 			PollInterval:      time.Millisecond,
 			ConsumerGroupName: integrationConsumerGroup,
 			MaxRetryAttempts:  3,
+			DefaultChannel:    "in_app",
+			ConfirmedTemplate: "order %s confirmed",
+			CancelledTemplate: "order %s cancelled: %s",
 		},
 	)
 	require.NoError(t, err)
