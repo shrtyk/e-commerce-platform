@@ -65,7 +65,7 @@ func WriteJSON(w http.ResponseWriter, err HTTPError, correlationID string) {
 
 func FromError(err error) HTTPError {
 	if err == nil {
-		return InternalError("unknown")
+		return InternalError("internal_error")
 	}
 
 	if httpErr, ok := errors.AsType[HTTPError](err); ok {
@@ -76,5 +76,5 @@ func FromError(err error) HTTPError {
 		return *httpErrPtr
 	}
 
-	return BadRequest("invalid_request", err.Error())
+	return InternalError("internal_error")
 }

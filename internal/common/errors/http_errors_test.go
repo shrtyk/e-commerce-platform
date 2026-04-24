@@ -3,6 +3,7 @@ package errors
 import (
 	"encoding/json"
 	stdErrors "errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -146,12 +147,25 @@ func TestFromError(t *testing.T) {
 		{
 			name: "unknown",
 			err:  stdErrors.New("boom"),
-			want: BadRequest("invalid_request", "boom"),
+			want: InternalError("internal_error"),
+		},
+		{
+			name: "wrapped http error value",
+			err:  fmt.Errorf("wrap: %w", Conflict("email_already_registered", "email already registered")),
+			want: Conflict("email_already_registered", "email already registered"),
+		},
+		{
+			name: "wrapped http error pointer",
+			err: func() error {
+				httpErr := Unauthorized("invalid_credentials", "invalid credentials")
+				return fmt.Errorf("wrap: %w", &httpErr)
+			}(),
+			want: Unauthorized("invalid_credentials", "invalid credentials"),
 		},
 		{
 			name: "nil",
 			err:  nil,
-			want: InternalError("unknown"),
+			want: InternalError("internal_error"),
 		},
 	}
 
@@ -162,6 +176,10 @@ func TestFromError(t *testing.T) {
 			require.Equal(t, tt.want.Code, got.Code)
 			require.Equal(t, tt.want.Message, got.Message)
 			require.Equal(t, tt.want.HTTPStatus, got.HTTPStatus)
+
+			if tt.name == "unknown" {
+				require.NotEqual(t, tt.err.Error(), got.Message)
+			}
 		})
 	}
 }
