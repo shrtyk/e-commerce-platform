@@ -36,6 +36,7 @@ func TestMustLoad(t *testing.T) {
 		require.Equal(t, 30*time.Second, cfg.Relay.RetryMaxBackoff)
 		require.Equal(t, "payment-svc-relay-1", cfg.Relay.WorkerID)
 		require.Equal(t, 30*time.Second, cfg.Relay.StaleLockTTL)
+		require.Equal(t, "payment.events", cfg.Events.Topic)
 	})
 
 	t.Run("panics when required field is missing", func(t *testing.T) {
@@ -76,6 +77,7 @@ func TestMustLoad(t *testing.T) {
 			{name: "relay base above max", key: "OUTBOX_RELAY_RETRY_BASE_BACKOFF", value: "31s", extra: []string{"OUTBOX_RELAY_RETRY_MAX_BACKOFF=30s"}, wantInErr: "less than or equal"},
 			{name: "relay worker id empty", key: "OUTBOX_RELAY_WORKER_ID", value: "   ", wantInErr: "Relay.WorkerID"},
 			{name: "relay stale lock ttl zero", key: "OUTBOX_RELAY_STALE_LOCK_TTL", value: "0s", wantInErr: "Relay.StaleLockTTL"},
+			{name: "events topic blank", key: "EVENTS_TOPIC", value: "  ", wantInErr: "Events.Topic"},
 		}
 
 		for _, tt := range tests {

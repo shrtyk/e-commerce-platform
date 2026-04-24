@@ -12,7 +12,12 @@ import (
 
 type Config struct {
 	commoncfg.Config
-	Relay Relay `env-prefix:"OUTBOX_RELAY_"`
+	Relay  Relay  `env-prefix:"OUTBOX_RELAY_"`
+	Events Events `env-prefix:"EVENTS_"`
+}
+
+type Events struct {
+	Topic string `env:"TOPIC" env-default:"payment.events"`
 }
 
 type Relay struct {
@@ -60,6 +65,10 @@ func MustLoad() Config {
 
 	if cfg.Relay.StaleLockTTL <= 0 {
 		panic(fmt.Errorf("field \"Relay.StaleLockTTL\" must be positive"))
+	}
+
+	if strings.TrimSpace(cfg.Events.Topic) == "" {
+		panic(fmt.Errorf("field \"Events.Topic\" must be non-empty"))
 	}
 
 	return cfg

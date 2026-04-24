@@ -22,6 +22,40 @@ func TestServiceInitiatePayment(t *testing.T) {
 		require.ErrorContains(t, err, "payment attempts repository is required")
 	})
 
+	t.Run("uses configured events topic", func(t *testing.T) {
+		orderID := uuid.New()
+		attemptID := uuid.New()
+		publisher := &capturingEventPublisher{}
+
+		svc := NewService(stubPaymentAttemptRepository{
+			createInitiatedFunc: func(context.Context, outbound.CreatePaymentAttemptInput) (domain.PaymentAttempt, error) {
+				return domain.PaymentAttempt{
+					PaymentAttemptID: attemptID,
+					OrderID:          orderID,
+					Status:           domain.PaymentStatusInitiated,
+					Amount:           100,
+					Currency:         "USD",
+					ProviderName:     "stub",
+					IdempotencyKey:   "id-topic",
+				}, nil
+			},
+			markProcessingFunc: func(context.Context, uuid.UUID) (domain.PaymentAttempt, error) {
+				return domain.PaymentAttempt{PaymentAttemptID: attemptID, OrderID: orderID, Status: domain.PaymentStatusProcessing, Amount: 100, Currency: "USD", ProviderName: "stub", IdempotencyKey: "id-topic"}, nil
+			},
+			markSucceededFunc: func(context.Context, uuid.UUID, string) (domain.PaymentAttempt, error) {
+				return domain.PaymentAttempt{PaymentAttemptID: attemptID, OrderID: orderID, Status: domain.PaymentStatusSucceeded, ProviderReference: "ok"}, nil
+			},
+		}, publisher, stubPaymentProvider{chargeFunc: func(context.Context, outbound.ChargePaymentInput) (outbound.ChargePaymentResult, error) {
+			return outbound.ChargePaymentResult{ProviderReference: "ok"}, nil
+		}}, "payment-svc").WithEventsTopic("payment.events.custom")
+
+		_, err := svc.InitiatePayment(context.Background(), InitiatePaymentInput{OrderID: orderID, Amount: 100, Currency: "USD", ProviderName: "stub", IdempotencyKey: "id-topic"})
+		require.NoError(t, err)
+		require.Len(t, publisher.events, 2)
+		require.Equal(t, "payment.events.custom", publisher.events[0].Topic)
+		require.Equal(t, "payment.events.custom", publisher.events[1].Topic)
+	})
+
 	t.Run("returns invalid arg when provider missing", func(t *testing.T) {
 		svc := NewService(stubPaymentAttemptRepository{}, stubEventPublisher{}, nil, "payment-svc")
 

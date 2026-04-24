@@ -63,7 +63,8 @@ func main() {
 		defer relayKafkaClient.Close()
 	}
 
-	paymentService := payment.NewService(paymentAttemptRepository, outboxEventPublisher, stubPaymentProvider, cfg.Service.Name)
+	paymentService := payment.NewService(paymentAttemptRepository, outboxEventPublisher, stubPaymentProvider, cfg.Service.Name).
+		WithEventsTopic(cfg.Events.Topic)
 	handler := adapterhttp.NewRouter(logger, cfg.Service.Name, db, tracer)
 	grpcServer := adaptergrpc.NewServer(logger, cfg.Service.Name, paymentService, tracer)
 

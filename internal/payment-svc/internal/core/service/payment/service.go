@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,9 +27,9 @@ const (
 	paymentSucceededEventName = "payment.succeeded"
 	paymentFailedEventName    = "payment.failed"
 
-	paymentEventsTopic    = "payment.events"
-	paymentEventVersionV1 = "1"
-	paymentAggregateType  = "payment_attempt"
+	defaultPaymentEventsTopic = "payment.events"
+	paymentEventVersionV1     = "1"
+	paymentAggregateType      = "payment_attempt"
 )
 
 type InitiatePaymentInput struct {
@@ -48,6 +49,7 @@ type Service struct {
 	publisher       outbound.EventPublisher
 	provider        outbound.PaymentProvider
 	serviceName     string
+	eventsTopic     string
 }
 
 func NewService(
@@ -61,7 +63,20 @@ func NewService(
 		publisher:       publisher,
 		provider:        provider,
 		serviceName:     serviceName,
+		eventsTopic:     defaultPaymentEventsTopic,
 	}
+}
+
+func (s *Service) WithEventsTopic(topic string) *Service {
+	if s == nil {
+		return nil
+	}
+
+	if trimmed := strings.TrimSpace(topic); trimmed != "" {
+		s.eventsTopic = trimmed
+	}
+
+	return s
 }
 
 func (s *Service) InitiatePayment(
@@ -187,7 +202,7 @@ func (s *Service) publishPaymentInitiated(ctx context.Context, attempt domain.Pa
 		SchemaVersion: paymentEventVersionV1,
 		AggregateType: paymentAggregateType,
 		AggregateID:   attempt.PaymentAttemptID.String(),
-		Topic:         paymentEventsTopic,
+		Topic:         s.eventsTopic,
 		Key:           attempt.PaymentAttemptID.String(),
 		Payload: domain.PaymentInitiatedPayload{
 			PaymentAttemptID: attempt.PaymentAttemptID.String(),
@@ -212,7 +227,7 @@ func (s *Service) publishPaymentSucceeded(ctx context.Context, attempt domain.Pa
 		SchemaVersion: paymentEventVersionV1,
 		AggregateType: paymentAggregateType,
 		AggregateID:   attempt.PaymentAttemptID.String(),
-		Topic:         paymentEventsTopic,
+		Topic:         s.eventsTopic,
 		Key:           attempt.PaymentAttemptID.String(),
 		Payload: domain.PaymentSucceededPayload{
 			PaymentAttemptID:  attempt.PaymentAttemptID.String(),
@@ -239,7 +254,7 @@ func (s *Service) publishPaymentFailed(ctx context.Context, attempt domain.Payme
 		SchemaVersion: paymentEventVersionV1,
 		AggregateType: paymentAggregateType,
 		AggregateID:   attempt.PaymentAttemptID.String(),
-		Topic:         paymentEventsTopic,
+		Topic:         s.eventsTopic,
 		Key:           attempt.PaymentAttemptID.String(),
 		Payload: domain.PaymentFailedPayload{
 			PaymentAttemptID: attempt.PaymentAttemptID.String(),
