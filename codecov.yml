@@ -1,0 +1,29 @@
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"
+
+ignore:
+  - "**/*.pb.go"
+  - "**/*.gen.go"
+  - "**/mocks/**"
+  - "**/cmd/**"
+  - "**/internal/app/**"
+  - "**/testhelper/**"
+  - "**/internal/config/**"
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: true
+
+flags:
+  unittests:
+    paths:
+      - internal/common
+      - internal/identity-svc
+      - internal/product-svc
+      - internal/cart-svc
+      - internal/order-svc
+      - internal/payment-svc
+      - internal/notification-svc
