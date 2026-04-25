@@ -26,7 +26,7 @@ COMPOSE_SERVICES := $(COMPOSE_INFRA_SERVICES) $(COMPOSE_DATA_SERVICES) $(COMPOSE
 CHECKOUT_HOST_SERVICE_PORTS := 18081 18082 18083 18084 18085 18086
 CHECKOUT_HOST_SERVICE_LOG_DIR := .local/logs/checkout-host-services
 
-.PHONY: help tools-check tools-install mock-gen proto-check proto-gen-common proto-gen-identity proto-gen-catalog proto-gen-cart proto-gen-order proto-gen-payment proto-gen-notification proto-gen sqlc-gen openapi-lint asyncapi-lint openapi-gen-dto contracts compose-config compose-up compose-up-data compose-up-shared compose-up-observability compose-down compose-logs compose-logs-data compose-logs-shared compose-logs-observability compose-ps migrate-up-checkout-local unit-tests unit-tests-common integration-tests e2e-checkout-up e2e-checkout-down e2e-tests
+.PHONY: help tools-check tools-install mock-gen proto-check proto-gen-common proto-gen-identity proto-gen-catalog proto-gen-cart proto-gen-order proto-gen-payment proto-gen-notification proto-gen sqlc-gen openapi-lint asyncapi-lint openapi-gen-dto contracts compose-config compose-up compose-up-data compose-up-shared compose-up-observability compose-down compose-logs compose-logs-data compose-logs-shared compose-logs-observability compose-ps migrate-up-checkout-local unit-tests unit-tests-common integration-tests lint lint-% e2e-checkout-up e2e-checkout-down e2e-tests
 
 help:
 	@printf "Targets:\n"
@@ -65,6 +65,8 @@ help:
 	@printf "  unit-tests-*             Run unit tests for one service\n"
 	@printf "  integration-tests        Run all integration tests\n"
 	@printf "  integration-tests-*      Run integration tests for one service\n"
+	@printf "  lint                     Run golangci-lint for all services\n"
+	@printf "  lint-*                   Run golangci-lint for one service\n"
 	@printf "  e2e-tests                Run e2e tests\n"
 
 # tools
@@ -165,7 +167,7 @@ compose-up-observability:
 	@$(COMPOSE) $(COMPOSE_FILES) up -d $(COMPOSE_OBSERVABILITY_SERVICES)
 
 compose-down:
-	@$(COMPOSE) $(COMPOSE_FILES) down
+	@$(COMPOSE) $(COMPOSE_FILES) down --volumes
 
 compose-logs:
 	@$(COMPOSE) $(COMPOSE_FILES) logs -f $(COMPOSE_SERVICES)
@@ -208,6 +210,13 @@ integration-tests: $(addprefix integration-tests-,$(SERVICES))
 
 integration-tests-%:
 	@$(MAKE) -C internal/$*-svc integration-tests
+
+# linters
+
+lint: $(addprefix lint-,$(SERVICES))
+
+lint-%:
+	@cd internal/$*-svc && golangci-lint run ./...
 
 # e2e tests
 
