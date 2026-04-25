@@ -19,6 +19,7 @@ import (
 	grpcpkg "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	commonjwt "github.com/shrtyk/e-commerce-platform/internal/common/auth/jwt"
 	cartv1 "github.com/shrtyk/e-commerce-platform/internal/common/gen/proto/cart/v1"
@@ -205,8 +206,8 @@ type FakeCatalogServer struct {
 	productsBySKU map[string]CatalogProduct
 	reserveErr    error
 	releaseErr    error
-	releaseCalls  []catalogv1.ReleaseStockRequest
-	reserveCalls  []catalogv1.ReserveStockRequest
+	releaseCalls  []*catalogv1.ReleaseStockRequest
+	reserveCalls  []*catalogv1.ReserveStockRequest
 }
 
 type CatalogProduct struct {
@@ -244,10 +245,10 @@ func (s *FakeCatalogServer) SetReleaseError(err error) {
 	s.mu.Unlock()
 }
 
-func (s *FakeCatalogServer) ReleaseCalls() []catalogv1.ReleaseStockRequest {
+func (s *FakeCatalogServer) ReleaseCalls() []*catalogv1.ReleaseStockRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := make([]catalogv1.ReleaseStockRequest, len(s.releaseCalls))
+	result := make([]*catalogv1.ReleaseStockRequest, len(s.releaseCalls))
 	copy(result, s.releaseCalls)
 	return result
 }
@@ -276,7 +277,7 @@ func (s *FakeCatalogServer) GetProductBySKU(_ context.Context, req *catalogv1.Ge
 func (s *FakeCatalogServer) ReserveStock(_ context.Context, req *catalogv1.ReserveStockRequest) (*catalogv1.ReserveStockResponse, error) {
 	s.mu.Lock()
 	if req != nil {
-		s.reserveCalls = append(s.reserveCalls, *req)
+		s.reserveCalls = append(s.reserveCalls, proto.Clone(req).(*catalogv1.ReserveStockRequest))
 	}
 	err := s.reserveErr
 	s.mu.Unlock()
@@ -290,7 +291,7 @@ func (s *FakeCatalogServer) ReserveStock(_ context.Context, req *catalogv1.Reser
 func (s *FakeCatalogServer) ReleaseStock(_ context.Context, req *catalogv1.ReleaseStockRequest) (*catalogv1.ReleaseStockResponse, error) {
 	s.mu.Lock()
 	if req != nil {
-		s.releaseCalls = append(s.releaseCalls, *req)
+		s.releaseCalls = append(s.releaseCalls, proto.Clone(req).(*catalogv1.ReleaseStockRequest))
 	}
 	err := s.releaseErr
 	s.mu.Unlock()
@@ -315,7 +316,7 @@ type FakePaymentServer struct {
 	mu         sync.Mutex
 	nextResult *paymentv1.PaymentAttempt
 	nextErr    error
-	requests   []paymentv1.InitiatePaymentRequest
+	requests   []*paymentv1.InitiatePaymentRequest
 }
 
 func NewFakePaymentServer() *FakePaymentServer {
@@ -329,10 +330,10 @@ func (s *FakePaymentServer) SetResult(result *paymentv1.PaymentAttempt, err erro
 	s.mu.Unlock()
 }
 
-func (s *FakePaymentServer) Requests() []paymentv1.InitiatePaymentRequest {
+func (s *FakePaymentServer) Requests() []*paymentv1.InitiatePaymentRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := make([]paymentv1.InitiatePaymentRequest, len(s.requests))
+	result := make([]*paymentv1.InitiatePaymentRequest, len(s.requests))
 	copy(result, s.requests)
 	return result
 }
@@ -340,7 +341,7 @@ func (s *FakePaymentServer) Requests() []paymentv1.InitiatePaymentRequest {
 func (s *FakePaymentServer) InitiatePayment(_ context.Context, req *paymentv1.InitiatePaymentRequest) (*paymentv1.InitiatePaymentResponse, error) {
 	s.mu.Lock()
 	if req != nil {
-		s.requests = append(s.requests, *req)
+		s.requests = append(s.requests, proto.Clone(req).(*paymentv1.InitiatePaymentRequest))
 	}
 	result := s.nextResult
 	err := s.nextErr

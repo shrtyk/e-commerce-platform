@@ -187,7 +187,7 @@ func (p *MiddlewaresProvider) Recovery(next http.Handler) http.Handler {
 					string(debug.Stack()),
 				)...)
 				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, "internal server error")
+				_, _ = fmt.Fprint(w, "internal server error")
 			}
 		}()
 		next.ServeHTTP(w, r)

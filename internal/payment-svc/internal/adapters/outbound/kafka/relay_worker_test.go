@@ -59,18 +59,6 @@ func (s *repositoryStub) MarkDead(ctx context.Context, params commonoutbox.MarkD
 	return s.markDeadFunc(ctx, params)
 }
 
-type publisherStub struct {
-	publishFunc func(ctx context.Context, record commonoutbox.Record) error
-}
-
-func (s *publisherStub) Publish(ctx context.Context, record commonoutbox.Record) error {
-	if s.publishFunc == nil {
-		return nil
-	}
-
-	return s.publishFunc(ctx, record)
-}
-
 func TestNewRelayWorkerRejectsNilPublisher(t *testing.T) {
 	_, err := NewRelayWorker(&repositoryStub{}, nil, RelayConfig{
 		BatchSize:        50,

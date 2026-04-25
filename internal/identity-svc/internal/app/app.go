@@ -92,7 +92,11 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	if a.Database != nil {
-		defer a.Database.Close()
+		defer func() {
+			if err := a.Database.Close(); err != nil {
+				a.Logger.Warn("close database", "error", err)
+			}
+		}()
 	}
 
 	g, runCtx := errgroup.WithContext(ctx)

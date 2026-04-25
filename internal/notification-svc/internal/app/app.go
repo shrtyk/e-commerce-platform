@@ -107,7 +107,11 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	if a.Database != nil {
-		defer a.Database.Close()
+		defer func() {
+			if err := a.Database.Close(); err != nil {
+				a.Logger.Warn("close database", "error", err)
+			}
+		}()
 	}
 
 	httpServer := &http.Server{
@@ -123,7 +127,11 @@ func (a *Application) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen grpc: %w", err)
 	}
-	defer grpcListener.Close()
+	defer func() {
+		if err := grpcListener.Close(); err != nil {
+			a.Logger.Warn("close grpc listener", "error", err)
+		}
+	}()
 
 	serverErrCh := make(chan error, len(a.Workers)+2)
 	var wg sync.WaitGroup

@@ -249,7 +249,9 @@ func doRequestOnceWithHeaders(
 
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -312,7 +314,11 @@ func TestGatewayRateLimitingOnProductsRouteReturnsExpected429Contract(t *testing
 					results <- requestResult{err: fmt.Errorf("execute request: %w", err)}
 					return
 				}
-				defer resp.Body.Close()
+				defer func() {
+					if closeErr := resp.Body.Close(); closeErr != nil {
+						results <- requestResult{err: fmt.Errorf("close response body: %w", closeErr)}
+					}
+				}()
 
 				responseBody, err := io.ReadAll(resp.Body)
 				if err != nil {
@@ -410,28 +416,6 @@ func assertRouteStatus(
 	require.Equalf(t, wantStatus, statusCode, "%s %s expected %d got %d body=%q", method, requestURL, wantStatus, statusCode, responseBody)
 }
 
-func assertRouteStatusAndJSONShape(
-	t *testing.T,
-	client *http.Client,
-	method, requestURL string,
-	body any,
-	headers map[string]string,
-	wantStatus int,
-	requiredFields []string) {
-	t.Helper()
-
-	statusCode, responseBody := doRequest(t, client, method, requestURL, body, headers, wantStatus)
-	require.Equalf(t, wantStatus, statusCode, "%s %s expected %d got %d body=%q", method, requestURL, wantStatus, statusCode, responseBody)
-
-	var envelope map[string]any
-	require.NoErrorf(t, json.Unmarshal([]byte(responseBody), &envelope), "%s %s response must be valid JSON object", method, requestURL)
-
-	for _, key := range requiredFields {
-		_, ok := envelope[key]
-		require.Truef(t, ok, "%s %s response must include %q field; body=%q", method, requestURL, key, responseBody)
-	}
-}
-
 func assertRouteJSONErrorCode(
 	t *testing.T,
 	client *http.Client,
@@ -489,10 +473,7 @@ func doRequestWithHeaders(
 	var finalBody []byte
 	var finalHeaders http.Header
 
-	for {
-		if !time.Now().Before(deadline) {
-			break
-		}
+	for time.Now().Before(deadline) {
 
 		var bodyReader io.Reader
 		if requestBody != nil {

@@ -381,15 +381,27 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	if a.Database != nil {
-		defer a.Database.Close()
+		defer func() {
+			if err := a.Database.Close(); err != nil {
+				a.Logger.Warn("close database", "error", err)
+			}
+		}()
 	}
 
 	if a.Redis != nil {
-		defer a.Redis.Close()
+		defer func() {
+			if err := a.Redis.Close(); err != nil {
+				a.Logger.Warn("close redis", "error", err)
+			}
+		}()
 	}
 
 	if a.CatalogConn != nil {
-		defer a.CatalogConn.Close()
+		defer func() {
+			if err := a.CatalogConn.Close(); err != nil {
+				a.Logger.Warn("close catalog conn", "error", err)
+			}
+		}()
 	}
 
 	httpServer, httpErrCh := runHTTPServer(*a.Config, a.Handler)

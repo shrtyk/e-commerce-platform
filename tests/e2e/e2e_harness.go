@@ -418,12 +418,6 @@ func (h e2eHarness) waitForOrderConfirmed(t *testing.T, shopperToken, orderID st
 	h.waitForOrderStatus(t, shopperToken, orderID, "confirmed")
 }
 
-func (h e2eHarness) waitForOrderCancelled(t *testing.T, shopperToken, orderID string) {
-	t.Helper()
-
-	h.waitForOrderStatus(t, shopperToken, orderID, "cancelled")
-}
-
 func (h e2eHarness) waitForOrderStatus(t *testing.T, shopperToken, orderID, wantStatus string) {
 	t.Helper()
 
@@ -558,10 +552,7 @@ func doJSON[T any](t *testing.T, client *http.Client, spec requestSpec) T {
 	var finalStatus int
 	var finalBody []byte
 
-	for {
-		if !time.Now().Before(deadline) {
-			break
-		}
+	for time.Now().Before(deadline) {
 
 		attempt++
 

@@ -1019,15 +1019,7 @@ func (s *Service) validateInput(input CheckoutInput) error {
 func toCreateOrderInput(userID uuid.UUID, idempotencyKey string, paymentMethod string, snapshot outbound.CheckoutSnapshot) outbound.CreateOrderInput {
 	items := make([]outbound.CreateOrderItemInput, 0, len(snapshot.Items))
 	for _, item := range snapshot.Items {
-		items = append(items, outbound.CreateOrderItemInput{
-			ProductID: item.ProductID,
-			SKU:       item.SKU,
-			Name:      item.Name,
-			Quantity:  item.Quantity,
-			UnitPrice: item.UnitPrice,
-			LineTotal: item.LineTotal,
-			Currency:  item.Currency,
-		})
+		items = append(items, outbound.CreateOrderItemInput(item))
 	}
 
 	return outbound.CreateOrderInput{
@@ -1062,11 +1054,7 @@ func toReserveStockInput(orderID uuid.UUID, userID uuid.UUID, snapshot outbound.
 func toReleaseStockInput(input outbound.ReserveStockInput) outbound.ReleaseStockInput {
 	items := make([]outbound.ReleaseStockItem, 0, len(input.Items))
 	for _, item := range input.Items {
-		items = append(items, outbound.ReleaseStockItem{
-			ProductID: item.ProductID,
-			SKU:       item.SKU,
-			Quantity:  item.Quantity,
-		})
+		items = append(items, outbound.ReleaseStockItem(item))
 	}
 
 	return outbound.ReleaseStockInput{

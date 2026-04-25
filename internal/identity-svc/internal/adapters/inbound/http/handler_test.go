@@ -478,7 +478,7 @@ func (p testTxProvider) WithTransaction(
 	_ *sql.TxOptions,
 	fn func(uow tx.UnitOfWork[auth.IdentityRepos]) error,
 ) error {
-	return fn(testUnitOfWork{repos: p.repos})
+	return fn(testUnitOfWork(p))
 }
 
 type testUnitOfWork struct {

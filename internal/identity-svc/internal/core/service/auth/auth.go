@@ -352,11 +352,6 @@ func isPasswordLengthValid(password string, minPasswordLength int) bool {
 	return passwordLength >= minPasswordLength && passwordLength <= maxPasswordLength
 }
 
-// createSession creates a session using the default (non-tx) repository.
-func (s *AuthService) createSession(ctx context.Context, userID uuid.UUID) (string, error) {
-	return s.createSessionWithRepository(ctx, s.repos.Sessions, userID)
-}
-
 // createSessionWithRepository creates a session using the provided repository.
 // Accepts the repo which will be used in tx provider callback.
 func (s *AuthService) createSessionWithRepository(
