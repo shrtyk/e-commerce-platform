@@ -17,6 +17,7 @@ services:
       start_period: 15s
     restart: unless-stopped
     networks:
+      - default
       - observability
 
   prometheus:
@@ -92,4 +93,5 @@ services:
       - observability
 
 networks:
+  default:
   observability:

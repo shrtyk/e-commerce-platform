@@ -3,10 +3,10 @@ package observability
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/sdk/metric"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/shrtyk/e-commerce-platform/internal/common/config"
@@ -18,7 +18,7 @@ func MustCreateMeterProvider(cfg config.OTel, serviceName string) *metric.MeterP
 	}
 
 	if cfg.Insecure {
-		options = append(options, otlpmetricgrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+		options = append(options, otlpmetricgrpc.WithTLSCredentials(insecure.NewCredentials()))
 	}
 
 	exporter, err := otlpmetricgrpc.New(context.Background(), options...)
@@ -27,7 +27,7 @@ func MustCreateMeterProvider(cfg config.OTel, serviceName string) *metric.MeterP
 	}
 
 	return metric.NewMeterProvider(
-		metric.WithReader(metric.NewPeriodicReader(exporter)),
+		metric.WithReader(metric.NewPeriodicReader(exporter, metric.WithInterval(15*time.Second))),
 		metric.WithResource(newResource(serviceName)),
 	)
 }

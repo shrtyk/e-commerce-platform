@@ -65,7 +65,15 @@ services:
         "kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists
           --topic payment.events --partitions 1 --replication-factor 1 &&
           kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists
-          --topic order.events --partitions 1 --replication-factor 1",
+          --topic payment.events.retry --partitions 1 --replication-factor 1 &&
+          kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists
+          --topic payment.events.dlq --partitions 1 --replication-factor 1 &&
+          kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists
+          --topic order.events --partitions 1 --replication-factor 1 &&
+          kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists
+          --topic order.events.retry --partitions 1 --replication-factor 1 &&
+          kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists
+          --topic order.events.dlq --partitions 1 --replication-factor 1",
       ]
     restart: "no"
 
