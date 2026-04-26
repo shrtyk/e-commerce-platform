@@ -8,7 +8,7 @@ services:
     ports:
       - "${NOTIFICATION_POSTGRES_PORT:-5438}:5432"
     volumes:
-      - notification-postgres-data:/var/lib/postgresql/data
+      - notification-postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s

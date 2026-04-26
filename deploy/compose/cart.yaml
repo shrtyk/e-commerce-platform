@@ -8,7 +8,7 @@ services:
     ports:
       - "${CART_POSTGRES_PORT:-5435}:5432"
     volumes:
-      - cart-postgres-data:/var/lib/postgresql/data
+      - cart-postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
