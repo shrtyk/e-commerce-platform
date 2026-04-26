@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/render"
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
 	"github.com/shrtyk/e-commerce-platform/internal/cart-svc/internal/adapters/inbound/http/dto"
@@ -20,6 +21,7 @@ type CartHandler struct {
 	dto.Unimplemented
 
 	cartService cartService
+	validator   *validator.Validate
 }
 
 type cartService interface {
@@ -30,7 +32,10 @@ type cartService interface {
 }
 
 func NewCartHandler(cartService cartService) *CartHandler {
-	return &CartHandler{cartService: cartService}
+	return &CartHandler{
+		cartService: cartService,
+		validator:   validator.New(validator.WithRequiredStructEnabled()),
+	}
 }
 
 func (h *CartHandler) Healthz(w http.ResponseWriter, _ *http.Request) {
@@ -71,6 +76,10 @@ func (h *CartHandler) AddCartItem(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
 		return
 	}
+	if err := h.validator.Struct(request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
 
 	result, err := h.cartService.AddCartItem(r.Context(), cart.AddCartItemInput{
 		UserID:   claims.UserID,
@@ -95,6 +104,10 @@ func (h *CartHandler) UpdateCartItem(w http.ResponseWriter, r *http.Request, sku
 
 	var request dto.UpdateCartItemRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+	if err := h.validator.Struct(request); err != nil {
 		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
 		return
 	}

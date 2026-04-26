@@ -89,6 +89,28 @@ func TestAddCartItem(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid request body when sku empty",
+			body: `{"sku":"","quantity":2}`,
+			setup: func(_ *testing.T, _ *fakeCartService) {
+			},
+			statusCode: http.StatusBadRequest,
+			errorCode:  "invalid_request",
+			assert: func(t *testing.T, svc *fakeCartService, _ []byte) {
+				require.Equal(t, 0, svc.addCartItemCalls)
+			},
+		},
+		{
+			name: "invalid request body when quantity is zero",
+			body: `{"sku":"SKU-1","quantity":0}`,
+			setup: func(_ *testing.T, _ *fakeCartService) {
+			},
+			statusCode: http.StatusBadRequest,
+			errorCode:  "invalid_request",
+			assert: func(t *testing.T, svc *fakeCartService, _ []byte) {
+				require.Equal(t, 0, svc.addCartItemCalls)
+			},
+		},
+		{
 			name: "success",
 			body: `{"sku":"SKU-1","quantity":2}`,
 			setup: func(t *testing.T, svc *fakeCartService) {
@@ -180,6 +202,9 @@ func TestAddCartItem(t *testing.T) {
 			var response dto.ErrorResponse
 			require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
 			require.Equal(t, tt.errorCode, response.Code)
+			if tt.errorCode == "invalid_request" {
+				require.Equal(t, "invalid request body", response.Message)
+			}
 		})
 	}
 }
@@ -198,6 +223,17 @@ func TestUpdateCartItem(t *testing.T) {
 		{
 			name: "invalid request body",
 			body: `{"quantity":`,
+			setup: func(_ *testing.T, _ *fakeCartService) {
+			},
+			statusCode: http.StatusBadRequest,
+			errorCode:  "invalid_request",
+			assert: func(t *testing.T, svc *fakeCartService, _ []byte) {
+				require.Equal(t, 0, svc.updateCartItemCalls)
+			},
+		},
+		{
+			name: "invalid request body when quantity is zero",
+			body: `{"quantity":0}`,
 			setup: func(_ *testing.T, _ *fakeCartService) {
 			},
 			statusCode: http.StatusBadRequest,
@@ -296,6 +332,9 @@ func TestUpdateCartItem(t *testing.T) {
 			var response dto.ErrorResponse
 			require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
 			require.Equal(t, tt.errorCode, response.Code)
+			if tt.errorCode == "invalid_request" {
+				require.Equal(t, "invalid request body", response.Message)
+			}
 		})
 	}
 }
