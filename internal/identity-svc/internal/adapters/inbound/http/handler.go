@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/render"
+	"github.com/go-playground/validator/v10"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	commonerrors "github.com/shrtyk/e-commerce-platform/internal/common/errors"
@@ -18,10 +19,14 @@ type IdentityHandler struct {
 	dto.Unimplemented
 
 	authService *auth.AuthService
+	validator   *validator.Validate
 }
 
 func NewIdentityHandler(authService *auth.AuthService) *IdentityHandler {
-	return &IdentityHandler{authService: authService}
+	return &IdentityHandler{
+		authService: authService,
+		validator:   validator.New(validator.WithRequiredStructEnabled()),
+	}
 }
 
 func (h *IdentityHandler) Healthz(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +41,10 @@ func (h *IdentityHandler) HandleOpenAPIError(w http.ResponseWriter, r *http.Requ
 func (h *IdentityHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	var request dto.RegisterRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+	if err := h.validator.Struct(request); err != nil {
 		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
 		return
 	}
@@ -63,6 +72,10 @@ func (h *IdentityHandler) RegisterAdmin(w http.ResponseWriter, r *http.Request) 
 		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
 		return
 	}
+	if err := h.validator.Struct(request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
 
 	result, err := h.authService.RegisterAdmin(r.Context(), auth.RegisterUserInput{
 		Email:       string(request.Email),
@@ -87,6 +100,10 @@ func (h *IdentityHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
 		return
 	}
+	if err := h.validator.Struct(request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
 
 	result, err := h.authService.LoginUser(r.Context(), auth.LoginUserInput{
 		Email:    string(request.Email),
@@ -107,6 +124,10 @@ func (h *IdentityHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 func (h *IdentityHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var request dto.RefreshTokenRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+	if err := h.validator.Struct(request); err != nil {
 		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
 		return
 	}
@@ -158,6 +179,10 @@ func (h *IdentityHandler) UpdateMyProfile(w http.ResponseWriter, r *http.Request
 
 	var request dto.UpdateProfileRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		return
+	}
+	if err := h.validator.Struct(request); err != nil {
 		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
 		return
 	}

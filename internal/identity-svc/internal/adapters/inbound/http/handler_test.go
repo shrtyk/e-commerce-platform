@@ -359,6 +359,127 @@ func TestRefreshToken(t *testing.T) {
 	}
 }
 
+func TestRegisterUserValidationInvalidEmail(t *testing.T) {
+	fixture := newAuthFixture(t)
+	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, nil, noop.NewTracerProvider().Tracer("test-service"))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/register", strings.NewReader(`{"email":"invalid-email","password":"super-secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+
+	h.ServeHTTP(res, req)
+
+	require.Equal(t, http.StatusBadRequest, res.Code)
+
+	var response dto.ErrorResponse
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
+	require.Equal(t, "invalid_request", response.Code)
+	require.Equal(t, "invalid request body", response.Message)
+
+	fixture.hasher.AssertNotCalled(t, "Hash", testifymock.Anything)
+	fixture.users.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	fixture.sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	fixture.tokens.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRegisterAdminValidationPasswordTooShort(t *testing.T) {
+	fixture := newAuthFixture(t)
+	tokenVerifier := &stubTokenVerifier{
+		claims: transport.Claims{UserID: uuid.New(), Role: string(domain.UserRoleAdmin), Status: string(domain.UserStatusActive)},
+	}
+	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, tokenVerifier, noop.NewTracerProvider().Tracer("test-service"))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/register-admin", strings.NewReader(`{"email":"admin@example.com","password":"short"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer admin-token")
+	res := httptest.NewRecorder()
+
+	h.ServeHTTP(res, req)
+
+	require.Equal(t, http.StatusBadRequest, res.Code)
+
+	var response dto.ErrorResponse
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
+	require.Equal(t, "invalid_request", response.Code)
+	require.Equal(t, "invalid request body", response.Message)
+
+	fixture.hasher.AssertNotCalled(t, "Hash", testifymock.Anything)
+	fixture.users.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	fixture.sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	fixture.tokens.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestLoginUserValidationInvalidEmail(t *testing.T) {
+	fixture := newAuthFixture(t)
+	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, nil, noop.NewTracerProvider().Tracer("test-service"))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"invalid-email","password":"super-secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+
+	h.ServeHTTP(res, req)
+
+	require.Equal(t, http.StatusBadRequest, res.Code)
+
+	var response dto.ErrorResponse
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
+	require.Equal(t, "invalid_request", response.Code)
+	require.Equal(t, "invalid request body", response.Message)
+
+	fixture.users.AssertNotCalled(t, "GetByEmail", testifymock.Anything, testifymock.Anything)
+	fixture.hasher.AssertNotCalled(t, "Verify", testifymock.Anything, testifymock.Anything)
+	fixture.sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	fixture.tokens.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestRefreshTokenValidationEmptyToken(t *testing.T) {
+	fixture := newAuthFixture(t)
+	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, nil, noop.NewTracerProvider().Tracer("test-service"))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", strings.NewReader(`{"refreshToken":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+
+	h.ServeHTTP(res, req)
+
+	require.Equal(t, http.StatusBadRequest, res.Code)
+
+	var response dto.ErrorResponse
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
+	require.Equal(t, "invalid_request", response.Code)
+	require.Equal(t, "invalid request body", response.Message)
+
+	fixture.sessions.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	fixture.sessions.AssertNotCalled(t, "Revoke", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+	fixture.sessions.AssertNotCalled(t, "Create", testifymock.Anything, testifymock.Anything)
+	fixture.users.AssertNotCalled(t, "GetByID", testifymock.Anything, testifymock.Anything)
+	fixture.tokens.AssertNotCalled(t, "IssueToken", testifymock.Anything)
+}
+
+func TestUpdateMyProfileValidationInvalidDisplayName(t *testing.T) {
+	fixture := newAuthFixture(t)
+	tokenVerifier := &stubTokenVerifier{
+		claims: transport.Claims{UserID: uuid.New(), Role: string(domain.UserRoleUser), Status: string(domain.UserStatusActive)},
+	}
+	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, tokenVerifier, noop.NewTracerProvider().Tracer("test-service"))
+
+	req := httptest.NewRequest(http.MethodPatch, "/v1/profile/me", strings.NewReader(`{"displayName":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer user-token")
+	res := httptest.NewRecorder()
+
+	h.ServeHTTP(res, req)
+
+	require.Equal(t, http.StatusBadRequest, res.Code)
+
+	var response dto.ErrorResponse
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
+	require.Equal(t, "invalid_request", response.Code)
+	require.Equal(t, "invalid request body", response.Message)
+
+	fixture.users.AssertNotCalled(t, "Update", testifymock.Anything, testifymock.Anything, testifymock.Anything)
+}
+
 func TestHandlerRoutes(t *testing.T) {
 	fixture := newAuthFixture(t)
 	h := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-service", fixture.service, nil, noop.NewTracerProvider().Tracer("test-service"))
