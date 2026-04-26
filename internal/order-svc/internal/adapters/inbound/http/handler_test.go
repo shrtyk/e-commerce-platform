@@ -121,6 +121,22 @@ func TestOrderHandlerCreateOrder(t *testing.T) {
 			responseCode: string(checkout.CheckoutErrorCodeInvalidArgument),
 		},
 		{
+			name:         "invalid payment method empty string",
+			context:      withClaimsAndRequestID(userID),
+			headers:      map[string]string{"Idempotency-Key": "idem-empty-payment"},
+			body:         `{"paymentMethod":""}`,
+			statusWant:   http.StatusBadRequest,
+			responseCode: string(checkout.CheckoutErrorCodeInvalidArgument),
+		},
+		{
+			name:         "invalid payment method too long",
+			context:      withClaimsAndRequestID(userID),
+			headers:      map[string]string{"Idempotency-Key": "idem-long-payment"},
+			body:         `{"paymentMethod":"` + strings.Repeat("x", 51) + `"}`,
+			statusWant:   http.StatusBadRequest,
+			responseCode: string(checkout.CheckoutErrorCodeInvalidArgument),
+		},
+		{
 			name:    "maps not found code",
 			context: withClaimsAndRequestID(userID),
 			headers: map[string]string{"Idempotency-Key": "idem-2"},

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/render"
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	commonerrors "github.com/shrtyk/e-commerce-platform/internal/common/errors"
 	"github.com/shrtyk/e-commerce-platform/internal/common/transport"
@@ -35,6 +36,7 @@ type OrderHandler struct {
 	readinessChecker readinessChecker
 	readinessTimeout time.Duration
 	checkoutService  checkoutService
+	validator        *validator.Validate
 }
 
 func NewOrderHandler(readinessChecker readinessChecker, readinessTimeout time.Duration, checkoutService checkoutService) *OrderHandler {
@@ -46,6 +48,7 @@ func NewOrderHandler(readinessChecker readinessChecker, readinessTimeout time.Du
 		readinessChecker: readinessChecker,
 		readinessTimeout: readinessTimeout,
 		checkoutService:  checkoutService,
+		validator:        validator.New(validator.WithRequiredStructEnabled()),
 	}
 }
 
@@ -95,6 +98,11 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 	var request dto.CreateOrderRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
+		h.writeError(w, r, commonerrors.BadRequest(string(checkout.CheckoutErrorCodeInvalidArgument), "invalid request body"))
+		return
+	}
+
+	if err := h.validator.Struct(request); err != nil {
 		h.writeError(w, r, commonerrors.BadRequest(string(checkout.CheckoutErrorCodeInvalidArgument), "invalid request body"))
 		return
 	}
