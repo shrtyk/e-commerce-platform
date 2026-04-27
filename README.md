@@ -31,6 +31,8 @@ The focus is not on e-commerce itself, but on building and evolving a distribute
 - Observability: `OpenTelemetry`, `Prometheus`, `Grafana`, `Loki`, `Tempo`
 - Local runtime: `Docker Compose`
 
+![Architecture Diagram](.github/architecture_diagram.png)
+
 ## Runtime Components
 
 The platform currently includes the following core services:
@@ -228,3 +230,7 @@ For a quick orientation, start with:
 ## License
 
 See `LICENSE`.
+
+## Inspiration
+
+This project is inspired by the [scalable e-commerce platform challenge](https://roadmap.sh/projects/scalable-ecommerce-platform).
