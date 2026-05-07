@@ -69,7 +69,7 @@ func (h *CatalogHandler) Healthz(w http.ResponseWriter, _ *http.Request) {
 func (h *CatalogHandler) GetProductById(w http.ResponseWriter, r *http.Request, productID dto.ProductId) {
 	id, err := uuid.Parse(productID)
 	if err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid product id"))
+		h.writeError(w, r, errInvalidProductID())
 		return
 	}
 
@@ -107,13 +107,13 @@ func (h *CatalogHandler) ListPublishedProducts(w http.ResponseWriter, r *http.Re
 }
 
 func (h *CatalogHandler) HandleOpenAPIError(w http.ResponseWriter, r *http.Request, _ error) {
-	h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request parameters"))
+	h.writeError(w, r, errInvalidRequestParameters())
 }
 
 func (h *CatalogHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	var request dto.CreateProductRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -135,48 +135,48 @@ func (h *CatalogHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 func (h *CatalogHandler) UpdateProductById(w http.ResponseWriter, r *http.Request, productID dto.ProductId) {
 	id, err := uuid.Parse(productID)
 	if err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid product id"))
+		h.writeError(w, r, errInvalidProductID())
 		return
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.config.PatchMaxBodySizeByte+1))
 	if err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
 	if int64(len(body)) > h.config.PatchMaxBodySizeByte {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
 	if rawCategoryID, ok := raw["categoryId"]; ok {
 		if string(rawCategoryID) == "null" {
-			h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid category id"))
+			h.writeError(w, r, errInvalidCategoryID())
 			return
 		}
 
 		var categoryID string
 		if err := json.Unmarshal(rawCategoryID, &categoryID); err != nil {
-			h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid category id"))
+			h.writeError(w, r, errInvalidCategoryID())
 			return
 		}
 
 		if strings.TrimSpace(categoryID) == "" {
-			h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid category id"))
+			h.writeError(w, r, errInvalidCategoryID())
 			return
 		}
 	}
 
 	var request dto.UpdateProductRequest
 	if err := json.Unmarshal(body, &request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -198,7 +198,7 @@ func (h *CatalogHandler) UpdateProductById(w http.ResponseWriter, r *http.Reques
 func (h *CatalogHandler) DeleteProductById(w http.ResponseWriter, r *http.Request, productID dto.ProductId) {
 	id, err := uuid.Parse(productID)
 	if err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid product id"))
+		h.writeError(w, r, errInvalidProductID())
 		return
 	}
 
@@ -236,7 +236,7 @@ func mapServiceError(err error) error {
 		errors.Is(err, catalog.ErrInvalidUpdateProductInput),
 		errors.Is(err, outbound.ErrInvalidCurrency),
 		errors.Is(err, outbound.ErrInvalidStockUpdate):
-		return commonerrors.BadRequest("invalid_request", "invalid request")
+		return errInvalidRequest()
 	default:
 		return commonerrors.InternalError("internal_error")
 	}
@@ -245,12 +245,12 @@ func mapServiceError(err error) error {
 func toCreateProductInput(request dto.CreateProductRequest) (catalog.CreateProductInput, error) {
 	currencyCode := strings.TrimSpace(request.CurrencyCode)
 	if currencyCode == "" {
-		return catalog.CreateProductInput{}, commonerrors.BadRequest("invalid_request", "invalid currency")
+		return catalog.CreateProductInput{}, errInvalidCurrency()
 	}
 
 	categoryID, err := parseOptionalOpenAPIUUID(request.CategoryId)
 	if err != nil {
-		return catalog.CreateProductInput{}, commonerrors.BadRequest("invalid_request", "invalid category id")
+		return catalog.CreateProductInput{}, errInvalidCategoryID()
 	}
 
 	status := domain.ProductStatusUnknown
@@ -303,7 +303,7 @@ func toUpdateProductInput(id uuid.UUID, request dto.UpdateProductRequest) (catal
 	if request.CategoryId != nil {
 		categoryID, err := parseOptionalOpenAPIUUID(request.CategoryId)
 		if err != nil {
-			return catalog.UpdateProductInput{}, commonerrors.BadRequest("invalid_request", "invalid category id")
+			return catalog.UpdateProductInput{}, errInvalidCategoryID()
 		}
 		input.CategoryID = categoryID
 	}

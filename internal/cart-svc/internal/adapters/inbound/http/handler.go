@@ -44,7 +44,7 @@ func (h *CartHandler) Healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *CartHandler) HandleOpenAPIError(w http.ResponseWriter, r *http.Request, _ error) {
-	h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request parameters"))
+	h.writeError(w, r, errInvalidRequestParameters())
 }
 
 func (h *CartHandler) GetActiveCart(w http.ResponseWriter, r *http.Request) {
@@ -73,11 +73,11 @@ func (h *CartHandler) AddCartItem(w http.ResponseWriter, r *http.Request) {
 
 	var request dto.AddCartItemRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 	if err := h.validator.Struct(request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -104,11 +104,11 @@ func (h *CartHandler) UpdateCartItem(w http.ResponseWriter, r *http.Request, sku
 
 	var request dto.UpdateCartItemRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 	if err := h.validator.Struct(request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -156,7 +156,7 @@ func mapCartError(err error) error {
 	case errors.Is(err, cart.ErrInvalidUserID),
 		errors.Is(err, cart.ErrInvalidSKU),
 		errors.Is(err, cart.ErrInvalidQuantity):
-		return commonerrors.BadRequest("invalid_request", "invalid cart input")
+		return errInvalidCartInput()
 	case errors.Is(err, cart.ErrCartNotFound):
 		return commonerrors.NotFound("cart_not_found", "cart not found")
 	case errors.Is(err, cart.ErrCartItemNotFound):

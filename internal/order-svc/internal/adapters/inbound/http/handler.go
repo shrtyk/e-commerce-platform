@@ -98,12 +98,12 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 	var request dto.CreateOrderRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest(string(checkout.CheckoutErrorCodeInvalidArgument), "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
 	if err := h.validator.Struct(request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest(string(checkout.CheckoutErrorCodeInvalidArgument), "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -166,7 +166,7 @@ func (h *OrderHandler) GetOrderById(w http.ResponseWriter, r *http.Request, orde
 }
 
 func (h *OrderHandler) HandleOpenAPIError(w http.ResponseWriter, r *http.Request, _ error) {
-	h.writeError(w, r, commonerrors.BadRequest(string(checkout.CheckoutErrorCodeInvalidArgument), "invalid request parameters"))
+	h.writeError(w, r, errInvalidRequestParameters())
 }
 
 func (h *OrderHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {

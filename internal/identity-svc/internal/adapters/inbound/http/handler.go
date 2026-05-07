@@ -35,17 +35,17 @@ func (h *IdentityHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *IdentityHandler) HandleOpenAPIError(w http.ResponseWriter, r *http.Request, _ error) {
-	h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request parameters"))
+	h.writeError(w, r, errInvalidRequestParameters())
 }
 
 func (h *IdentityHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	var request dto.RegisterRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 	if err := h.validator.Struct(request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -69,11 +69,11 @@ func (h *IdentityHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 func (h *IdentityHandler) RegisterAdmin(w http.ResponseWriter, r *http.Request) {
 	var request dto.RegisterRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 	if err := h.validator.Struct(request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -97,11 +97,11 @@ func (h *IdentityHandler) RegisterAdmin(w http.ResponseWriter, r *http.Request) 
 func (h *IdentityHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 	var request dto.LoginRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 	if err := h.validator.Struct(request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -124,11 +124,11 @@ func (h *IdentityHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 func (h *IdentityHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var request dto.RefreshTokenRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 	if err := h.validator.Struct(request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -179,11 +179,11 @@ func (h *IdentityHandler) UpdateMyProfile(w http.ResponseWriter, r *http.Request
 
 	var request dto.UpdateProfileRequest
 	if err := render.DecodeJSON(r.Body, &request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 	if err := h.validator.Struct(request); err != nil {
-		h.writeError(w, r, commonerrors.BadRequest("invalid_request", "invalid request body"))
+		h.writeError(w, r, errInvalidRequestBody())
 		return
 	}
 
@@ -213,7 +213,7 @@ func (h *IdentityHandler) writeError(w http.ResponseWriter, r *http.Request, err
 func mapAuthError(err error) error {
 	switch {
 	case errors.Is(err, auth.ErrInvalidRegisterInput):
-		return commonerrors.BadRequest("invalid_request", "invalid register input")
+		return errInvalidRegisterInput()
 	case errors.Is(err, auth.ErrEmailAlreadyRegistered):
 		return commonerrors.Conflict("email_already_registered", "email already registered")
 	case errors.Is(err, auth.ErrInvalidCredentials):
@@ -228,7 +228,7 @@ func mapAuthError(err error) error {
 func mapProfileError(err error) error {
 	switch {
 	case errors.Is(err, auth.ErrProfileUpdateFailed):
-		return commonerrors.BadRequest("invalid_request", "invalid profile input")
+		return errInvalidProfileInput()
 	case errors.Is(err, outbound.ErrUserNotFound):
 		return commonerrors.NotFound("user_not_found", "user not found")
 	default:
