@@ -1,16 +1,16 @@
-# E-Commerce Platform
+# E-commerce platform
 
 [![CI](https://github.com/shrtyk/e-commerce-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/shrtyk/e-commerce-platform/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/shrtyk/e-commerce-platform/graph/badge.svg?token=N6RLBNTER7)](https://codecov.io/gh/shrtyk/e-commerce-platform)
 
-The platform is organized as a monorepo of focused services, with Kafka as the central integration bus.
-Public traffic enters through the gateway over REST, while internal services communicate through gRPC and asynchronous Kafka events using Protobuf contracts.
+This repository is a Go monorepo for an event-driven e-commerce platform. Kafka is the main integration point between services.
+Public traffic enters through the gateway over REST. Internal services use gRPC for direct calls and Kafka for asynchronous events, with Protobuf contracts on both paths.
 
-## Why This Project Exists
+## Why this project exists
 
-This project was built to practice developing a production-style backend in Go.
+I built this project to practice production-style backend development in Go.
 
-Instead of creating another simple CRUD demo, the goal was to design an end-to-end e-commerce platform and to deal with problems common in real systems:
+Instead of another CRUD demo, this repo models an e-commerce platform with problems that show up in real systems:
 
 - service boundaries and domain ownership
 - synchronous vs asynchronous communication
@@ -18,9 +18,9 @@ Instead of creating another simple CRUD demo, the goal was to design an end-to-e
 - event delivery reliability
 - idempotent consumers and failure recovery
 - observability across distributed services
-- contract-first API development with OpenAPI and Protobuf
+- contract-first APIs with OpenAPI and Protobuf
 
-The focus is not on e-commerce itself, but on building and evolving a distributed system with a sprinkle of tradeoffs here and there.
+The interesting part is not the store domain. It is the distributed-system work around boundaries, contracts, events, and failure handling.
 
 ## Architecture
 
@@ -33,21 +33,21 @@ The focus is not on e-commerce itself, but on building and evolving a distribute
 
 ![Architecture Diagram](.github/architecture_diagram.png)
 
-## Runtime Components
+## Runtime components
 
-The platform currently includes the following core services:
+The platform currently includes these services:
 
 - `identity` for registration, login, refresh flow, JWT issuing, and profile operations
-- `catalog` implemented in the repository as `product-svc` for products, categories, pricing references, and stock ownership (better to separate stock as a stand-alone service later)
+- `catalog`, implemented as `product-svc`, for products, categories, pricing references, and stock ownership (stock should probably become its own service later)
 - `cart` for customer cart lifecycle and checkout preparation
 - `order` as the checkout orchestrator and saga owner
 - `payment` with a provider abstraction and stub provider
 - `notification` consuming business events and sending stubbed notifications
 - `gateway` as the public entrypoint
 
-Local development also includes shared infrastructure such as Kafka, Schema Registry, PostgreSQL, Redis, and the observability stack.
+Local development also includes shared infrastructure: Kafka, Schema Registry, PostgreSQL, Redis, and the observability stack.
 
-## Core Principles
+## Core principles
 
 - Each service owns its own persistence boundary
 - No cross-service database access
@@ -57,7 +57,7 @@ Local development also includes shared infrastructure such as Kafka, Schema Regi
 - Public contracts are `OpenAPI`; internal contracts are `Protobuf`
 - `AsyncAPI` describes the event topology and follows protobuf changes
 
-## Repository Layout
+## Repository layout
 
 ```text
 .
@@ -78,9 +78,9 @@ Local development also includes shared infrastructure such as Kafka, Schema Regi
 └── .github/workflows/      # CI workflows
 ```
 
-## Per-Service Structure
+## Per-service structure
 
-Each service follows the same general shape:
+Most services follow this shape:
 
 ```text
 internal/<service>-svc/
@@ -104,7 +104,7 @@ internal/<service>-svc/
 └── go.mod
 ```
 
-The exact adapter set differs by service, but the layering is consistent: domain and services stay isolated from transport and infrastructure concerns.
+The adapter set differs by service, but the layering stays the same: domain and service code do not depend on transport or infrastructure code.
 
 ## Contracts
 
@@ -114,7 +114,7 @@ The exact adapter set differs by service, but the layering is consistent: domain
 
 When contracts change, protobuf is the source of truth for internal APIs and event payloads.
 
-## Local Development
+## Local development
 
 ### Prerequisites
 
@@ -138,7 +138,7 @@ Install pinned Go-side code generation tools:
 make tools-install
 ```
 
-### Start The Stack
+### Start the stack
 
 Start the full local platform:
 
@@ -164,7 +164,7 @@ Useful partial startup targets:
 - `make compose-up-shared`
 - `make compose-up-observability`
 
-### Generate And Validate Contracts
+### Generate and validate contracts
 
 ```bash
 make proto-check
@@ -173,9 +173,9 @@ make openapi-gen-dto
 make contracts
 ```
 
-You can also target a single service or package with service-specific make targets such as `make proto-gen-order` or `make openapi-gen-identity-dto`.
+You can target one service or package with service-specific make targets such as `make proto-gen-order` or `make openapi-gen-identity-dto`.
 
-## Testing And Quality
+## Testing and quality
 
 Run all unit tests:
 
@@ -195,7 +195,7 @@ Run all integration tests:
 make integration-tests
 ```
 
-Run end-to-end tests:
+Run E2E tests:
 
 ```bash
 make e2e-tests
@@ -207,24 +207,24 @@ Run linting across services:
 make lint
 ```
 
-## Current Status
+## Current status
 
 - identity, catalog, cart, order, payment, and notification slices are implemented
-- end-to-end checkout flow is covered, including compensation on payment failure
+- E2E checkout flow is covered, including compensation on payment failure
 - messaging reliability and observability baselines are in place
 - gateway and public API consolidation are complete
 
-Current work is focused on the code quility, remaining security and delivery baseline, including the broader CI quality and security lane.
+Current work is focused on code quality, the remaining security and delivery baseline, and the broader CI quality and security lane.
 
-## First Places To Read In The Repository
+## First places to read
 
-For a quick orientation, start with:
+For a quick orientation, start here:
 
 - `Makefile`
 - `api/openapi/public/openapi.yaml`
 - `api/asyncapi/kafka-events.yaml`
 - `api/proto/`
-- one service end-to-end, for example `internal/identity-svc/` or `internal/order-svc/`
+- one full service slice, for example `internal/identity-svc/` or `internal/order-svc/`
 - `tests/e2e/`
 
 ## License
